@@ -14,6 +14,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      gateway:
+        condition: service_started
 
   hummingbot-api:
     image: ${HUMMINGBOT_API_IMAGE}
@@ -41,6 +43,22 @@ services:
     volumes:
       - ./api/conf:/home/hummingbot-api/conf
       - ./api/logs:/home/hummingbot-api/logs
+
+  gateway:
+    image: ${HUMMINGBOT_GATEWAY_IMAGE}
+    container_name: hummingbot-gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+      GATEWAY_PASSPHRASE: ${HUMMINGBOT_GATEWAY_PASSPHRASE}
+    ports:
+      - "${HUMMINGBOT_GATEWAY_PORT:-15888}:15888"
+    volumes:
+      - ./gateway/conf:/home/gateway/conf
+      - ./gateway/certs:/home/gateway/certs
+      - ./gateway/logs:/home/gateway/logs
 
   postgres:
     image: postgres:16

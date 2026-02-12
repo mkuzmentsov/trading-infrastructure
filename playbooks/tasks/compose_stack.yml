@@ -35,10 +35,16 @@
       - hummingbot_image | length > 0
       - hummingbot_api_image is defined
       - hummingbot_api_image | length > 0
+      - hummingbot_gateway_image is defined
+      - hummingbot_gateway_image | length > 0
       - hummingbot_tz is defined
       - hummingbot_tz | length > 0
       - hummingbot_api_port is defined
       - (hummingbot_api_port | string) | length > 0
+      - hummingbot_gateway_port is defined
+      - (hummingbot_gateway_port | string) | length > 0
+      - hummingbot_gateway_passphrase is defined
+      - hummingbot_gateway_passphrase | length > 0
       - hummingbot_postgres_db is defined
       - hummingbot_postgres_db | length > 0
       - hummingbot_postgres_user is defined
