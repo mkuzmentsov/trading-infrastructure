@@ -20,6 +20,8 @@
     - api/conf
     - api/logs
     - api/bots
+    - api/bots/conf/scripts
+    - api/bots/conf/controllers
     - api/bots/credentials/master_account/connectors
     - api/credentials/master_account/connectors
     - gateway/conf
@@ -27,6 +29,18 @@
     - gateway/logs
     - postgres/data
     - redis/data
+
+- name: Ensure default credentials profile conf_client.yml exists
+  ansible.builtin.copy:
+    dest: "{{ hummingbot_stack_dir }}/api/credentials/master_account/conf_client.yml"
+    content: |
+      instance_id: master_account
+      rate_oracle_source: binance
+      rate_oracle_quote_token: USDT
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0644"
+    force: false
 
 - name: Install unified docker-compose file
   ansible.builtin.template:
