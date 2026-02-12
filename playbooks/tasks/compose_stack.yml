@@ -45,6 +45,10 @@
       - (hummingbot_gateway_port | string) | length > 0
       - hummingbot_gateway_passphrase is defined
       - hummingbot_gateway_passphrase | length > 0
+      - hummingbot_broker_host is defined
+      - hummingbot_broker_host | length > 0
+      - hummingbot_broker_port is defined
+      - (hummingbot_broker_port | string) | length > 0
       - hummingbot_postgres_db is defined
       - hummingbot_postgres_db | length > 0
       - hummingbot_postgres_user is defined
