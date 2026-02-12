@@ -14,9 +14,6 @@
     group: "{{ hummingbot_group }}"
     mode: "0755"
   loop:
-    - bot/conf
-    - bot/data
-    - bot/logs
     - api/conf
     - api/logs
     - api/bots
@@ -67,8 +64,6 @@
 - name: Validate required vars for template env mode
   ansible.builtin.assert:
     that:
-      - hummingbot_image is defined
-      - hummingbot_image | length > 0
       - hummingbot_api_image is defined
       - hummingbot_api_image | length > 0
       - hummingbot_gateway_image is defined

@@ -1,6 +1,6 @@
 # Hummingbot Provisioning Playbook
 
-This playbook installs a unified Hummingbot stack (Bot + API + Dashboard + Gateway + EMQX + Redis + Postgres) on Ubuntu 24.04 hosts using Docker Compose.
+This playbook installs a unified Hummingbot stack (API + Dashboard + Gateway + EMQX + Redis + Postgres) on Ubuntu 24.04 hosts using Docker Compose.
 
 ## Files
 
@@ -21,7 +21,6 @@ This playbook installs a unified Hummingbot stack (Bot + API + Dashboard + Gatew
 - Installs Docker and adds `hummingbot` to the `docker` group.
 - Creates `/home/hummingbot/stack`.
 - Deploys one docker compose file with:
-  - `hummingbot`
   - `hummingbot-api`
   - `dashboard`
   - `gateway`
@@ -73,7 +72,6 @@ Pass env values directly to Ansible and render `.env` automatically:
 ```bash
 ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml \
   -e hummingbot_env_mode=template \
-  -e hummingbot_image=ghcr.io/hummingbot/hummingbot:latest \
   -e hummingbot_api_image=ghcr.io/hummingbot/hummingbot-api:latest \
   -e hummingbot_dashboard_image=hummingbot/dashboard:latest \
   -e hummingbot_gateway_image=hummingbot/gateway:latest \

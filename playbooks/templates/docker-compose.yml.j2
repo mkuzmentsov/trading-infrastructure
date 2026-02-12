@@ -1,24 +1,4 @@
 services:
-  hummingbot:
-    image: ${HUMMINGBOT_IMAGE}
-    container_name: hummingbot
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      TZ: ${TZ:-UTC}
-    volumes:
-      - ./bot/conf:/home/hummingbot/conf
-      - ./bot/data:/home/hummingbot/data
-      - ./bot/logs:/home/hummingbot/logs
-    depends_on:
-      emqx:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      gateway:
-        condition: service_started
-
   hummingbot-api:
     image: ${HUMMINGBOT_API_IMAGE}
     container_name: hummingbot-api
