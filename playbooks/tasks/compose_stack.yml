@@ -37,14 +37,24 @@
       - hummingbot_api_image | length > 0
       - hummingbot_gateway_image is defined
       - hummingbot_gateway_image | length > 0
+      - hummingbot_dashboard_image is defined
+      - hummingbot_dashboard_image | length > 0
       - hummingbot_tz is defined
       - hummingbot_tz | length > 0
       - hummingbot_api_port is defined
       - (hummingbot_api_port | string) | length > 0
       - hummingbot_gateway_port is defined
       - (hummingbot_gateway_port | string) | length > 0
+      - hummingbot_dashboard_port is defined
+      - (hummingbot_dashboard_port | string) | length > 0
       - hummingbot_gateway_passphrase is defined
       - hummingbot_gateway_passphrase | length > 0
+      - hummingbot_dashboard_auth_system_enabled is defined
+      - (hummingbot_dashboard_auth_system_enabled | string) | length > 0
+      - hummingbot_dashboard_backend_api_host is defined
+      - hummingbot_dashboard_backend_api_host | length > 0
+      - hummingbot_dashboard_backend_api_port is defined
+      - (hummingbot_dashboard_backend_api_port | string) | length > 0
       - hummingbot_broker_host is defined
       - hummingbot_broker_host | length > 0
       - hummingbot_broker_port is defined

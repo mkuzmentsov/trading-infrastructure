@@ -52,6 +52,22 @@ services:
       - ./api/logs:/home/hummingbot-api/logs
       - /var/run/docker.sock:/var/run/docker.sock
 
+  dashboard:
+    image: ${HUMMINGBOT_DASHBOARD_IMAGE}
+    container_name: hummingbot-dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AUTH_SYSTEM_ENABLED: ${DASHBOARD_AUTH_SYSTEM_ENABLED}
+      BACKEND_API_HOST: ${DASHBOARD_BACKEND_API_HOST}
+      BACKEND_API_PORT: ${DASHBOARD_BACKEND_API_PORT}
+    depends_on:
+      hummingbot-api:
+        condition: service_started
+    ports:
+      - "${HUMMINGBOT_DASHBOARD_PORT:-8501}:8501"
+
   gateway:
     image: ${HUMMINGBOT_GATEWAY_IMAGE}
     container_name: hummingbot-gateway
