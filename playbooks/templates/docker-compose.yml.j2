@@ -43,6 +43,7 @@ services:
     volumes:
       - ./api/conf:/home/hummingbot-api/conf
       - ./api/logs:/home/hummingbot-api/logs
+      - /var/run/docker.sock:/var/run/docker.sock
 
   gateway:
     image: ${HUMMINGBOT_GATEWAY_IMAGE}
