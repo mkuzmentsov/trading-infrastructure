@@ -1,0 +1,54 @@
+---
+- name: Install Hummingbot stack on Ubuntu 24.04
+  hosts: hummingbot_instances
+  become: true
+  gather_facts: true
+
+  vars:
+    hummingbot_user: hummingbot
+    hummingbot_group: hummingbot
+    hummingbot_home: /home/hummingbot
+
+    hummingbot_bot_version: "2.12.0"
+    hummingbot_api_version: "2.1.0"
+
+    hummingbot_bot_zip_url: "https://github.com/hummingbot/hummingbot/archive/refs/tags/v{{ hummingbot_bot_version }}.zip"
+    hummingbot_api_zip_url: "https://github.com/hummingbot/hummingbot-api/archive/refs/tags/v{{ hummingbot_api_version }}.zip"
+
+    hummingbot_bot_extract_dir: "{{ hummingbot_home }}/hummingbot-{{ hummingbot_bot_version }}"
+    hummingbot_api_extract_dir: "{{ hummingbot_home }}/hummingbot-api-{{ hummingbot_api_version }}"
+
+    hummingbot_bot_zip_path: "{{ hummingbot_home }}/hummingbot-bot-v{{ hummingbot_bot_version }}.zip"
+    hummingbot_api_zip_path: "{{ hummingbot_home }}/hummingbot-api-v{{ hummingbot_api_version }}.zip"
+
+    anaconda_installer_url: "https://repo.anaconda.com/archive/Anaconda3-latest-Linux-x86_64.sh"
+    anaconda_installer_path: "{{ hummingbot_home }}/Anaconda3-latest-Linux-x86_64.sh"
+    anaconda_install_prefix: "{{ hummingbot_home }}/anaconda3"
+    docker_arch: amd64
+
+  pre_tasks:
+    - name: Validate target OS is Ubuntu 24.04
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Ubuntu"
+          - ansible_facts.distribution_version is version("24.04", "==")
+        fail_msg: "This playbook supports only Ubuntu 24.04 hosts."
+
+  tasks:
+    - name: Setup hummingbot user and group
+      ansible.builtin.import_tasks: tasks/users.yml
+
+    - name: Install base system packages
+      ansible.builtin.import_tasks: tasks/system_packages.yml
+
+    - name: Install and configure Docker
+      ansible.builtin.import_tasks: tasks/docker.yml
+
+    - name: Install Anaconda3
+      ansible.builtin.import_tasks: tasks/anaconda.yml
+
+    - name: Install and setup Hummingbot bot
+      ansible.builtin.import_tasks: tasks/hummingbot_bot.yml
+
+    - name: Install and setup Hummingbot API
+      ansible.builtin.import_tasks: tasks/hummingbot_api.yml

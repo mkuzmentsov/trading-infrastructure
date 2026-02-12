@@ -1,0 +1,40 @@
+- name: Download Hummingbot bot archive
+  ansible.builtin.get_url:
+    url: "{{ hummingbot_bot_zip_url }}"
+    dest: "{{ hummingbot_bot_zip_path }}"
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0644"
+
+- name: Extract Hummingbot bot archive
+  ansible.builtin.unarchive:
+    src: "{{ hummingbot_bot_zip_path }}"
+    dest: "{{ hummingbot_home }}"
+    remote_src: true
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    creates: "{{ hummingbot_bot_extract_dir }}"
+  register: hummingbot_bot_extract_result
+
+- name: Remove Hummingbot bot archive after extraction
+  ansible.builtin.file:
+    path: "{{ hummingbot_bot_zip_path }}"
+    state: absent
+  when: hummingbot_bot_extract_result is changed
+
+- name: Run make setup for Hummingbot bot
+  ansible.builtin.command:
+    cmd: make setup
+    chdir: "{{ hummingbot_bot_extract_dir }}"
+    creates: "{{ hummingbot_bot_extract_dir }}/.setup_done"
+  become_user: "{{ hummingbot_user }}"
+  register: hummingbot_bot_setup_result
+
+- name: Mark Hummingbot bot setup completion
+  ansible.builtin.file:
+    path: "{{ hummingbot_bot_extract_dir }}/.setup_done"
+    state: touch
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0644"
+  when: hummingbot_bot_setup_result is changed

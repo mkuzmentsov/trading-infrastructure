@@ -1,0 +1,10 @@
+- name: Install required apt packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - unzip
+      - gnupg
+      - make
+    state: present
+    update_cache: true
