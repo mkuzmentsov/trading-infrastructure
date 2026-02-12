@@ -50,6 +50,8 @@ services:
     volumes:
       - ./api/conf:/home/hummingbot-api/conf
       - ./api/logs:/home/hummingbot-api/logs
+      - ./api/bots:/hummingbot-api/bots
+      - ./api/credentials:/hummingbot-api/credentials
       - /var/run/docker.sock:/var/run/docker.sock
 
   dashboard:

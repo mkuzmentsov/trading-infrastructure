@@ -6,6 +6,28 @@
     group: "{{ hummingbot_group }}"
     mode: "0755"
 
+- name: Ensure stack data directories exist
+  ansible.builtin.file:
+    path: "{{ hummingbot_stack_dir }}/{{ item }}"
+    state: directory
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0755"
+  loop:
+    - bot/conf
+    - bot/data
+    - bot/logs
+    - api/conf
+    - api/logs
+    - api/bots
+    - api/bots/credentials/master_account/connectors
+    - api/credentials/master_account/connectors
+    - gateway/conf
+    - gateway/certs
+    - gateway/logs
+    - postgres/data
+    - redis/data
+
 - name: Install unified docker-compose file
   ansible.builtin.template:
     src: "{{ playbook_dir }}/templates/docker-compose.yml.j2"
