@@ -25,6 +25,7 @@ services:
       - .env
     environment:
       TZ: ${TZ:-UTC}
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
