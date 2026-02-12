@@ -8,22 +8,9 @@
     hummingbot_user: hummingbot
     hummingbot_group: hummingbot
     hummingbot_home: /home/hummingbot
-
-    hummingbot_bot_version: "2.12.0"
-    hummingbot_api_version: "2.1.0"
-
-    hummingbot_bot_zip_url: "https://github.com/hummingbot/hummingbot/archive/refs/tags/v{{ hummingbot_bot_version }}.zip"
-    hummingbot_api_zip_url: "https://github.com/hummingbot/hummingbot-api/archive/refs/tags/v{{ hummingbot_api_version }}.zip"
-
-    hummingbot_bot_extract_dir: "{{ hummingbot_home }}/hummingbot-{{ hummingbot_bot_version }}"
-    hummingbot_api_extract_dir: "{{ hummingbot_home }}/hummingbot-api-{{ hummingbot_api_version }}"
-
-    hummingbot_bot_zip_path: "{{ hummingbot_home }}/hummingbot-bot-v{{ hummingbot_bot_version }}.zip"
-    hummingbot_api_zip_path: "{{ hummingbot_home }}/hummingbot-api-v{{ hummingbot_api_version }}.zip"
-
-    anaconda_installer_url: "https://repo.anaconda.com/archive/Anaconda3-2025.12-2-Linux-x86_64.sh"
-    anaconda_installer_path: "{{ hummingbot_home }}/Anaconda3-2025.12-2-Linux-x86_64.sh"
-    anaconda_install_prefix: "{{ hummingbot_home }}/anaconda3"
+    hummingbot_stack_dir: "{{ hummingbot_home }}/stack"
+    hummingbot_compose_project_name: hummingbot
+    hummingbot_env_mode: manual
 
     docker_arch: amd64
 
@@ -45,11 +32,5 @@
     - name: Install and configure Docker
       ansible.builtin.import_tasks: tasks/docker.yml
 
-    - name: Install Anaconda3
-      ansible.builtin.import_tasks: tasks/anaconda.yml
-
-    - name: Install and setup Hummingbot bot
-      ansible.builtin.import_tasks: tasks/hummingbot_bot.yml
-
-    - name: Install and setup Hummingbot API
-      ansible.builtin.import_tasks: tasks/hummingbot_api.yml
+    - name: Deploy unified Hummingbot Docker Compose stack
+      ansible.builtin.import_tasks: tasks/compose_stack.yml

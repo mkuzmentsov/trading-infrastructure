@@ -3,8 +3,6 @@
     name:
       - ca-certificates
       - curl
-      - unzip
       - gnupg
-      - make
     state: present
     update_cache: true

@@ -1,0 +1,96 @@
+- name: Ensure Hummingbot stack directory exists
+  ansible.builtin.file:
+    path: "{{ hummingbot_stack_dir }}"
+    state: directory
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0755"
+
+- name: Install unified docker-compose file
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/docker-compose.yml.j2"
+    dest: "{{ hummingbot_stack_dir }}/docker-compose.yml"
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0644"
+
+- name: Install environment example file
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/hummingbot.env.example.j2"
+    dest: "{{ hummingbot_stack_dir }}/.env.example"
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0644"
+
+- name: Validate env mode value
+  ansible.builtin.assert:
+    that:
+      - hummingbot_env_mode in ['manual', 'template']
+    fail_msg: "hummingbot_env_mode must be either 'manual' or 'template'."
+
+- name: Validate required vars for template env mode
+  ansible.builtin.assert:
+    that:
+      - hummingbot_image is defined
+      - hummingbot_image | length > 0
+      - hummingbot_api_image is defined
+      - hummingbot_api_image | length > 0
+      - hummingbot_tz is defined
+      - hummingbot_tz | length > 0
+      - hummingbot_api_port is defined
+      - (hummingbot_api_port | string) | length > 0
+      - hummingbot_postgres_db is defined
+      - hummingbot_postgres_db | length > 0
+      - hummingbot_postgres_user is defined
+      - hummingbot_postgres_user | length > 0
+      - hummingbot_postgres_password is defined
+      - hummingbot_postgres_password | length > 0
+      - hummingbot_redis_password is defined
+      - hummingbot_redis_password | length > 0
+    fail_msg: >-
+      Template env mode requires all env vars. Pass them via -e or --extra-vars @file.
+  when: hummingbot_env_mode == 'template'
+
+- name: Render .env from template variables
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/hummingbot.env.j2"
+    dest: "{{ hummingbot_stack_dir }}/.env"
+    owner: "{{ hummingbot_user }}"
+    group: "{{ hummingbot_group }}"
+    mode: "0640"
+  when: hummingbot_env_mode == 'template'
+
+- name: Check if user-provided .env exists in manual mode
+  ansible.builtin.stat:
+    path: "{{ hummingbot_stack_dir }}/.env"
+  register: hummingbot_env_file
+  when: hummingbot_env_mode == 'manual'
+
+- name: Stop play when .env file is missing in manual mode
+  ansible.builtin.fail:
+    msg: >-
+      Missing {{ hummingbot_stack_dir }}/.env. Copy .env.example to .env and fill all required values, then rerun.
+  when:
+    - hummingbot_env_mode == 'manual'
+    - not hummingbot_env_file.stat.exists
+
+- name: Pull stack images
+  ansible.builtin.command:
+    cmd: docker compose --project-name "{{ hummingbot_compose_project_name }}" pull
+    chdir: "{{ hummingbot_stack_dir }}"
+  become_user: "{{ hummingbot_user }}"
+  register: hummingbot_compose_pull
+  changed_when: >-
+    'Downloaded newer image' in (hummingbot_compose_pull.stdout ~ hummingbot_compose_pull.stderr) or
+    'Pull complete' in (hummingbot_compose_pull.stdout ~ hummingbot_compose_pull.stderr)
+
+- name: Start stack with docker compose
+  ansible.builtin.command:
+    cmd: docker compose --project-name "{{ hummingbot_compose_project_name }}" up -d
+    chdir: "{{ hummingbot_stack_dir }}"
+  become_user: "{{ hummingbot_user }}"
+  register: hummingbot_compose_up
+  changed_when: >-
+    'Creating' in hummingbot_compose_up.stdout or
+    'Recreating' in hummingbot_compose_up.stdout or
+    'Starting' in hummingbot_compose_up.stdout

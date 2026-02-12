@@ -1,0 +1,76 @@
+services:
+  hummingbot:
+    image: ${HUMMINGBOT_IMAGE}
+    container_name: hummingbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./bot/conf:/home/hummingbot/conf
+      - ./bot/data:/home/hummingbot/data
+      - ./bot/logs:/home/hummingbot/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  hummingbot-api:
+    image: ${HUMMINGBOT_API_IMAGE}
+    container_name: hummingbot-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-UTC}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${HUMMINGBOT_API_PORT:-8000}:8000"
+    volumes:
+      - ./api/conf:/home/hummingbot-api/conf
+      - ./api/logs:/home/hummingbot-api/logs
+
+  postgres:
+    image: postgres:16
+    container_name: hummingbot-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: hummingbot-redis
+    restart: unless-stopped
+    command: ["sh", "-c", "redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
+    env_file:
+      - .env
+    volumes:
+      - ./redis/data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

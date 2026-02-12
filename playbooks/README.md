@@ -1,28 +1,34 @@
 # Hummingbot Provisioning Playbook
 
-This playbook installs Hummingbot Bot and Hummingbot API on Ubuntu 24.04 hosts.
+This playbook installs a unified Hummingbot stack (Bot + API + Redis + Postgres) on Ubuntu 24.04 hosts using Docker Compose.
 
 ## Files
 
 - `install_hummingbot_stack.yml`: Main provisioning playbook.
 - `inventory.example.ini`: Example inventory for target instances.
+- `env.values.example.yml`: Example vars file for template env mode.
 - `tasks/users.yml`: User, group, and home directory setup.
 - `tasks/system_packages.yml`: Base apt package installation.
 - `tasks/docker.yml`: Docker repository, packages, and docker group setup.
-- `tasks/anaconda.yml`: Anaconda installer download and installation.
-- `tasks/hummingbot_bot.yml`: Hummingbot bot download, extract, and `make setup`.
-- `tasks/hummingbot_api.yml`: Hummingbot API download, extract, and `make setup`.
+- `tasks/compose_stack.yml`: Unified stack deployment with Docker Compose.
+- `templates/docker-compose.yml.j2`: Single compose file for bot, api, redis, and postgres.
+- `templates/hummingbot.env.example.j2`: Example environment file template.
+- `templates/hummingbot.env.j2`: `.env` template rendered from Ansible variables.
 
 ## What it does
 
 - Creates the `hummingbot` group and user.
 - Installs Docker and adds `hummingbot` to the `docker` group.
-- Installs required tools (`make`, `unzip`, and dependencies).
-- Installs Anaconda3 into `/home/hummingbot/anaconda3`.
-- Downloads and extracts:
-  - `hummingbot` at `v{{ hummingbot_bot_version }}`
-  - `hummingbot-api` at `v{{ hummingbot_api_version }}`
-- Runs `make setup` in both projects.
+- Creates `/home/hummingbot/stack`.
+- Deploys one docker compose file with:
+  - `hummingbot`
+  - `hummingbot-api`
+  - `redis`
+  - `postgres`
+- Supports two `.env` modes:
+  - `manual`: creates only `.env.example` and requires user-provided `.env`
+  - `template`: renders `.env` from vars passed to Ansible
+- Starts the stack with `docker compose up -d` once `.env` exists.
 
 ## Usage
 
@@ -32,16 +38,51 @@ This playbook installs Hummingbot Bot and Hummingbot API on Ubuntu 24.04 hosts.
    cp playbooks/inventory.example.ini playbooks/inventory.ini
    ```
 
-2. Run playbook:
+2. Choose one of two env workflows.
+
+### Option A: manual `.env`
+
+Run playbook once to provision host and generate `.env.example`:
 
    ```bash
    ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml
    ```
 
-3. Override versions if needed:
+   The playbook will stop with a message because `.env` is intentionally required.
+
+On target host, create real env file from example:
 
    ```bash
-   ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml \
-     -e hummingbot_bot_version=2.12.0 \
-     -e hummingbot_api_version=2.1.0
+   cp /home/hummingbot/stack/.env.example /home/hummingbot/stack/.env
+   # edit /home/hummingbot/stack/.env with real values
    ```
+
+Re-run playbook to pull images and start containers:
+
+   ```bash
+   ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml
+   ```
+
+### Option B: render `.env` from Ansible vars
+
+Pass env values directly to Ansible and render `.env` automatically:
+
+```bash
+ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml \
+  -e hummingbot_env_mode=template \
+  -e hummingbot_image=ghcr.io/hummingbot/hummingbot:latest \
+  -e hummingbot_api_image=ghcr.io/hummingbot/hummingbot-api:latest \
+  -e hummingbot_tz=UTC \
+  -e hummingbot_api_port=8000 \
+  -e hummingbot_postgres_db=hummingbot \
+  -e hummingbot_postgres_user=hummingbot \
+  -e hummingbot_postgres_password='replace_me' \
+  -e hummingbot_redis_password='replace_me'
+```
+
+You can also put these vars into a yaml file and pass it with:
+
+```bash
+ansible-playbook -i playbooks/inventory.ini playbooks/install_hummingbot_stack.yml \
+  --extra-vars @playbooks/env.values.yml
+```
