@@ -21,9 +21,10 @@
     hummingbot_bot_zip_path: "{{ hummingbot_home }}/hummingbot-bot-v{{ hummingbot_bot_version }}.zip"
     hummingbot_api_zip_path: "{{ hummingbot_home }}/hummingbot-api-v{{ hummingbot_api_version }}.zip"
 
-    anaconda_installer_url: "https://repo.anaconda.com/archive/Anaconda3-latest-Linux-x86_64.sh"
-    anaconda_installer_path: "{{ hummingbot_home }}/Anaconda3-latest-Linux-x86_64.sh"
+    anaconda_installer_url: "https://repo.anaconda.com/archive/Anaconda3-2025.12-2-Linux-x86_64.sh"
+    anaconda_installer_path: "{{ hummingbot_home }}/Anaconda3-2025.12-2-Linux-x86_64.sh"
     anaconda_install_prefix: "{{ hummingbot_home }}/anaconda3"
+
     docker_arch: amd64
 
   pre_tasks:
