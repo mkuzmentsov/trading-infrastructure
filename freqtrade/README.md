@@ -67,6 +67,7 @@ The following variables can be customized:
 
 - `freqtrade_image`: The Docker image to use (default: `freqtradeorg/freqtrade:stable`).
 - `freqtrade_ui_port`: Port for the Freqtrade API/bundled UI (default: `8080`).
+- `freqtrade_dry_run`: Enable or disable dry run mode (default: `true`).
 - `frequi_image`: The Docker image for standalone UI (default: `freqtradeorg/frequi:latest`).
 - `frequi_port`: Port for the standalone Freqtrade UI (default: `3000`).
 - `freqtrade_strategy`: Strategy to run (default: `SampleStrategy`).

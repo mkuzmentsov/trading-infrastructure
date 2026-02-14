@@ -3,6 +3,10 @@ services:
     image: "{{ freqtrade_image | default('freqtradeorg/freqtrade:stable') }}"
     container_name: freqtrade
     restart: unless-stopped
+    environment:
+      # Force recreation when config changes
+      CONFIG_HASH: "{{ lookup('template', 'config.json.j2') | hash('sha256') }}"
+      STRATEGY_HASH: "{{ lookup('template', 'SampleStrategy.py.j2') | hash('sha256') }}"
     volumes:
       - "./user_data:/freqtrade/user_data"
     # Expose the UI port

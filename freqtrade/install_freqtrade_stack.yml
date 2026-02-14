@@ -15,6 +15,7 @@
     freqtrade_image: freqtradeorg/freqtrade:stable
     freqtrade_ui_port: 8080
     freqtrade_strategy: SampleStrategy
+    freqtrade_dry_run: true
     frequi_image: freqtradeorg/frequi:latest
     frequi_port: 3000
 
