@@ -1,3 +1,3 @@
 .ansible
-playbooks/inventory.ini
-playbooks/env.values.yml
+hummingbot/inventory.ini
+hummingbot/env.values.yml
