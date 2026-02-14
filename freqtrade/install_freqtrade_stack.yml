@@ -12,12 +12,11 @@
     freqtrade_compose_project_name: freqtrade
     
     # Default versions/images
-    freqtrade_image: freqtradeorg/freqtrade:stable
-    freqtrade_ui_port: 8080
-    freqtrade_strategy: SampleStrategy
+    freqtrade_base_image: freqtradeorg/freqtrade:stable
+    freqtrade_image: freqtrade_custom:latest
     freqtrade_dry_run: true
-    frequi_image: freqtradeorg/frequi:latest
-    frequi_port: 3000
+    
+    # bots: {} # Should be provided in env.values.yml
 
     docker_arch: amd64
 

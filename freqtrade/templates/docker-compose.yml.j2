@@ -1,26 +1,23 @@
 services:
-  freqtrade:
-    image: "{{ freqtrade_image | default('freqtradeorg/freqtrade:stable') }}"
-    container_name: freqtrade
+  {{ item.key }}:
+    image: "{{ freqtrade_image | default('freqtrade_custom:latest') }}"
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    container_name: "{{ item.key }}"
     restart: unless-stopped
     environment:
-      # Force recreation when config changes
-      CONFIG_HASH: "{{ lookup('template', 'config.json.j2') | hash('sha256') }}"
-      STRATEGY_HASH: "{{ lookup('template', 'SampleStrategy.py.j2') | hash('sha256') }}"
+      # Force recreation when config, strategy or image changes
+      BOT_IMAGE: "{{ freqtrade_image | default('freqtrade_custom:latest') }}"
+      CONFIG_HASH: "{{ lookup('template', playbook_dir ~ '/templates/bot_configs/' ~ item.value.strategy ~ '/config.json.j2') | hash('sha256') }}"
+      STRATEGY_HASH: "{{ lookup('template', playbook_dir ~ '/templates/bot_configs/' ~ item.value.strategy ~ '/strategies/' ~ ( (item.value.strategy == 'sample_strategy') | ternary('SampleStrategy.py.j2', (item.value.strategy == 'copy_hl') | ternary('COPY_HL.py.j2', 'copy_hl_ls.py.j2')) )) | hash('sha256') }}"
     volumes:
       - "./user_data:/freqtrade/user_data"
     # Expose the UI port
     ports:
-      - "{{ freqtrade_ui_port | default('8080') }}:8080"
+      - "{{ item.value.ui_port | default('8080') }}:8080"
     command: >
       trade
       --db-url sqlite:///user_data/tradesv3.sqlite
       --config /freqtrade/user_data/config.json
-      --strategy {{ freqtrade_strategy | default('SampleStrategy') }}
-
-  frequi:
-    image: "{{ frequi_image | default('freqtradeorg/frequi:latest') }}"
-    container_name: frequi
-    restart: unless-stopped
-    ports:
-      - "{{ frequi_port | default('3000') }}:80"
+      --strategy {{ (item.value.strategy == 'sample_strategy') | ternary('SampleStrategy', (item.value.strategy == 'copy_hl') | ternary('COPY_HL', 'COPY_HL_LS')) }}

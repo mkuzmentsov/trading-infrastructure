@@ -1,0 +1,36 @@
+- name: Ensure stack directory exists
+  ansible.builtin.file:
+    path: "{{ freqtrade_stack_dir }}"
+    state: directory
+    owner: "{{ freqtrade_user }}"
+    group: "{{ freqtrade_group }}"
+    mode: "0755"
+
+- name: Pull base Freqtrade image
+  ansible.builtin.command:
+    cmd: "docker pull {{ freqtrade_base_image }}"
+  become_user: "{{ freqtrade_user }}"
+  register: base_pull
+  changed_when: "'Downloaded newer image' in (base_pull.stdout ~ base_pull.stderr) or 'Pull complete' in (base_pull.stdout ~ base_pull.stderr)"
+
+- name: Install custom Freqtrade Dockerfile
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/Dockerfile.j2"
+    dest: "{{ freqtrade_stack_dir }}/Dockerfile"
+    owner: "{{ freqtrade_user }}"
+    group: "{{ freqtrade_group }}"
+    mode: "0644"
+  register: freqtrade_dockerfile
+
+- name: Build custom Freqtrade image
+  ansible.builtin.command:
+    cmd: "docker build -t {{ freqtrade_image }} ."
+    chdir: "{{ freqtrade_stack_dir }}"
+  when: freqtrade_dockerfile.changed or base_pull.changed
+  register: freqtrade_build
+  changed_when: true
+
+- name: Deploy bots from configuration
+  ansible.builtin.include_tasks: deploy_bot.yml
+  loop: "{{ bots | dict2items }}"
+  when: bots is defined

@@ -48,8 +48,7 @@ This playbook installs a Freqtrade instance on Ubuntu 24.04 hosts using Docker C
    Run the playbook:
 
    ```bash
-   ansible-playbook -i freqtrade/inventory.ini freqtrade/install_freqtrade_stack.yml \
-     --extra-vars @freqtrade/env.values.yml
+   ansible-playbook -i freqtrade/inventory.ini freqtrade/install_freqtrade_stack.yml --extra-vars @freqtrade/env.values.yml
    ```
 
    ### Option B: Passing vars directly
@@ -65,14 +64,28 @@ This playbook installs a Freqtrade instance on Ubuntu 24.04 hosts using Docker C
 
 The following variables can be customized:
 
-- `freqtrade_image`: The Docker image to use (default: `freqtradeorg/freqtrade:stable`).
+- `freqtrade_base_image`: The base Freqtrade image used for the custom build (default: `freqtradeorg/freqtrade:stable`).
+- `freqtrade_image`: The name of the custom Docker image to build and use (default: `freqtrade_custom:latest`).
 - `freqtrade_ui_port`: Port for the Freqtrade API/bundled UI (default: `8080`).
 - `freqtrade_dry_run`: Enable or disable dry run mode (default: `true`).
-- `frequi_image`: The Docker image for standalone UI (default: `freqtradeorg/frequi:latest`).
-- `frequi_port`: Port for the standalone Freqtrade UI (default: `3000`).
 - `freqtrade_strategy`: Strategy to run (default: `SampleStrategy`).
 - `freqtrade_hyperliquid_wallet`: Hyperliquid wallet address.
 - `freqtrade_hyperliquid_secret`: Hyperliquid API secret (signing key).
 - `freqtrade_jwt_secret_key`: JWT secret for API server.
 - `freqtrade_api_user`: API server username.
 - `freqtrade_api_password`: API server password.
+
+### Per-Bot Configuration Variables (in `bots` dictionary)
+
+The following variables can be specified for each bot:
+
+- `telegram`: A dictionary containing Telegram settings:
+    - `enabled`: Enable or disable Telegram notifications for this bot (default: `false`).
+    - `telegram_token`: Telegram bot token.
+    - `telegram_chat_id`: Telegram chat ID.
+- `ui_port`: Port for the Freqtrade API/bundled UI.
+- `strategy`: Strategy to run.
+- `hyperliquid_wallet_to_copy`: Hyperliquid wallet address to track (for `copy_hl` strategies).
+- `my_wallet`: Your Hyperliquid wallet address.
+- `my_secret`: Your Hyperliquid API secret (signing key).
+- `dry_run`: Enable or disable dry run mode for this specific bot.
