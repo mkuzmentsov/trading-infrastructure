@@ -45,6 +45,14 @@
     group: "{{ freqtrade_group }}"
     mode: "0644"
 
+- name: Install SampleStrategy
+  ansible.builtin.template:
+    src: "{{ playbook_dir }}/templates/SampleStrategy.py.j2"
+    dest: "{{ freqtrade_stack_dir }}/user_data/strategies/SampleStrategy.py"
+    owner: "{{ freqtrade_user }}"
+    group: "{{ freqtrade_group }}"
+    mode: "0644"
+
 - name: Pull Freqtrade images
   ansible.builtin.command:
     cmd: docker compose --project-name "{{ freqtrade_compose_project_name }}" pull

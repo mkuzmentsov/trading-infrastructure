@@ -13,6 +13,7 @@ This playbook installs a Freqtrade instance on Ubuntu 24.04 hosts using Docker C
 - `tasks/compose_stack.yml`: Freqtrade stack deployment with Docker Compose.
 - `templates/docker-compose.yml.j2`: Compose file template for Freqtrade.
 - `templates/config.json.j2`: Freqtrade configuration template.
+- `templates/SampleStrategy.py.j2`: Sample strategy template.
 
 ## What it does
 
@@ -55,8 +56,8 @@ This playbook installs a Freqtrade instance on Ubuntu 24.04 hosts using Docker C
 
    ```bash
    ansible-playbook -i freqtrade/inventory.ini freqtrade/install_freqtrade_stack.yml \
-     -e freqtrade_exchange_key='your_key' \
-     -e freqtrade_exchange_secret='your_secret' \
+     -e freqtrade_hyperliquid_wallet='your_wallet_address' \
+     -e freqtrade_hyperliquid_secret='your_secret' \
      -e freqtrade_api_password='your_password'
    ```
 
@@ -69,8 +70,8 @@ The following variables can be customized:
 - `frequi_image`: The Docker image for standalone UI (default: `freqtradeorg/frequi:latest`).
 - `frequi_port`: Port for the standalone Freqtrade UI (default: `3000`).
 - `freqtrade_strategy`: Strategy to run (default: `SampleStrategy`).
-- `freqtrade_exchange_key`: Exchange API key.
-- `freqtrade_exchange_secret`: Exchange API secret.
+- `freqtrade_hyperliquid_wallet`: Hyperliquid wallet address.
+- `freqtrade_hyperliquid_secret`: Hyperliquid API secret (signing key).
 - `freqtrade_jwt_secret_key`: JWT secret for API server.
 - `freqtrade_api_user`: API server username.
 - `freqtrade_api_password`: API server password.
