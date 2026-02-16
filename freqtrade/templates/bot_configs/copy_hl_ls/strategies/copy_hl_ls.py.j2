@@ -1012,7 +1012,40 @@ class COPY_HL_LS(IStrategy):
             self.my_open_positions = []
             self._got_perp_data_account_state_successfully = False
 
+        self._update_whitelist_from_copied_positions()
         self.matching_positions_check_output = self.check_print_positions_summary()
+
+    def _update_whitelist_from_copied_positions(self):
+        """Dynamically set the pair whitelist based on new copied positions
+        (ignoring pre-existing ones) plus our own open trades."""
+        try:
+            desired_pairs = set()
+
+            # Add coins the copied wallet holds that were opened AFTER bot start
+            if self.current_positions_to_copy:
+                for coin in self.current_positions_to_copy:
+                    if coin not in self._initial_positions:
+                        desired_pairs.add(f"{coin}/USDC:USDC")
+
+            # Keep our own open trades so exit signals can still fire
+            if self.my_open_positions:
+                for trade in self.my_open_positions:
+                    desired_pairs.add(trade.pair)
+
+            if not desired_pairs:
+                return  # keep current whitelist as-is
+
+            current_wl = set(self.dp.current_whitelist())
+            if desired_pairs == current_wl:
+                return
+
+            pair_list = sorted(desired_pairs)
+            self.config['exchange']['pair_whitelist'] = pair_list
+            self.dp._pairlists._whitelist = pair_list
+            logger.info(f"Whitelist updated ({len(pair_list)} pairs): {pair_list}")
+
+        except Exception as e:
+            logger.error(f"Failed to update whitelist: {e}")
 
     def populate_indicators(self, df: pd.DataFrame, metadata: dict) -> pd.DataFrame:
         coin_ticker = metadata["pair"].replace("/USDC:USDC", "")
