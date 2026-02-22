@@ -1,0 +1,29 @@
+cluster_name: hetzner-k3s-cluster
+kubeconfig_path: "./kubeconfig"
+k3s_version: v1.35.1+k3s1
+
+protect_against_deletion: false
+
+networking:
+  ssh:
+    port: 22
+    use_agent: false
+    public_key_path: "/Users/maxkuzmentsov/development/ssh/hetzner_k3s_id_rsa.pub"
+    private_key_path: "/Users/maxkuzmentsov/development/ssh/hetzner_k3s_id_rsa"
+  allowed_networks:
+    ssh:
+      - 0.0.0.0/0
+    api:
+      - 0.0.0.0/0
+
+masters_pool:
+  instance_type: cx23
+  instance_count: 1
+  locations:
+    - nbg1
+
+worker_node_pools:
+  - name: workers
+    instance_type: cx23
+    instance_count: 1
+    location: nbg1

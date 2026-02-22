@@ -4,3 +4,5 @@ hummingbot/inventory.ini
 hummingbot/env.values.yml
 freqtrade/inventory.ini
 freqtrade/env.values.yml
+
+hetzner-k3s/kubeconfig
