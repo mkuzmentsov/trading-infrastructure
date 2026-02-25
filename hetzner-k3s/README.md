@@ -11,5 +11,5 @@ kubectl get nodes
 ```
 
 ```bash
-hetzner-k3s destroy --config cluster.yaml
+hetzner-k3s delete --config cluster.yaml
 ```
