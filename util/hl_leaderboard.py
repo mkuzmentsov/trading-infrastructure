@@ -9,6 +9,7 @@ Usage:
     python3 util/hl_leaderboard.py
     python3 util/hl_leaderboard.py --top 20 --min-account 100000
     python3 util/hl_leaderboard.py --sort month_roi --min-roi-day 0 --min-roi-week 0 --min-roi-month 0.05
+    python3 util/hl_leaderboard.py --min-roe-week 0.05 --min-roe-month 0.1
 """
 
 import argparse
@@ -50,6 +51,42 @@ class TraderStats:
 
 
 import time as _time
+
+
+@dataclass
+class PerpState:
+    account_value: float
+    day_roe: float    # day_pnl / account_value
+    week_roe: float
+    month_roe: float
+    position_roes: list[dict]  # per-position returnOnEquity from live positions
+
+
+def fetch_perp_state(address: str, trader_stats) -> Optional[PerpState]:
+    """Fetch clearinghouseState and compute perp ROE metrics."""
+    payload = json.dumps({"type": "clearinghouseState", "user": address}).encode()
+    req = urllib.request.Request(HL_API_URL, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        account_value = float(data.get("marginSummary", {}).get("accountValue", 0) or 0)
+        if account_value <= 0:
+            return None
+        position_roes = []
+        for pos in data.get("assetPositions", []):
+            p = pos.get("position", {})
+            roe_raw = p.get("returnOnEquity")
+            if roe_raw is not None:
+                position_roes.append({"coin": p.get("coin", "?"), "roe": float(roe_raw)})
+        return PerpState(
+            account_value=account_value,
+            day_roe=trader_stats.day_pnl / account_value,
+            week_roe=trader_stats.week_pnl / account_value,
+            month_roe=trader_stats.month_pnl / account_value,
+            position_roes=position_roes,
+        )
+    except Exception:
+        return None
 
 
 def fetch_24h_opens(address: str) -> list[dict]:
@@ -151,6 +188,9 @@ def main():
     parser.add_argument("--min-vlm-month", type=float, default=0.0, help="Min trading volume in month window in USD (default: 0)")
     parser.add_argument("--sort", choices=["score", "day_roi", "week_roi", "month_roi", "alltime_pnl", "account"],
                         default="score", help="Sort key (default: score = weighted day/week/month ROI)")
+    parser.add_argument("--min-roe-day", type=float, default=None, help="Min perp ROE for day window (e.g. 0.01 = 1%%)")
+    parser.add_argument("--min-roe-week", type=float, default=None, help="Min perp ROE for week window")
+    parser.add_argument("--min-roe-month", type=float, default=None, help="Min perp ROE for month window")
     parser.add_argument("--check-positions", action=argparse.BooleanOptionalAction, default=True,
                         help="Fetch positions opened in last 24h for each result (default: on, use --no-check-positions to skip)")
     args = parser.parse_args()
@@ -193,57 +233,94 @@ def main():
     # wallets that opened positions in the last 24h, until we have args.top results.
     if args.check_positions:
         print(f"Scanning for wallets with positions opened in last 24h (need {args.top})...\n")
-        active_results: list[tuple] = []  # (trader, opens)
+        active_results: list[tuple] = []  # (trader, opens, perp_state)
         scanned = 0
         for t in filtered:
             if len(active_results) >= args.top:
                 break
             scanned += 1
+            perp = fetch_perp_state(t.address, t)
+            _time.sleep(0.2)
+            if perp is None:
+                print(f"  skip  {t.address}  ({t.label()})  — zero perp account value (spot-only or no margin)", flush=True)
+                continue
+            if args.min_roe_day is not None and perp.day_roe < args.min_roe_day:
+                print(f"  skip  {t.address}  ({t.label()})  — day ROE {fmt_pct(perp.day_roe)} < {fmt_pct(args.min_roe_day)}", flush=True)
+                continue
+            if args.min_roe_week is not None and perp.week_roe < args.min_roe_week:
+                print(f"  skip  {t.address}  ({t.label()})  — week ROE {fmt_pct(perp.week_roe)} < {fmt_pct(args.min_roe_week)}", flush=True)
+                continue
+            if args.min_roe_month is not None and perp.month_roe < args.min_roe_month:
+                print(f"  skip  {t.address}  ({t.label()})  — month ROE {fmt_pct(perp.month_roe)} < {fmt_pct(args.min_roe_month)}", flush=True)
+                continue
             opens = fetch_24h_opens(t.address)
-            _time.sleep(0.3)  # be polite to the API
+            _time.sleep(0.2)
             if not opens:
                 print(f"  skip  {t.address}  ({t.label()})  — no positions in last 24h", flush=True)
                 continue
             if t.week_roi <= 0 or t.month_roi <= 0:
                 print(f"  skip  {t.address}  ({t.label()})  — week or month ROI ≤ 0", flush=True)
                 continue
-            print(f"  found {t.address}  ({t.label()})  [{len(opens)} position(s)]", flush=True)
-            active_results.append((t, opens))
+            print(f"  found {t.address}  ({t.label()})  [{len(opens)} position(s)]  "
+                  f"ROE day={fmt_pct(perp.day_roe)} week={fmt_pct(perp.week_roe)} month={fmt_pct(perp.month_roe)}", flush=True)
+            active_results.append((t, opens, perp))
 
         top_with_opens = active_results
         print(f"\nScanned {scanned} wallets, found {len(top_with_opens)} active traders.\n")
     else:
-        top_with_opens = [(t, []) for t in filtered[: args.top]]
+        top_with_opens = [(t, [], None) for t in filtered[: args.top]]
 
-    top = [t for t, _ in top_with_opens]
+    top = [t for t, _, _ in top_with_opens]
+    top_perp = [p for _, _, p in top_with_opens]
 
     print(f"Showing top {len(top)}, sorted by: {args.sort}\n")
 
-    header = f"{'#':>3}  {'Address':<44}  {'Name':<16}  {'Account':>10}  " \
-             f"{'Day ROI':>9}  {'Day PnL':>10}  " \
-             f"{'Week ROI':>9}  {'Week PnL':>10}  " \
-             f"{'Month ROI':>9}  {'Month PnL':>10}  " \
-             f"{'AllTime PnL':>12}"
+    has_perp = any(p is not None for p in top_perp)
+    if has_perp:
+        header = f"{'#':>3}  {'Address':<44}  {'Name':<16}  {'Acct(perp)':>10}  " \
+                 f"{'Day ROE':>9}  {'Day PnL':>10}  " \
+                 f"{'Week ROE':>9}  {'Week PnL':>10}  " \
+                 f"{'Month ROE':>9}  {'Month PnL':>10}  " \
+                 f"{'AllTime PnL':>12}"
+    else:
+        header = f"{'#':>3}  {'Address':<44}  {'Name':<16}  {'Account':>10}  " \
+                 f"{'Day ROI':>9}  {'Day PnL':>10}  " \
+                 f"{'Week ROI':>9}  {'Week PnL':>10}  " \
+                 f"{'Month ROI':>9}  {'Month PnL':>10}  " \
+                 f"{'AllTime PnL':>12}"
     print(header)
     print("-" * len(header))
 
-    for i, t in enumerate(top, 1):
-        print(
-            f"{i:>3}  {t.address:<44}  {t.label():<16}  {fmt_acc(t.account_value):>10}  "
-            f"{fmt_pct(t.day_roi):>9}  {fmt_usd(t.day_pnl):>10}  "
-            f"{fmt_pct(t.week_roi):>9}  {fmt_usd(t.week_pnl):>10}  "
-            f"{fmt_pct(t.month_roi):>9}  {fmt_usd(t.month_pnl):>10}  "
-            f"{fmt_usd(t.alltime_pnl):>12}"
-        )
+    for i, (t, perp) in enumerate(zip(top, top_perp), 1):
+        if perp is not None:
+            print(
+                f"{i:>3}  {t.address:<44}  {t.label():<16}  {fmt_acc(perp.account_value):>10}  "
+                f"{fmt_pct(perp.day_roe):>9}  {fmt_usd(t.day_pnl):>10}  "
+                f"{fmt_pct(perp.week_roe):>9}  {fmt_usd(t.week_pnl):>10}  "
+                f"{fmt_pct(perp.month_roe):>9}  {fmt_usd(t.month_pnl):>10}  "
+                f"{fmt_usd(t.alltime_pnl):>12}"
+            )
+        else:
+            print(
+                f"{i:>3}  {t.address:<44}  {t.label():<16}  {fmt_acc(t.account_value):>10}  "
+                f"{fmt_pct(t.day_roi):>9}  {fmt_usd(t.day_pnl):>10}  "
+                f"{fmt_pct(t.week_roi):>9}  {fmt_usd(t.week_pnl):>10}  "
+                f"{fmt_pct(t.month_roi):>9}  {fmt_usd(t.month_pnl):>10}  "
+                f"{fmt_usd(t.alltime_pnl):>12}"
+            )
 
     # Positions opened in last 24h (already fetched above when check_positions is on)
     if args.check_positions and top_with_opens:
         print("\n" + "=" * 80)
         print("POSITIONS OPENED IN LAST 24H")
         print("=" * 80)
-        for i, (t, opens) in enumerate(top_with_opens, 1):
+        for i, (t, opens, perp) in enumerate(top_with_opens, 1):
             name = t.display_name if t.display_name else t.address[:12] + "..."
-            print(f"\n#{i:>2}  {name} ({t.address})")
+            roe_str = ""
+            if perp and perp.position_roes:
+                roe_parts = "  ".join(f"{r['coin']} ROE={fmt_pct(r['roe'])}" for r in perp.position_roes)
+                roe_str = f"\n       Live position ROE: {roe_parts}"
+            print(f"\n#{i:>2}  {name} ({t.address}){roe_str}")
             for p in sorted(opens, key=lambda x: x["time_ms"]):
                 print(f"       {p['side']:5}  {p['coin']:<8}  @ ${p['price']:,.2f}  opened: {p['time_str']} UTC")
 
@@ -251,6 +328,7 @@ def main():
     print("\n--- Wallet addresses (copy-paste ready) ---")
     for t in top:
         print(t.address)
+
 
 
 if __name__ == "__main__":
