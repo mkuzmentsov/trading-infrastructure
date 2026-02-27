@@ -762,6 +762,9 @@ class COPY_HL_LS(IStrategy):
             perp_data = self.GET_PERP_ACCOUNT_STATUS(self.ADDRESS_TO_TRACK)
             if perp_data:
                 copied_account_value = float(perp_data["marginSummary"]["accountValue"])
+                if copied_account_value == 0:
+                    logger.error(f"Copied account {self.ADDRESS_TO_TRACK} has zero perp account value — not a perp trader or no margin deposited")
+                    return matching_positions_output
                 my_account_value = float(self.get_stake_total())
                 scale_factor = my_account_value / copied_account_value
 
@@ -1257,6 +1260,9 @@ class COPY_HL_LS(IStrategy):
 
             perp_data = self.GET_PERP_ACCOUNT_STATUS(self.ADDRESS_TO_TRACK)
             copied_account_value = float(perp_data["marginSummary"]["accountValue"])
+            if copied_account_value == 0:
+                logger.error("Copied account has zero perp account value")
+                return None
             my_account_value = float(self.get_stake_total())
             scale_factor = my_account_value / copied_account_value
 
@@ -1372,6 +1378,9 @@ class COPY_HL_LS(IStrategy):
 
             if self.copied_account_position_changes:
                 copied_account_value = float(perp_data["marginSummary"]["accountValue"])
+                if copied_account_value == 0:
+                    logger.error("Copied account has zero perp account value")
+                    return None
                 my_account_value = float(self.get_stake_total())
                 scale_factor = my_account_value / copied_account_value
 

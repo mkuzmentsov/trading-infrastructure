@@ -999,6 +999,11 @@ class COPY_HL_LS(IStrategy):
                             f"Removed {chg.coin} from initial positions snapshot (closed by copied account). "
                             f"Will copy if re-opened."
                         )
+                    elif "opened" in chg.change_type and chg.coin in self._initial_positions:
+                        direction = "LONG" if chg.change_type == "opened_long" else "SHORT"
+                        logger.info(
+                            f"Skipping {chg.coin} {direction} — position existed before bot start"
+                        )
 
             self.my_open_positions = Trade.get_trades_proxy(is_open=True)
 
