@@ -19,10 +19,13 @@ config:
   availableCapital: 1000.0
   tradingMode: futures
   marginMode: isolated
+  leverageRatio: 0.5
 
 exchange:
   walletAddress: ""
   privateKey: ""
+  # Sub-account address to trade on behalf of (leave empty if trading on the primary account)
+  vaultAddress: ""
   # Address of the wallet to copy (copy_hl_ls strategy only)
   walletToCopy: ""
 

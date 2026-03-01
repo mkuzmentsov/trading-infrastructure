@@ -1,5 +1,5 @@
 import pandas as pd
-from freqtrade.strategy import IStrategy, IntParameter
+from freqtrade.strategy import IStrategy, IntParameter, DecimalParameter
 from freqtrade.persistence import Trade
 import logging
 import os
@@ -665,7 +665,7 @@ class COPY_HL_LS(IStrategy):
     position_adjustment_enable = True
 
     # Tunable parameters
-    LEV = IntParameter(1, 6, default=6, space="buy", optimize=False)  # Leverage to use
+    LEVERAGE_RATIO = DecimalParameter(0.1, 1.0, default=0.5, decimals=2, space="buy", optimize=False)  # Fraction of max exchange leverage to use (e.g. 0.5 → 20x on BTC, 10x on SOL)
     change_threshold = 0.5  # in %
     adjustement_threshold = 10.0  # in %
     ADDRESS_TO_TRACK = "{{ .Values.exchange.walletToCopy }}"
@@ -1315,8 +1315,7 @@ class COPY_HL_LS(IStrategy):
             if coin_ticker in self.current_positions_to_copy:
                 copied_margin = float(self.current_positions_to_copy[coin_ticker].margin_used)
             else:
-                copied_leverage = float(self.current_positions_to_copy[coin_ticker].leverage) if coin_ticker in self.current_positions_to_copy else leverage
-                copied_margin = position_value_in_copied_account / copied_leverage
+                copied_margin = position_value_in_copied_account / leverage
             returned_val = copied_margin * scale_factor - dust_USDC
 
             if returned_val < min_stake:
@@ -1409,14 +1408,13 @@ class COPY_HL_LS(IStrategy):
                         )
                         new_size = float(chg.new_size)
 
-                        copied_leverage = float(self.current_positions_to_copy[coin_ticker].leverage) if coin_ticker in self.current_positions_to_copy else trade.leverage
                         delta_stake = (
                                 abs(
                                     float(chg.old_position_value)
                                     - float(chg.new_position_value)
                                 )
-                                / copied_leverage
                                 * scale_factor
+                                / trade.leverage
                         )
                         adjustment_amount = delta_stake - dust_USDC
 
@@ -1474,10 +1472,4 @@ class COPY_HL_LS(IStrategy):
             side: str,
             **kwargs,
     ) -> float:
-        coin_ticker = pair.replace("/USDC:USDC", "")
-        if self.current_positions_to_copy and coin_ticker in self.current_positions_to_copy:
-            copied_lev = float(self.current_positions_to_copy[coin_ticker].leverage)
-            lev = min(copied_lev, max_leverage)
-        else:
-            lev = min(self.LEV.value, max_leverage)
-        return lev
+        return max(1, round(max_leverage * self.LEVERAGE_RATIO.value))
