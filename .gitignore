@@ -8,3 +8,5 @@ freqtrade/env.values.yml
 hetzner-k3s/kubeconfig
 
 freqtrade/k8s/helm/bots/*
+
+logs

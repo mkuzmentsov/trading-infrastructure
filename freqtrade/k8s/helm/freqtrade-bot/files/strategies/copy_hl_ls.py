@@ -854,7 +854,7 @@ class COPY_HL_LS(IStrategy):
                         )
 
                         logger.info(
-                            f"    {coin:>8} | Copied: ${copied_value:>8.2f} -> Expected: ${expected_value:>8.2f} | "
+                            f"    {coin:>8} | Copied: ${copied_margin:>8.2f} -> Expected: ${expected_value:>8.2f} | "
                             f"Actual: ${my_value:>8.2f} | Diff: {diff_pc:>6.1f}%"
                         )
 
