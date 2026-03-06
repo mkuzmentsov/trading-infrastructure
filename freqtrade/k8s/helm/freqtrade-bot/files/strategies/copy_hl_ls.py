@@ -15,6 +15,7 @@ from dataclasses import dataclass, asdict
 from copy import deepcopy
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -1155,6 +1156,7 @@ class COPY_HL_LS(IStrategy):
                 logger.info(
                     f"Missed exit detected for {coin_ticker}. Sending exit signal."
                 )
+                self._force_exit_trade(coin_ticker)
 
             #   in current positions to copy but not really because very small amount, but somehow in my current position
             if (
@@ -1166,11 +1168,55 @@ class COPY_HL_LS(IStrategy):
                     logger.info(
                         f"Missed exit detected for {coin_ticker}. Sending exit signal."
                     )
+                    self._force_exit_trade(coin_ticker)
 
         except Exception as e:
             logger.error(f"Error checking missed positions for {coin_ticker}: {e}")
 
         return df
+
+    def _force_exit_trade(self, coin_ticker: str) -> None:
+        """
+        Force-close all open Freqtrade trades for coin_ticker via the REST API.
+        This bypasses the candle-data staleness check that blocks signal-based exits.
+        """
+        try:
+            api_cfg = self.config.get("api_server", {})
+            host = api_cfg.get("listen_ip_address", "127.0.0.1")
+            port = api_cfg.get("listen_port", 8080)
+            user = api_cfg.get("username", "")
+            password = api_cfg.get("password", "")
+            base_url = f"http://{host}:{port}/api/v1"
+
+            open_trades = Trade.get_trades_proxy(is_open=True)
+            pair = f"{coin_ticker}/USDC:USDC"
+            trades_to_close = [t for t in open_trades if t.pair == pair]
+
+            if not trades_to_close:
+                logger.warning(f"[force_exit] No open trades found for {pair}, nothing to force-close.")
+                return
+
+            for trade in trades_to_close:
+                resp = requests.post(
+                    f"{base_url}/forceexit",
+                    json={"tradeid": str(trade.id)},
+                    auth=(user, password),
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    logger.info(
+                        f"[force_exit] SUCCESS — Trade #{trade.id} ({pair}, "
+                        f"{'SHORT' if trade.is_short else 'LONG'}, "
+                        f"open_rate={trade.open_rate}) force-closed via REST API."
+                    )
+                else:
+                    logger.error(
+                        f"[force_exit] FAILED — Trade #{trade.id} ({pair}): "
+                        f"HTTP {resp.status_code} — {resp.text}"
+                    )
+
+        except Exception as e:
+            logger.error(f"[force_exit] Exception while force-closing {coin_ticker}: {e}")
 
     def _is_position_significant(self, coin_ticker):
         """Check if position is significant enough to copy"""
