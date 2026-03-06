@@ -1,0 +1,54 @@
+# Example per-bot values file. Copy to hl_wb_arb_1.yaml and fill in credentials.
+# This file is gitignored — never commit live keys.
+
+image:
+  repository: mkuzmentsov/hummingbot-wb
+  tag: "0.1"
+
+# Hyperliquid wallet credentials
+hyperliquid:
+  walletAddress: "0xYOUR_WALLET_ADDRESS"
+  privateKey: "0xYOUR_PRIVATE_KEY"
+
+# WhiteBIT API credentials (create at https://whitebit.com/settings/api)
+whitebit:
+  apiKey: "YOUR_WB_API_KEY"
+  secretKey: "YOUR_WB_SECRET_KEY"
+
+# Which coin pairs to arb and how much per order
+arbitrage:
+  tradingPairs:
+    - hl: "BTC-USDC"
+      wb: "BTC_USDT"
+      orderAmount: "0.001"   # ~$90 per leg at $90k BTC
+    - hl: "ETH-USDC"
+      wb: "ETH_USDT"
+      orderAmount: "0.01"    # ~$20 per leg at $2k ETH
+
+  # Minimum net profit (after fees) to fire an instant-arb trade
+  minProfitability: "0.002"   # 0.2%
+
+  # Fees (adjust if your account tier differs)
+  hlFeePct: "0.00035"   # Hyperliquid taker 0.035%
+  wbFeePct: "0.001"     # WhiteBIT taker 0.1%
+
+# Telegram alerts (optional)
+telegram:
+  enabled: false
+  token: "YOUR_TELEGRAM_BOT_TOKEN"
+  chatId: "YOUR_CHAT_ID"
+
+# Hummingbot REST API credentials
+api:
+  enabled: true
+  user: hummingbot
+  password: "CHANGE_ME"
+
+# Ingress (optional, requires nginx-ingress in the cluster)
+ingress:
+  enabled: false
+  host: "hummingbot-arb-1.yourdomain.com"
+
+persistence:
+  enabled: true
+  size: 2Gi
