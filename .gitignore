@@ -10,3 +10,5 @@ hetzner-k3s/kubeconfig
 freqtrade/k8s/helm/bots/*
 
 logs
+
+util/output
