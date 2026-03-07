@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import time as _time
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
@@ -48,9 +49,6 @@ class TraderStats:
 
     def label(self) -> str:
         return self.display_name if self.display_name else self.address[:10] + "..."
-
-
-import time as _time
 
 
 @dataclass
@@ -106,11 +104,13 @@ def fetch_perp_state(address: str, trader_stats) -> Optional[PerpState]:
         roe_raw = p.get("returnOnEquity")
         if roe_raw is not None:
             position_roes.append({"coin": p.get("coin", "?"), "roe": float(roe_raw)})
+    # Use the leaderboard's ROI directly — it's computed by HL against beginning-of-period
+    # equity, which is more accurate than dividing current-period PnL by current account value.
     return PerpState(
         account_value=account_value,
-        day_roe=trader_stats.day_pnl / account_value,
-        week_roe=trader_stats.week_pnl / account_value,
-        month_roe=trader_stats.month_pnl / account_value,
+        day_roe=trader_stats.day_roi,
+        week_roe=trader_stats.week_roi,
+        month_roe=trader_stats.month_roi,
         position_roes=position_roes,
     )
 
@@ -145,7 +145,7 @@ def fetch_activity_stats(address: str) -> ActivityStats:
         coin = f["coin"]
         side = "LONG" if "Long" in direction else "SHORT"
         ts_ms = f["time"]
-        if coin not in opens or ts_ms < opens[coin]["time_ms"]:
+        if coin not in opens or ts_ms > opens[coin]["time_ms"]:
             opens[coin] = {
                 "coin": coin,
                 "side": side,
@@ -155,12 +155,20 @@ def fetch_activity_stats(address: str) -> ActivityStats:
             }
 
     # --- Wallet age: earliest fill since HL launch ---
+    # Use a shorter timeout; active traders can have tens of thousands of fills and a full
+    # history fetch is often slow. Fall back to the oldest fill in the 30d window if it fails.
     first_trade_ms: Optional[int] = None
-    all_fills = _hl_post({"type": "userFillsByTime", "user": address, "startTime": HL_LAUNCH_MS}, timeout=15)
+    _time.sleep(0.2)
+    all_fills = _hl_post({"type": "userFillsByTime", "user": address, "startTime": HL_LAUNCH_MS}, timeout=8)
     if all_fills:
         timestamps = [f["time"] for f in all_fills if "time" in f]
         if timestamps:
             first_trade_ms = min(timestamps)
+    else:
+        # Fallback: use the oldest fill we already have from the 30d window
+        ts_30d = [f["time"] for f in fills_30d if "time" in f]
+        if ts_30d:
+            first_trade_ms = min(ts_30d)
 
     return ActivityStats(
         trades_24h=trades_24h,
@@ -173,9 +181,13 @@ def fetch_activity_stats(address: str) -> ActivityStats:
 
 def fetch_leaderboard() -> list[dict]:
     req = urllib.request.Request(LEADERBOARD_URL, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read())
-    return data.get("leaderboardRows", [])
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        return data.get("leaderboardRows", [])
+    except Exception as e:
+        print(f"ERROR: Failed to fetch leaderboard: {e}")
+        return []
 
 
 def parse_row(row: dict) -> Optional[TraderStats]:
@@ -201,7 +213,8 @@ def parse_row(row: dict) -> Optional[TraderStats]:
             alltime_pnl=get("allTime", "pnl"),
             alltime_roi=get("allTime", "roi"),
         )
-    except Exception:
+    except Exception as e:
+        print(f"WARNING: Failed to parse leaderboard row: {e}  row={str(row)[:120]}")
         return None
 
 
@@ -236,7 +249,7 @@ def main():
     parser.add_argument("--min-vlm-day", type=float, default=0.0, help="Min trading volume in day window in USD (default: 0)")
     parser.add_argument("--min-vlm-week", type=float, default=0.0, help="Min trading volume in week window in USD (default: 0)")
     parser.add_argument("--min-vlm-month", type=float, default=0.0, help="Min trading volume in month window in USD (default: 0)")
-    parser.add_argument("--sort", choices=["score", "day_roi", "week_roi", "month_roi", "alltime_pnl", "account"],
+    parser.add_argument("--sort", choices=["score", "day_roi", "week_roi", "month_roi", "alltime_pnl", "alltime_roi", "account"],
                         default="score", help="Sort key (default: score = weighted day/week/month ROI)")
     parser.add_argument("--min-roe-day", type=float, default=None, help="Min perp ROE for day window (e.g. 0.01 = 1%%)")
     parser.add_argument("--min-roe-week", type=float, default=None, help="Min perp ROE for week window")
@@ -269,14 +282,23 @@ def main():
         "week_roi":    lambda t: t.week_roi,
         "month_roi":   lambda t: t.month_roi,
         "alltime_pnl": lambda t: t.alltime_pnl,
+        "alltime_roi": lambda t: t.alltime_roi,
         "account":     lambda t: t.account_value,
     }[args.sort]
 
     filtered.sort(key=sort_key, reverse=True)
 
+    vlm_parts = []
+    if args.min_vlm_day > 0:
+        vlm_parts.append(f"day_vlm≥{fmt_acc(args.min_vlm_day)}")
+    if args.min_vlm_week > 0:
+        vlm_parts.append(f"week_vlm≥{fmt_acc(args.min_vlm_week)}")
+    if args.min_vlm_month > 0:
+        vlm_parts.append(f"month_vlm≥{fmt_acc(args.min_vlm_month)}")
+    vlm_str = (", " + ", ".join(vlm_parts)) if vlm_parts else ""
     print(f"Profitable in all windows (day≥{fmt_pct(args.min_roi_day)}, "
           f"week≥{fmt_pct(args.min_roi_week)}, month≥{fmt_pct(args.min_roi_month)}), "
-          f"account≥{fmt_acc(args.min_account)}: {len(filtered)} traders")
+          f"account≥{fmt_acc(args.min_account)}{vlm_str}: {len(filtered)} traders")
 
     if args.check_positions:
         print(f"Scanning for wallets with positions opened in last 24h (need {args.top})...\n")
@@ -307,8 +329,8 @@ def main():
             if not activity.opens_24h:
                 print(f"  skip  {t.address}  ({t.label()})  — no positions opened in last 24h", flush=True)
                 continue
-            if t.week_roi <= 0 or t.month_roi <= 0:
-                print(f"  skip  {t.address}  ({t.label()})  — week or month ROI ≤ 0", flush=True)
+            if t.week_roi < 0 or t.month_roi < 0:
+                print(f"  skip  {t.address}  ({t.label()})  — week or month ROI < 0", flush=True)
                 continue
 
             print(f"  found {t.address}  ({t.label()})  "
