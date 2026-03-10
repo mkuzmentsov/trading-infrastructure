@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import os
 import time as _time
 import urllib.request
 from dataclasses import dataclass, field
@@ -23,6 +24,16 @@ from typing import Optional
 LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 HL_API_URL = "https://api.hyperliquid.xyz/info"
 HL_LAUNCH_MS = 1_698_796_800_000  # Nov 1, 2023 — Hyperliquid mainnet launch
+
+DEFAULT_WALLETS_FILE = os.path.join(os.path.dirname(__file__), "wallets-of-interest.txt")
+
+
+def load_wallets_of_interest(path: str) -> list[str]:
+    try:
+        with open(path) as f:
+            return [line.strip().lower() for line in f if line.strip() and not line.startswith("#")]
+    except FileNotFoundError:
+        return []
 
 
 @dataclass
@@ -256,6 +267,8 @@ def main():
     parser.add_argument("--min-roe-month", type=float, default=None, help="Min perp ROE for month window")
     parser.add_argument("--check-positions", action=argparse.BooleanOptionalAction, default=True,
                         help="Fetch positions opened in last 24h for each result (default: on, use --no-check-positions to skip)")
+    parser.add_argument("--wallets-file", default=DEFAULT_WALLETS_FILE,
+                        help=f"File with wallet addresses to always check first (default: {DEFAULT_WALLETS_FILE})")
     args = parser.parse_args()
 
     print("Fetching leaderboard...", flush=True)
@@ -274,7 +287,21 @@ def main():
         and t.day_vlm >= args.min_vlm_day
         and t.week_vlm >= args.min_vlm_week
         and t.month_vlm >= args.min_vlm_month
+        and t.alltime_pnl > 0
     ]
+
+    # Prepend wallets-of-interest (always checked first, bypass filters)
+    wallets_of_interest = load_wallets_of_interest(args.wallets_file)
+    if wallets_of_interest:
+        trader_by_addr = {t.address.lower(): t for t in traders}
+        pinned = [trader_by_addr[w] for w in wallets_of_interest if w in trader_by_addr]
+        pinned_addrs = {t.address.lower() for t in pinned}
+        filtered = pinned + [t for t in filtered if t.address.lower() not in pinned_addrs]
+        if pinned:
+            print(f"Prepended {len(pinned)} wallet(s) of interest: {', '.join(t.address for t in pinned)}")
+        missing = [w for w in wallets_of_interest if w not in trader_by_addr]
+        if missing:
+            print(f"WARNING: {len(missing)} wallet(s) of interest not found in leaderboard: {', '.join(missing)}")
 
     sort_key = {
         "score":       lambda t: t.combined_score,
@@ -297,7 +324,7 @@ def main():
         vlm_parts.append(f"month_vlm≥{fmt_acc(args.min_vlm_month)}")
     vlm_str = (", " + ", ".join(vlm_parts)) if vlm_parts else ""
     print(f"Profitable in all windows (day≥{fmt_pct(args.min_roi_day)}, "
-          f"week≥{fmt_pct(args.min_roi_week)}, month≥{fmt_pct(args.min_roi_month)}), "
+          f"week≥{fmt_pct(args.min_roi_week)}, month≥{fmt_pct(args.min_roi_month)}, alltime_pnl>0), "
           f"account≥{fmt_acc(args.min_account)}{vlm_str}: {len(filtered)} traders")
 
     if args.check_positions:
