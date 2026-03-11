@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "polymarket-bot.name" . }}
+  labels:
+    {{- include "polymarket-bot.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "polymarket-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "polymarket-bot.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: polymarket-claude
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "polymarket-bot.name" . }}-secret
+          volumeMounts:
+            - name: script
+              mountPath: /app/pm_claude.py
+              subPath: pm_claude.py
+            - name: data
+              mountPath: /app/data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: script
+          configMap:
+            name: {{ include "polymarket-bot.name" . }}-script
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "polymarket-bot.name" . }}-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

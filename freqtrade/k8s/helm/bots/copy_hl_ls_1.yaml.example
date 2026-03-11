@@ -1,0 +1,26 @@
+strategy: COPY_HL_LS
+strategyFileName: copy_hl_ls.py
+
+config:
+  dryRun: false # set to true to test the strategy (no real trades will be made)
+
+exchange:
+  walletAddress: "0x00000000000000000000000000000000000000" # your wallet address
+  privateKey: "0x00000000000000000000000000000000000000" # your API private key
+  vaultAddress: "0x00000000000000000000000000000000000000" # your vault address if there are sub-accounts (in this case walletAddress will be equal to vaultAddress)
+  walletToCopy: "0x00000000000000000000000000000000000000" # wallet address to copy from
+
+telegram:
+  enabled: true
+  token: "XXXXXXX:XXXXXXXXXXXX"
+  chatId: "XXXXXXXX"
+
+api:
+  # FreqTrade API config (not used in k8s - since no external access)
+  user: XXXXXXX
+  password: "XXXXXXXX"
+  jwtSecretKey: "XXXXXXXXX"
+
+ingress:
+  enabled: false
+  host: "copy-hl-ls-1.yourdomain.com"

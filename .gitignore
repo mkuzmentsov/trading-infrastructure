@@ -1,14 +1,16 @@
 .idea
-.ansible
-hummingbot/inventory.ini
-hummingbot/env.values.yml
-freqtrade/inventory.ini
-freqtrade/env.values.yml
 
-hetzner-k3s/kubeconfig
+hummingbot/k8s/helm/bots/*
+!hummingbot/k8s/helm/bots/hl_wb_arb_1.yaml.example
 
 freqtrade/k8s/helm/bots/*
+!freqtrade/k8s/helm/bots/copy_hl_ls_1.yaml.example
+
+polymarket/k8s/helm/bots/*
+!polymarket/k8s/helm/bots/pm_claude_1.yaml.example
 
 logs
 
 util/output
+
+hetzner-k3s/kubeconfig

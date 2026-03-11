@@ -1,0 +1,52 @@
+botName: polymarket-bot
+
+image:
+  repository: mkuzmentsov/pm-bot
+  tag: "0.4"
+  pullPolicy: Always
+
+bot:
+  dryRun: "true"
+  # Min 24h volume (USD) for a market to be considered
+  minMarketVolume: "10000"
+  # Min edge to include a market as a candidate (0.05 = 5 percentage points)
+  minEdge: "0.05"
+  # Max fraction of balance Claude may allocate per scan cycle (0.20 = 20%)
+  maxDeployFraction: "0.20"
+  # Max candidate markets to send to Claude per cycle (more = more bet opportunities)
+  maxMarketsPerLoop: "40"
+  # Per-bet size range in USDC — Claude stays within these bounds
+  betSizeMin: "0.15"
+  betSizeMax: "25"
+  # Seconds between loop iterations
+  loopIntervalSecs: "600"
+
+credentials:
+  anthropicApiKey: ""
+  polymarketPrivateKey: ""   # hex private key (0x...) — needed to sign orders
+  polymarketAddress: ""      # 0x... wallet address
+  # If you already have API credentials from Polymarket (key/secret/passphrase),
+  # set them here to skip the automatic create_api_key() call on first run.
+  # Leave empty to auto-generate from private key.
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  # 0 = EOA (standard MetaMask wallet), 2 = Gnosis Safe
+  polymarketSignatureType: "0"
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: 200m
