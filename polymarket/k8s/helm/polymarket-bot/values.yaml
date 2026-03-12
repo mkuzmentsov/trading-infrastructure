@@ -20,6 +20,7 @@ bot:
   betSizeMax: "25"
   # Seconds between loop iterations
   loopIntervalSecs: "600"
+  claudeEnabled: "true"
 
 credentials:
   anthropicApiKey: ""

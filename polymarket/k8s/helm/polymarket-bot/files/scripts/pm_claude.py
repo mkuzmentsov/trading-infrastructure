@@ -65,9 +65,10 @@ MIN_MARKET_VOLUME         = float(os.environ.get("MIN_MARKET_VOLUME", "50000"))
 MIN_EDGE                  = float(os.environ.get("MIN_EDGE", "0.05"))
 MAX_DEPLOY_FRACTION       = float(os.environ.get("MAX_DEPLOY_FRACTION", "0.20"))
 MAX_MARKETS_PER_LOOP      = int(os.environ.get("MAX_MARKETS_PER_LOOP", "40"))
-BET_SIZE_MIN              = float(os.environ.get("BET_SIZE_MIN", "4"))
+BET_SIZE_MIN              = float(os.environ.get("BET_SIZE_MIN", "1.0"))
 BET_SIZE_MAX              = float(os.environ.get("BET_SIZE_MAX", "25"))
 LOOP_INTERVAL_SECS        = int(os.environ.get("LOOP_INTERVAL_SECS", "600"))
+CLAUDE_ENABLED            = os.environ.get("CLAUDE_ENABLED", "true").lower() == "true"
 TELEGRAM_TOKEN            = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID          = os.environ.get("TELEGRAM_CHAT_ID", "")
 DATA_DIR                  = Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -79,34 +80,41 @@ CHAIN_ID   = 137   # Polygon mainnet
 # ── Data classes ───────────────────────────────────────────────────────────────
 
 @dataclass
+class Outcome:
+    label:    str
+    price:    float   # 0–1 implied probability
+    token_id: str
+
+
+@dataclass
 class Market:
-    condition_id:  str
-    question:      str
-    description:   str
-    yes_price:     float   # 0–1, market-implied YES probability
-    no_price:      float
-    volume_24h:    float
-    volume_total:  float
-    end_date:      str
-    yes_token_id:  str
-    no_token_id:   str
+    condition_id: str
+    question:     str
+    description:  str
+    volume_24h:   float
+    volume_total: float
+    end_date:     str
+    neg_risk:     bool
+    min_size:     float  # minimum order size in USDC (from orderMinSize)
+    outcomes:     list  # list of Outcome
 
 
 @dataclass
 class Assessment:
-    action:      str    # BUY_YES | BUY_NO
-    probability: float  # Claude's YES probability estimate
-    confidence:  str    # low | medium | high
-    edge:        float  # |Claude prob − market price|
-    bet_usdc:    float  # amount Claude decided to bet
-    reasoning:   str
+    outcome_idx:   int    # index into market.outcomes
+    outcome_label: str
+    price:         float  # price of selected outcome
+    probability:   float  # Claude's estimate
+    edge:          float
+    bet_usdc:      float
+    reasoning:     str
 
 
 @dataclass
 class Position:
     condition_id: str
     question:     str
-    side:         str    # YES | NO
+    outcome:      str
     token_id:     str
     entry_price:  float
     size_usdc:    float
@@ -137,21 +145,75 @@ def _positions_path() -> Path:
 
 
 def load_positions() -> dict[str, Position]:
-    p = _positions_path()
-    if not p.exists():
-        return {}
+    """
+    Load existing positions from Polymarket API (open orders + filled trades).
+    Falls back to local filesystem cache if API is unavailable.
+    """
     try:
-        raw = json.loads(p.read_text())
-        return {k: Position(**v) for k, v in raw.items()}
+        clob     = _get_clob_client()
+        positions: dict[str, Position] = {}
+
+        # 1. Open / pending orders
+        orders = clob.get_orders() or []
+        logger.info(f"  get_orders: {len(orders)} open order(s)")
+        for o in orders:
+            cid = o.get("market") or o.get("conditionId", "")
+            if not cid or cid in positions:
+                continue
+            positions[cid] = Position(
+                condition_id = cid,
+                question     = cid,
+                outcome      = o.get("side", ""),
+                token_id     = o.get("asset_id", ""),
+                entry_price  = float(o.get("price") or 0),
+                size_usdc    = float(o.get("original_size") or o.get("size_matched") or 0),
+                order_id     = o.get("id", ""),
+                timestamp    = str(o.get("created_at", "")),
+            )
+
+        # 2. Filled trades (BUY side = positions we hold)
+        trades = clob.get_trades() or []
+        logger.info(f"  get_trades: {len(trades)} trade(s)")
+        for t in trades:
+            if t.get("side", "").upper() not in ("BUY", "MAKER"):
+                continue
+            cid = t.get("market", "") or t.get("conditionId", "") or t.get("condition_id", "")
+            if not cid or cid in positions:
+                continue
+            positions[cid] = Position(
+                condition_id = cid,
+                question     = cid,
+                outcome      = t.get("outcome", ""),
+                token_id     = t.get("asset_id", ""),
+                entry_price  = float(t.get("price") or 0),
+                size_usdc    = float(t.get("size") or 0),
+                order_id     = t.get("id", ""),
+                timestamp    = str(t.get("created_at", "")),
+            )
+
+        logger.info(f"  Loaded {len(positions)} position(s) from API")
+        return positions
+
     except Exception as e:
-        logger.warning(f"Could not load positions: {e}")
-        return {}
+        logger.warning(f"  API position load failed: {e} — falling back to local cache")
+        p = _positions_path()
+        if not p.exists():
+            return {}
+        try:
+            raw = json.loads(p.read_text())
+            return {k: Position(**v) for k, v in raw.items()}
+        except Exception:
+            return {}
 
 
 def save_positions(positions: dict[str, Position]) -> None:
-    _positions_path().write_text(
-        json.dumps({k: asdict(v) for k, v in positions.items()}, indent=2)
-    )
+    """Save positions to local cache (used as fallback if API is unavailable)."""
+    try:
+        _positions_path().write_text(
+            json.dumps({k: asdict(v) for k, v in positions.items()}, indent=2)
+        )
+    except Exception:
+        pass
 
 
 # ── Startup checks ─────────────────────────────────────────────────────────────
@@ -212,8 +274,8 @@ def ensure_allowances() -> None:
     try:
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
         clob = _get_clob_client()
-        clob.update_balance_allowance(params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
-        logger.info("  Exchange contracts approved for USDC spending")
+        result = clob.update_balance_allowance(params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        logger.info(f"  update_balance_allowance response: {result}")
     except Exception as e:
         logger.warning(f"  Allowance update failed: {e}")
 
@@ -228,6 +290,7 @@ def fetch_usdc_balance() -> float:
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
         clob = _get_clob_client()
         data = clob.get_balance_allowance(params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        logger.info(f"  get_balance_allowance response: {data}")
         bal  = float(data.get("balance", 0)) / 1_000_000  # USDC has 6 decimals
         logger.info(f"  Balance: ${bal:.2f} USDC")
         return bal
@@ -238,59 +301,68 @@ def fetch_usdc_balance() -> float:
 
 # ── Market data ────────────────────────────────────────────────────────────────
 
-def fetch_markets() -> list[Market]:
-    """Fetch active binary markets from Polymarket Gamma API, sorted by 24h volume."""
+def fetch_markets(offset: int = 0, limit: int = 100) -> tuple:
+    """Fetch active markets from Polymarket Gamma API, sorted by 24h volume."""
     try:
         resp = requests.get(
             f"{GAMMA_API}/markets",
-            params={"active": "true", "closed": "false", "limit": 100,
+            params={"active": "true", "closed": "false", "limit": limit, "offset": offset,
                     "order": "volume24hr", "ascending": "false"},
             timeout=15,
         )
         resp.raise_for_status()
     except Exception as e:
         logger.error(f"Failed to fetch markets: {e}")
-        return []
+        return [], 0
 
     now = datetime.now(timezone.utc)
     markets: list[Market] = []
     raw = resp.json()
-    skipped_binary = skipped_price = skipped_vol = skipped_expiry = 0
-
-    # Log one raw market so we can inspect the field structure if needed
-    if raw:
-        sample = raw[0]
-        logger.debug(f"Sample market fields: {list(sample.keys())}")
-        logger.debug(f"Sample outcomes={sample.get('outcomes')} clobTokenIds={sample.get('clobTokenIds')}")
+    logger.info(f"  fetch_markets response: {resp.status_code}  total_rows={len(raw)}")
+    skipped_tokens = skipped_vol = skipped_expiry = 0
 
     for m in raw:
         try:
-            # Require exactly 2 CLOB token IDs (YES and NO tokens) — this is the
-            # trading requirement. Multi-outcome and non-CLOB markets won't have them.
             token_ids = m.get("clobTokenIds") or []
             if isinstance(token_ids, str):
                 token_ids = json.loads(token_ids)
             if len(token_ids) < 2:
-                skipped_binary += 1
+                skipped_tokens += 1
                 continue
 
-            prices_raw = m.get("outcomePrices", ["0.5", "0.5"])
+            labels_raw = m.get("outcomes") or []
+            if isinstance(labels_raw, str):
+                labels_raw = json.loads(labels_raw)
+
+            prices_raw = m.get("outcomePrices") or []
             if isinstance(prices_raw, str):
                 prices_raw = json.loads(prices_raw)
-            yes_price = float(prices_raw[0])
-            no_price  = float(prices_raw[1])
 
-            if yes_price < 0.005 or yes_price > 0.995:
-                skipped_price += 1
+            # Pad labels/prices to match token count
+            while len(labels_raw) < len(token_ids):
+                labels_raw.append(f"Outcome {len(labels_raw)}")
+            while len(prices_raw) < len(token_ids):
+                prices_raw.append("0.5")
+
+            outcomes = [
+                Outcome(
+                    label    = str(labels_raw[i]),
+                    price    = float(prices_raw[i]),
+                    token_id = str(token_ids[i]),
+                )
+                for i in range(len(token_ids))
+            ]
+
+            # Skip markets where all outcomes are near-resolved (>99% or <1%)
+            if all(o.price < 0.01 or o.price > 0.99 for o in outcomes):
+                skipped_tokens += 1
                 continue
 
-            # volume24hr field name varies across API versions
             vol_24h = float(m.get("volume24hr") or m.get("volume24Hr") or m.get("volumeNum") or 0)
             if vol_24h < MIN_MARKET_VOLUME:
                 skipped_vol += 1
                 continue
 
-            # Skip markets closing in < 24h
             end_date_str = m.get("endDate", "")
             if end_date_str:
                 end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
@@ -299,26 +371,24 @@ def fetch_markets() -> list[Market]:
                     continue
 
             markets.append(Market(
-                condition_id  = m.get("conditionId") or m.get("id", ""),
-                question      = m.get("question", ""),
-                description   = (m.get("description") or "")[:500],
-                yes_price     = yes_price,
-                no_price      = no_price,
-                volume_24h    = vol_24h,
-                volume_total  = float(m.get("volume") or 0),
-                end_date      = end_date_str,
-                yes_token_id  = str(token_ids[0]),
-                no_token_id   = str(token_ids[1]),
+                condition_id = m.get("conditionId") or m.get("id", ""),
+                question     = m.get("question", ""),
+                description  = (m.get("description") or "")[:500],
+                volume_24h   = vol_24h,
+                volume_total = float(m.get("volume") or 0),
+                end_date     = end_date_str,
+                neg_risk     = bool(m.get("negRisk") or m.get("neg_risk") or False),
+                min_size     = float(m.get("orderMinSize") or m.get("minOrderSize") or 1.0),
+                outcomes     = outcomes,
             ))
         except Exception as e:
             logger.warning(f"Skipping market (parse error): {e}")
 
     logger.info(
         f"  Fetched {len(raw)} markets — kept {len(markets)} "
-        f"(skipped: non-binary={skipped_binary} price={skipped_price} "
-        f"vol={skipped_vol} expiry={skipped_expiry})"
+        f"(skipped: no_tokens={skipped_tokens} vol={skipped_vol} expiry={skipped_expiry})"
     )
-    return markets
+    return markets, len(raw)  # (filtered markets, raw API count for pagination)
 
 
 # ── News search ────────────────────────────────────────────────────────────────
@@ -367,12 +437,14 @@ def assess_markets_batch(
     for idx, item in enumerate(candidates):
         market = item[0] if isinstance(item, tuple) else item
         news   = item[1] if isinstance(item, tuple) else ""
-        yes_mult = round(1 / market.yes_price, 1) if market.yes_price > 0 else 0
-        no_mult  = round(1 / market.no_price,  1) if market.no_price  > 0 else 0
-        section  = (
+        outcome_lines = "  ".join(
+            f"[{i}] {o.label} {o.price:.1%} ({round(1/o.price,1) if o.price > 0 else '?'}x)"
+            for i, o in enumerate(market.outcomes)
+        )
+        section = (
             f"[{idx}] {market.question}\n"
-            f"    Resolves: {market.end_date} | Vol: ${market.volume_24h:,.0f}\n"
-            f"    YES {market.yes_price:.1%} ({yes_mult}x) | NO {market.no_price:.1%} ({no_mult}x)\n"
+            f"    Resolves: {market.end_date} | Vol: ${market.volume_24h:,.0f} | Min order: ${market.min_size:.2f}\n"
+            f"    Outcomes: {outcome_lines}\n"
             f"    {market.description[:200] if market.description else ''}"
             + (f"\n    News: {news[:300]}" if news else "")
         )
@@ -381,22 +453,29 @@ def assess_markets_batch(
     prompt = f"""Today is {today}. You are a prediction market analyst.
 
 Analyze the {len(candidates)} markets below and output trading signals.
-Budget: ${max_deploy:.2f} USDC total. Each position: ${BET_SIZE_MIN:.2f}–${BET_SIZE_MAX:.2f} USDC.
+Budget: ${max_deploy:.2f} USDC total. Each position: ${BET_SIZE_MIN:.2f}–${BET_SIZE_MAX:.2f} USDC (min $1.00).
 
-Strategy: high-variance positive-EV — many small bets on mispriced markets.
-Most bets lose; a 2% market pays 50x when correct. Target 10–20 positions per cycle.
+Strategy: SPECULATIVE — focus exclusively on LOW-PROBABILITY outcomes (priced under 25%).
+A 2% outcome pays 50x. A 5% outcome pays 20x. These are the only bets worth making.
+NEVER bet on an outcome priced above 25% — the return is too low to justify the risk.
+Target 10–20 positions per cycle across different markets and topics.
 
-For each market where you have an edge, include it in the JSON output.
-Scale size by confidence: ${BET_SIZE_MAX:.2f} = high confidence, $1 = speculative.
+Rules:
+- Only pick outcomes priced UNDER 25% (the lower the price, the higher the payout)
+- Bet when your estimated true probability is meaningfully higher than the market price
+- Skip any outcome above 25% — even if it seems likely, the profit potential is too small
+- Scale size: ${BET_SIZE_MAX:.2f} = strong edge on a very underpriced outcome, $1 = speculative long-shot
+- IMPORTANT: each market shows "Min order: $X" — your size must be ≥ that minimum or skip the market
 
 MARKETS:
 {chr(10).join(market_sections)}
 
 Respond with ONLY a JSON array, no other text. Example format:
 [
-  {{"i": 3, "action": "BUY_NO", "prob_yes": 0.02, "size": 5.0, "why": "reason"}},
-  {{"i": 7, "action": "BUY_YES", "prob_yes": 0.15, "size": 1.0, "why": "reason"}}
+  {{"i": 3, "o": 1, "prob": 0.45, "size": 5.0, "why": "reason"}},
+  {{"i": 7, "o": 0, "prob": 0.15, "size": 1.0, "why": "reason"}}
 ]
+"i" = market index, "o" = outcome index within that market, "prob" = your probability for that outcome.
 If nothing has edge, respond with: []"""
 
     try:
@@ -430,11 +509,11 @@ If nothing has edge, respond with: []"""
 
     for bet in raw_bets:
         try:
-            idx       = int(bet["i"])
-            action    = bet["action"]
-            prob      = float(bet["prob_yes"])
-            size      = float(bet["size"])
-            reasoning = bet.get("why", "")
+            idx           = int(bet["i"])
+            outcome_idx   = int(bet["o"])
+            prob          = float(bet["prob"])
+            size          = float(bet["size"])
+            reasoning     = bet.get("why", "")
         except (KeyError, ValueError) as e:
             logger.warning(f"  Skipping malformed bet {bet}: {e}")
             continue
@@ -443,8 +522,20 @@ If nothing has edge, respond with: []"""
             logger.warning(f"  Invalid market index {idx} — skip")
             continue
 
-        market   = candidates[idx][0] if isinstance(candidates[idx], tuple) else candidates[idx]
-        edge     = abs(prob - market.yes_price)
+        market = candidates[idx][0] if isinstance(candidates[idx], tuple) else candidates[idx]
+
+        if outcome_idx < 0 or outcome_idx >= len(market.outcomes):
+            logger.warning(f"  Invalid outcome index {outcome_idx} for market {idx} — skip")
+            continue
+
+        outcome  = market.outcomes[outcome_idx]
+
+        # Hard filter: skip near-certain outcomes — return is too low
+        if outcome.price > 0.30:
+            logger.info(f"  Skipping [{idx}:{outcome_idx}] '{outcome.label}' — price {outcome.price:.0%} > 30% threshold")
+            continue
+
+        edge     = abs(prob - outcome.price)
         bet_usdc = max(BET_SIZE_MIN, min(BET_SIZE_MAX, size))
 
         remaining = max_deploy - total_allocated
@@ -455,16 +546,17 @@ If nothing has edge, respond with: []"""
         total_allocated += bet_usdc
 
         logger.info(
-            f"    [{idx}] {action}  '{market.question[:60]}'  "
-            f"prob={prob:.0%}  edge={edge:.0%}  ${bet_usdc:.2f}  — {reasoning[:100]}"
+            f"    [{idx}:{outcome_idx}] '{outcome.label}'  '{market.question[:50]}'  "
+            f"prob={prob:.0%}  mkt={outcome.price:.0%}  edge={edge:.0%}  ${bet_usdc:.2f}  — {reasoning[:80]}"
         )
         results.append((idx, Assessment(
-            action=action,
-            probability=prob,
-            confidence="medium",
-            edge=edge,
-            bet_usdc=bet_usdc,
-            reasoning=reasoning,
+            outcome_idx   = outcome_idx,
+            outcome_label = outcome.label,
+            price         = outcome.price,
+            probability   = prob,
+            edge          = edge,
+            bet_usdc      = bet_usdc,
+            reasoning     = reasoning,
         )))
 
     logger.info(f"  Total: {len(results)} positions  ${total_allocated:.2f} / ${max_deploy:.2f} budget")
@@ -479,29 +571,32 @@ def place_order(market: Market, assessment: Assessment) -> Optional[str]:
     Returns order_id on success, None on failure.
     Returns a fake order_id in DRY_RUN mode without touching the exchange.
     """
-    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client.clob_types import OrderArgs, OrderType, PartialCreateOrderOptions
     from py_clob_client.order_builder.constants import BUY
 
-    buying_yes   = assessment.action == "BUY_YES"
-    side_label   = "YES" if buying_yes else "NO"
-    token_id     = market.yes_token_id if buying_yes else market.no_token_id
-    market_price = market.yes_price if buying_yes else market.no_price
-    limit_price  = round(min(market_price + 0.01, 0.96), 4)
+    outcome     = market.outcomes[assessment.outcome_idx]
+    token_id    = outcome.token_id
+    limit_price = round(min(outcome.price + 0.01, 0.96), 4)
 
     if DRY_RUN:
         order_id = f"DRY-{int(time.time())}"
         logger.info(
-            f"  [DRY RUN] BUY {side_label}  '{market.question[:55]}'  "
+            f"  [DRY RUN] BUY '{outcome.label}'  '{market.question[:50]}'  "
             f"@ {limit_price:.3f}  ${assessment.bet_usdc:.2f} USDC"
         )
         return order_id
 
     try:
         clob        = _get_clob_client()
-        size_shares = round(assessment.bet_usdc / limit_price, 2)
-        order       = clob.create_order(OrderArgs(token_id=token_id, price=limit_price,
-                                                  size=size_shares, side=BUY))
+        min_shares  = max(1.0, market.min_size)
+        size_shares = max(min_shares, round(assessment.bet_usdc / limit_price, 2))
+        order       = clob.create_order(
+            OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY),
+            options=PartialCreateOrderOptions(neg_risk=market.neg_risk),
+        )
+        logger.info(f"  create_order: token={token_id[:16]}… price={limit_price} size={size_shares} neg_risk={market.neg_risk}")
         result      = clob.post_order(order, OrderType.GTC)
+        logger.info(f"  post_order response: {result}")
 
         if result and result.get("success"):
             return result.get("orderID") or result.get("order_id") or "unknown"
@@ -515,37 +610,63 @@ def place_order(market: Market, assessment: Assessment) -> Optional[str]:
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
+def fetch_open_condition_ids() -> set[str]:
+    """Fetch condition IDs that already have open orders on Polymarket."""
+    if DRY_RUN:
+        return set()
+    try:
+        clob   = _get_clob_client()
+        orders = clob.get_orders()
+        logger.info(f"  get_orders response: {orders}")
+        return {o.get("conditionId") or o.get("asset_id", "") for o in (orders or []) if o}
+    except Exception as e:
+        logger.warning(f"Could not fetch open orders: {e}")
+        return set()
+
+
 def run_once(positions: dict[str, Position], balance_usdc: float) -> dict[str, Position]:
-    """One scan cycle: fetch markets → gather news → batch Claude call → execute bets."""
-    logger.info("── Fetching markets ──────────────────────────────────────────")
-    markets = fetch_markets()
-    logger.info(f"  {len(markets)} eligible markets (vol≥${MIN_MARKET_VOLUME:,.0f}, binary, >48h)")
-
+    """One scan cycle: fetch markets → batch Claude call → execute bets."""
     held_ids = set(positions.keys())
+    logger.info(f"  Held positions: {len(held_ids)}")
 
-    # Build candidate list: markets not already held
+    # Paginate until we have MAX_MARKETS_PER_LOOP candidates not already held
     candidates: list[tuple[Market, str]] = []
-    for market in markets:
-        if len(candidates) >= MAX_MARKETS_PER_LOOP:
+    offset = 0
+    page_size = 100
+    while len(candidates) < MAX_MARKETS_PER_LOOP:
+        logger.info(f"── Fetching markets (offset={offset}) ──")
+        markets, raw_count = fetch_markets(offset=offset, limit=page_size)
+        if not markets and raw_count == 0:
             break
-        if market.condition_id in held_ids:
-            continue
-        logger.info(f"  Fetching news: {market.question[:65]}")
-        news = fetch_news(market.question)
-        candidates.append((market, news))
-        time.sleep(0.3)  # DuckDuckGo rate-limit politeness
+        new_markets = [m for m in markets if m.condition_id not in held_ids]
+        skipped_held = len(markets) - len(new_markets)
+        needed = MAX_MARKETS_PER_LOOP - len(candidates)
+        new_markets = new_markets[:needed]
+        logger.info(
+            f"  Page offset={offset}: {len(markets)} eligible — "
+            f"{skipped_held} skipped (already held) — "
+            f"fetching news for {len(new_markets)}"
+        )
+        for market in new_markets:
+            news = fetch_news(market.question)
+            candidates.append((market, news))
+        if raw_count < page_size:
+            break  # no more pages
+        offset += page_size
+
+    if not CLAUDE_ENABLED:
+        logger.info("── Claude disabled (CLAUDE_ENABLED=false) — skipping assessment ──")
+        return positions
 
     logger.info(f"── Sending {len(candidates)} candidates to Claude (balance=${balance_usdc:.2f}) ──")
     bets = assess_markets_batch(candidates, balance_usdc, len(held_ids))
 
     for idx, assessed in bets:
         market = candidates[idx][0]
-        buying_yes = assessed.action == "BUY_YES"
 
         logger.info(
-            f"  → BET: {assessed.action}  '{market.question[:60]}'  "
-            f"prob={assessed.probability:.0%}  edge={assessed.edge:.0%}  "
-            f"conf={assessed.confidence}  ${assessed.bet_usdc:.2f} USDC"
+            f"  → BET: '{assessed.outcome_label}'  '{market.question[:55]}'  "
+            f"prob={assessed.probability:.0%}  edge={assessed.edge:.0%}  ${assessed.bet_usdc:.2f} USDC"
         )
         logger.info(f"     {assessed.reasoning}")
 
@@ -553,12 +674,13 @@ def run_once(positions: dict[str, Position], balance_usdc: float) -> dict[str, P
         if order_id is None:
             continue
 
+        outcome  = market.outcomes[assessed.outcome_idx]
         position = Position(
             condition_id = market.condition_id,
             question     = market.question,
-            side         = "YES" if buying_yes else "NO",
-            token_id     = market.yes_token_id if buying_yes else market.no_token_id,
-            entry_price  = market.yes_price if buying_yes else market.no_price,
+            outcome      = outcome.label,
+            token_id     = outcome.token_id,
+            entry_price  = outcome.price,
             size_usdc    = assessed.bet_usdc,
             order_id     = order_id,
             timestamp    = datetime.now(timezone.utc).isoformat(),
@@ -570,12 +692,10 @@ def run_once(positions: dict[str, Position], balance_usdc: float) -> dict[str, P
             f"🎯 <b>New Polymarket Bet{dry_tag}</b>\n"
             f"<b>Market:</b> {market.question}\n"
             f"<b>Closes:</b> {market.end_date}\n"
-            f"<b>Bet:</b> BUY {'YES' if buying_yes else 'NO'} "
-            f"@ {position.entry_price:.0%}\n"
+            f"<b>Bet:</b> {outcome.label} @ {outcome.price:.0%} "
+            f"(pays {round(1/outcome.price, 1) if outcome.price > 0 else '?'}x)\n"
             f"<b>Size:</b> ${assessed.bet_usdc:.2f} USDC\n"
-            f"<b>Claude prob:</b> {assessed.probability:.0%} YES "
-            f"(edge {assessed.edge:.0%})\n"
-            f"<b>Confidence:</b> {assessed.confidence}\n"
+            f"<b>Claude prob:</b> {assessed.probability:.0%}  edge {assessed.edge:.0%}\n"
             f"<b>Why:</b> {assessed.reasoning}"
         )
         logger.info(f"     ✓ Order placed: {order_id}")
@@ -631,9 +751,10 @@ def main() -> None:
 
     while True:
         try:
-            # Refresh balance at start of each cycle
-            balance = fetch_usdc_balance()
-            logger.info(f"Balance: ${balance:.2f} USDC")
+            # Refresh balance and positions from API at start of each cycle
+            balance   = fetch_usdc_balance()
+            positions = load_positions()
+            logger.info(f"Balance: ${balance:.2f} USDC  |  Positions: {len(positions)}")
             positions = run_once(positions, balance)
             save_positions(positions)
         except Exception as e:
