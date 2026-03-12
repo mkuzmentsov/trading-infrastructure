@@ -43,6 +43,9 @@ persistence:
   size: 1Gi
   storageClass: ""
 
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
 resources:
   requests:
     memory: 128Mi

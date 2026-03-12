@@ -32,6 +32,7 @@ Environment variables (set via Kubernetes Secret):
 import json
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, asdict
@@ -179,21 +180,68 @@ def check_anthropic_connection() -> bool:
         return False
 
 
+_cached_clob_client = None
+
 def _get_clob_client():
-    """Return an initialised ClobClient with API credentials."""
+    """
+    Return an initialised ClobClient with API credentials.
+    If API key/secret/passphrase are not provided, auto-generates them from
+    the private key and caches them to DATA_DIR/api_creds.json for reuse.
+    """
+    global _cached_clob_client
+    if _cached_clob_client is not None:
+        return _cached_clob_client
+
     from py_clob_client.client import ClobClient
     from py_clob_client.clob_types import ApiCreds
-    return ClobClient(
+
+    # Build client with private key (L1 only at this point)
+    client = ClobClient(
         host=CLOB_HOST,
         chain_id=CHAIN_ID,
         key=POLYMARKET_PK,
-        creds=ApiCreds(
+        signature_type=POLYMARKET_SIGNATURE_TYPE,
+    )
+
+    # Use provided credentials, load from cache, or auto-generate
+    if POLYMARKET_API_KEY and POLYMARKET_API_SECRET and POLYMARKET_API_PASSPHRASE:
+        creds = ApiCreds(
             api_key=POLYMARKET_API_KEY,
             api_secret=POLYMARKET_API_SECRET,
             api_passphrase=POLYMARKET_API_PASSPHRASE,
-        ),
-        signature_type=POLYMARKET_SIGNATURE_TYPE,
-    )
+        )
+        logger.info("  Using API credentials from config")
+    else:
+        creds_path = DATA_DIR / "api_creds.json"
+        if creds_path.exists():
+            d = json.loads(creds_path.read_text())
+            creds = ApiCreds(
+                api_key=d["api_key"],
+                api_secret=d["api_secret"],
+                api_passphrase=d["api_passphrase"],
+            )
+            logger.info("  Using cached API credentials")
+        else:
+            logger.info("  Generating API credentials from private key …")
+            for nonce in range(10):
+                try:
+                    creds = client.create_api_key(nonce=nonce)
+                    DATA_DIR.mkdir(parents=True, exist_ok=True)
+                    creds_path.write_text(json.dumps({
+                        "api_key":        creds.api_key,
+                        "api_secret":     creds.api_secret,
+                        "api_passphrase": creds.api_passphrase,
+                    }))
+                    logger.info(f"  Generated API credentials (nonce={nonce})")
+                    break
+                except Exception:
+                    continue
+            else:
+                raise RuntimeError("Failed to generate API credentials for all nonces 0-4")
+
+    client.set_api_creds(creds)
+    _cached_clob_client = client
+    return client
 
 
 def ensure_allowances() -> None:
@@ -337,227 +385,129 @@ def fetch_news(query: str, max_results: int = 5) -> str:
 
 _claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-_PORTFOLIO_TOOL = {
-    "name": "portfolio_decision",
-    "description": (
-        "Select which markets to bet on and how much. "
-        "Focus on low-probability events that are underpriced by the market."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "bets": {
-                "type": "array",
-                "description": (
-                    "List of bets to place. Aim for quantity — many small bets across "
-                    "different markets is better than a few large ones. "
-                    "May be empty if nothing has edge."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "market_index": {
-                            "type": "integer",
-                            "description": "0-based index from the CANDIDATE MARKETS list.",
-                        },
-                        "action": {
-                            "type": "string",
-                            "enum": ["BUY_YES", "BUY_NO"],
-                            "description": (
-                                "BUY_YES: you think the event is MORE likely than the market price implies. "
-                                "BUY_NO: you think the event is LESS likely than the market price implies."
-                            ),
-                        },
-                        "probability_yes": {
-                            "type": "number",
-                            "description": "Your estimated true YES probability (0.0–1.0).",
-                        },
-                        "implied_multiplier": {
-                            "type": "number",
-                            "description": (
-                                "Expected payout multiplier if the bet wins. "
-                                "For BUY_YES: 1 / yes_price. For BUY_NO: 1 / no_price. "
-                                "e.g. YES price 0.02 → multiplier 50x."
-                            ),
-                        },
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["low", "medium", "high"],
-                        },
-                        "bet_usdc": {
-                            "type": "number",
-                            "description": (
-                                f"USDC to bet. Must be between ${BET_SIZE_MIN:.0f} and ${BET_SIZE_MAX:.0f}. "
-                                "Use higher amounts for high confidence + strong edge. "
-                                "Use minimum for speculative long-shots."
-                            ),
-                        },
-                        "reasoning": {
-                            "type": "string",
-                            "description": "1-2 sentences: why is this mispriced and what is the edge?",
-                        },
-                    },
-                    "required": ["market_index", "action", "probability_yes",
-                                 "implied_multiplier", "confidence", "bet_usdc", "reasoning"],
-                },
-            },
-            "portfolio_reasoning": {
-                "type": "string",
-                "description": "2-3 sentences on overall selection rationale.",
-            },
-        },
-        "required": ["bets", "portfolio_reasoning"],
-    },
-}
-
 
 def assess_markets_batch(
-    candidates: list[tuple[Market, str]],   # (market, news_text)
+    candidates: list,   # list[Market] or list[tuple[Market, str]]
     balance_usdc: float,
     held_count: int,
 ) -> list[tuple[int, Assessment]]:
     """
-    Send all candidate markets to Claude in a single call.
-    Claude receives the current USDC balance and returns a complete portfolio
-    decision: which markets to bet on and how much to allocate to each.
-
-    Returns a list of (market_index, Assessment) pairs for the chosen bets.
+    Send all candidate markets to Claude. Claude responds with a plain JSON array
+    of positions — no tool schema, no array that can be left empty.
+    Returns list of (market_index, Assessment) pairs.
     """
     if not candidates:
         return []
 
     max_deploy = round(balance_usdc * MAX_DEPLOY_FRACTION, 2)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today      = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    # Build the market list section of the prompt
     market_sections = []
-    for idx, (market, news) in enumerate(candidates):
+    for idx, item in enumerate(candidates):
+        market = item[0] if isinstance(item, tuple) else item
+        news   = item[1] if isinstance(item, tuple) else ""
         yes_mult = round(1 / market.yes_price, 1) if market.yes_price > 0 else 0
         no_mult  = round(1 / market.no_price,  1) if market.no_price  > 0 else 0
-        section = (
-            f"--- MARKET {idx} ---\n"
-            f"Question:  {market.question}\n"
-            f"Resolves:  {market.end_date}\n"
-            f"YES price: {market.yes_price:.1%}  (pays {yes_mult}x if YES)  |  "
-            f"NO price: {market.no_price:.1%}  (pays {no_mult}x if NO)\n"
-            f"24h volume: ${market.volume_24h:,.0f}\n"
-            f"Resolution criteria: {market.description or '(see question)'}\n"
-            f"Recent news:\n{news}"
+        section  = (
+            f"[{idx}] {market.question}\n"
+            f"    Resolves: {market.end_date} | Vol: ${market.volume_24h:,.0f}\n"
+            f"    YES {market.yes_price:.1%} ({yes_mult}x) | NO {market.no_price:.1%} ({no_mult}x)\n"
+            f"    {market.description[:200] if market.description else ''}"
+            + (f"\n    News: {news[:300]}" if news else "")
         )
         market_sections.append(section)
 
-    prompt = f"""Today is {today}.
-You are running a high-variance, positive-expected-value Polymarket trading strategy.
+    prompt = f"""Today is {today}. You are a prediction market analyst.
 
-STRATEGY OVERVIEW:
-  This strategy places many small bets on markets where the TRUE probability of an event
-  is higher than what the market currently prices in. Most bets will lose — that is expected
-  and acceptable. A single correct bet on a 2% market pays 50x and covers ~50 losing bets.
-  The goal is positive expected value across a large volume of bets, not a high win rate.
+Analyze the {len(candidates)} markets below and output trading signals.
+Budget: ${max_deploy:.2f} USDC total. Each position: ${BET_SIZE_MIN:.2f}–${BET_SIZE_MAX:.2f} USDC.
 
-  Documented real-world example using this approach: $1,000 → $98,241 in 30 days,
-  with individual wins like a $15 bet returning $1,330 (87x) on an underpriced market.
+Strategy: high-variance positive-EV — many small bets on mispriced markets.
+Most bets lose; a 2% market pays 50x when correct. Target 10–20 positions per cycle.
 
-ACCOUNT STATUS:
-  Available USDC balance:  ${balance_usdc:.2f}
-  Budget for this cycle:   ${max_deploy:.2f}  ({MAX_DEPLOY_FRACTION:.0%} of balance)
-  Open positions held:     {held_count}
-  Bet size range:          ${BET_SIZE_MIN:.0f}–${BET_SIZE_MAX:.0f} USDC per bet
+For each market where you have an edge, include it in the JSON output.
+Scale size by confidence: ${BET_SIZE_MAX:.2f} = high confidence, $1 = speculative.
 
-YOUR TASK:
-Review the {len(candidates)} markets below. For each, use the news and your knowledge to
-estimate the TRUE probability of YES resolution. Look especially for:
-
-  1. LOW-PROBABILITY events (YES price 1%–20%) where your estimate is meaningfully higher
-     than the market → BUY_YES for potential 5x–100x returns
-  2. NEAR-CERTAIN events (YES price 80%–99%) where NO is underpriced and something could
-     go wrong → BUY_NO for asymmetric upside
-  3. Any market where you have a clear information edge over the crowd
-
-BET SIZING RULES:
-  - Each bet: ${BET_SIZE_MIN:.0f}–${BET_SIZE_MAX:.0f} USDC (never outside this range)
-  - Total across all bets ≤ ${max_deploy:.2f} USDC
-  - Use ${BET_SIZE_MAX:.0f} for high confidence + strong edge
-  - Use ${BET_SIZE_MIN:.0f}–$10 for speculative long-shots (low probability, uncertain edge)
-  - Aim for MANY bets (10-20 per cycle) rather than a few large ones
-  - Diversify across different topics/events
-
-SKIP if: you have no information advantage, edge < 5 percentage points, or pure speculation.
-Return an empty bets list only if NOTHING has any edge.
-
-CANDIDATE MARKETS:
+MARKETS:
 {chr(10).join(market_sections)}
-"""
+
+Respond with ONLY a JSON array, no other text. Example format:
+[
+  {{"i": 3, "action": "BUY_NO", "prob_yes": 0.02, "size": 5.0, "why": "reason"}},
+  {{"i": 7, "action": "BUY_YES", "prob_yes": 0.15, "size": 1.0, "why": "reason"}}
+]
+If nothing has edge, respond with: []"""
 
     try:
         resp = _claude.messages.create(
             model="claude-opus-4-6",
-            max_tokens=1024,
-            tools=[_PORTFOLIO_TOOL],
-            tool_choice={"type": "tool", "name": "portfolio_decision"},
+            max_tokens=2048,
+            system=(
+                "You are a quantitative prediction market analyst. "
+                "Output ONLY valid JSON arrays as instructed. No commentary, no markdown."
+            ),
             messages=[{"role": "user", "content": prompt}],
         )
     except Exception as e:
-        logger.error(f"Claude API error (batch): {e}")
+        logger.error(f"Claude API error: {e}")
         return []
 
-    for block in resp.content:
-        if block.type != "tool_use" or block.name != "portfolio_decision":
+    text = resp.content[0].text.strip() if resp.content else ""
+    logger.info(f"  Claude raw response: {text[:500]}")
+
+    try:
+        match = re.search(r'\[.*\]', text, re.DOTALL)
+        raw_bets = json.loads(match.group()) if match else []
+    except Exception as e:
+        logger.error(f"Failed to parse Claude JSON: {e}\nRaw: {text[:300]}")
+        return []
+
+    logger.info(f"  Claude returned {len(raw_bets)} position(s)")
+
+    results: list[tuple[int, Assessment]] = []
+    total_allocated = 0.0
+
+    for bet in raw_bets:
+        try:
+            idx       = int(bet["i"])
+            action    = bet["action"]
+            prob      = float(bet["prob_yes"])
+            size      = float(bet["size"])
+            reasoning = bet.get("why", "")
+        except (KeyError, ValueError) as e:
+            logger.warning(f"  Skipping malformed bet {bet}: {e}")
             continue
 
-        inp = block.input
-        logger.info(f"  Portfolio reasoning: {inp.get('portfolio_reasoning', '')}")
+        if idx < 0 or idx >= len(candidates):
+            logger.warning(f"  Invalid market index {idx} — skip")
+            continue
 
-        results: list[tuple[int, Assessment]] = []
-        total_allocated = 0.0
+        market   = candidates[idx][0] if isinstance(candidates[idx], tuple) else candidates[idx]
+        edge     = abs(prob - market.yes_price)
+        bet_usdc = max(BET_SIZE_MIN, min(BET_SIZE_MAX, size))
 
-        for bet in inp.get("bets", []):
-            idx        = int(bet["market_index"])
-            action     = bet["action"]
-            prob       = float(bet["probability_yes"])
-            confidence = bet["confidence"]
-            reasoning  = bet["reasoning"]
-            multiplier = float(bet.get("implied_multiplier", 0))
-
-            if idx < 0 or idx >= len(candidates):
-                logger.warning(f"  Claude returned invalid market_index {idx} — skip")
-                continue
-            if confidence == "low":
-                logger.info(f"  Skipping market {idx} — low confidence")
-                continue
-
-            market = candidates[idx][0]
-            edge = abs(prob - market.yes_price)
-
-            # Clamp bet size to configured min/max range
-            raw_bet  = float(bet["bet_usdc"])
-            bet_usdc = max(BET_SIZE_MIN, min(BET_SIZE_MAX, raw_bet))
-
-            # Hard cap: respect the max_deploy budget
-            remaining = max_deploy - total_allocated
-            if remaining < BET_SIZE_MIN:
-                logger.info(f"  Budget exhausted — stopping after {len(results)} bets")
-                break
-            bet_usdc = min(bet_usdc, remaining)
-            total_allocated += bet_usdc
-
-            results.append((idx, Assessment(
-                action=action,
-                probability=prob,
-                confidence=confidence,
-                edge=edge,
-                bet_usdc=bet_usdc,
-                reasoning=f"[{multiplier:.0f}x if wins] {reasoning}",
-            )))
+        remaining = max_deploy - total_allocated
+        if remaining < BET_SIZE_MIN:
+            logger.info(f"  Budget exhausted after {len(results)} positions")
+            break
+        bet_usdc = min(bet_usdc, remaining)
+        total_allocated += bet_usdc
 
         logger.info(
-            f"  Claude selected {len(results)} bet(s)  "
-            f"total_allocated=${total_allocated:.2f} / budget=${max_deploy:.2f}"
+            f"    [{idx}] {action}  '{market.question[:60]}'  "
+            f"prob={prob:.0%}  edge={edge:.0%}  ${bet_usdc:.2f}  — {reasoning[:100]}"
         )
-        return results
+        results.append((idx, Assessment(
+            action=action,
+            probability=prob,
+            confidence="medium",
+            edge=edge,
+            bet_usdc=bet_usdc,
+            reasoning=reasoning,
+        )))
 
-    logger.warning("Claude returned no portfolio_decision tool call")
-    return []
+    logger.info(f"  Total: {len(results)} positions  ${total_allocated:.2f} / ${max_deploy:.2f} budget")
+    return results
 
 
 # ── Order placement ────────────────────────────────────────────────────────────

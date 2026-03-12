@@ -19,6 +19,10 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
     spec:
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
       containers:
         - name: polymarket-claude
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
