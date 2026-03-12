@@ -33,6 +33,8 @@ credentials:
   polymarketApiPassphrase: ""
   # 0 = EOA (standard MetaMask wallet), 2 = Gnosis Safe
   polymarketSignatureType: "0"
+  # For Gnosis Safe (signature_type=2): the Safe address. Leave empty for EOA.
+  polymarketFunder: ""
 
 telegram:
   token: ""

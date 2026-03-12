@@ -59,6 +59,7 @@ POLYMARKET_API_KEY        = os.environ.get("POLYMARKET_API_KEY", "")
 POLYMARKET_API_SECRET     = os.environ.get("POLYMARKET_API_SECRET", "")
 POLYMARKET_API_PASSPHRASE  = os.environ.get("POLYMARKET_API_PASSPHRASE", "")
 POLYMARKET_SIGNATURE_TYPE  = int(os.environ.get("POLYMARKET_SIGNATURE_TYPE", "0"))  # 0=EOA, 2=Gnosis Safe
+POLYMARKET_FUNDER          = os.environ.get("POLYMARKET_FUNDER", "")  # for Gnosis Safe: the Safe address; leave empty for EOA
 DRY_RUN                   = os.environ.get("DRY_RUN", "true").lower() == "true"
 MIN_MARKET_VOLUME         = float(os.environ.get("MIN_MARKET_VOLUME", "50000"))
 MIN_EDGE                  = float(os.environ.get("MIN_EDGE", "0.05"))
@@ -183,63 +184,23 @@ def check_anthropic_connection() -> bool:
 _cached_clob_client = None
 
 def _get_clob_client():
-    """
-    Return an initialised ClobClient with API credentials.
-    If API key/secret/passphrase are not provided, auto-generates them from
-    the private key and caches them to DATA_DIR/api_creds.json for reuse.
-    """
+    """Return an initialised ClobClient, creating or deriving API credentials automatically."""
     global _cached_clob_client
     if _cached_clob_client is not None:
         return _cached_clob_client
 
     from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
 
-    # Build client with private key (L1 only at this point)
     client = ClobClient(
         host=CLOB_HOST,
         chain_id=CHAIN_ID,
         key=POLYMARKET_PK,
         signature_type=POLYMARKET_SIGNATURE_TYPE,
+        funder=POLYMARKET_FUNDER if POLYMARKET_FUNDER else None,
     )
+    client.set_api_creds(client.create_or_derive_api_creds())
+    logger.info(f"  CLOB client ready  address={client.get_address()}  sig_type={POLYMARKET_SIGNATURE_TYPE}")
 
-    # Use provided credentials, load from cache, or auto-generate
-    if POLYMARKET_API_KEY and POLYMARKET_API_SECRET and POLYMARKET_API_PASSPHRASE:
-        creds = ApiCreds(
-            api_key=POLYMARKET_API_KEY,
-            api_secret=POLYMARKET_API_SECRET,
-            api_passphrase=POLYMARKET_API_PASSPHRASE,
-        )
-        logger.info("  Using API credentials from config")
-    else:
-        creds_path = DATA_DIR / "api_creds.json"
-        if creds_path.exists():
-            d = json.loads(creds_path.read_text())
-            creds = ApiCreds(
-                api_key=d["api_key"],
-                api_secret=d["api_secret"],
-                api_passphrase=d["api_passphrase"],
-            )
-            logger.info("  Using cached API credentials")
-        else:
-            logger.info("  Generating API credentials from private key …")
-            for nonce in range(10):
-                try:
-                    creds = client.create_api_key(nonce=nonce)
-                    DATA_DIR.mkdir(parents=True, exist_ok=True)
-                    creds_path.write_text(json.dumps({
-                        "api_key":        creds.api_key,
-                        "api_secret":     creds.api_secret,
-                        "api_passphrase": creds.api_passphrase,
-                    }))
-                    logger.info(f"  Generated API credentials (nonce={nonce})")
-                    break
-                except Exception:
-                    continue
-            else:
-                raise RuntimeError("Failed to generate API credentials for all nonces 0-4")
-
-    client.set_api_creds(creds)
     _cached_clob_client = client
     return client
 
