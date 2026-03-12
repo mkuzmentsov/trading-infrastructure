@@ -3,7 +3,7 @@ botName: freqtrade-bot
 
 image:
   repository: mkuzmentsov/freqtrade-hl
-  tag: 0.1
+  tag: 0.2
   pullPolicy: IfNotPresent
 
 # Strategy class name passed to --strategy flag
