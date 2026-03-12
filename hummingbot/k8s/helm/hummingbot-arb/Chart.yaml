@@ -1,6 +1,0 @@
-apiVersion: v2
-name: hummingbot-arb
-description: Helm chart for deploying a Hummingbot Hyperliquid-WhiteBIT arbitrage bot
-type: application
-version: 0.1.0
-appVersion: "latest"

@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "hummingbot-arb.name" . }}-script
-  labels:
-    {{- include "hummingbot-arb.labels" . | nindent 4 }}
-data:
-  hl_wb_arb.py: |
-{{ .Files.Get "files/scripts/hl_wb_arb.py" | indent 4 }}
