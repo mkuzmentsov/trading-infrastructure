@@ -265,6 +265,8 @@ def main():
     parser.add_argument("--min-roe-day", type=float, default=None, help="Min perp ROE for day window (e.g. 0.01 = 1%%)")
     parser.add_argument("--min-roe-week", type=float, default=None, help="Min perp ROE for week window")
     parser.add_argument("--min-roe-month", type=float, default=None, help="Min perp ROE for month window")
+    parser.add_argument("--min-age-days", type=int, default=180,
+                        help="Min wallet age in days (default: 180 = 6 months)")
     parser.add_argument("--check-positions", action=argparse.BooleanOptionalAction, default=True,
                         help="Fetch positions opened in last 24h for each result (default: on, use --no-check-positions to skip)")
     parser.add_argument("--wallets-file", default=DEFAULT_WALLETS_FILE,
@@ -353,6 +355,11 @@ def main():
 
             activity = fetch_activity_stats(t.address)
             _time.sleep(0.2)
+            if activity.first_trade_ms is not None:
+                age_days = (_time.time() * 1000 - activity.first_trade_ms) / (1000 * 86400)
+                if age_days < args.min_age_days:
+                    print(f"  skip  {t.address}  ({t.label()})  — wallet age {activity.wallet_age_str} < {args.min_age_days}d", flush=True)
+                    continue
             if not activity.opens_24h:
                 print(f"  skip  {t.address}  ({t.label()})  — no positions opened in last 24h", flush=True)
                 continue
