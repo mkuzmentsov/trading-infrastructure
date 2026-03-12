@@ -27,3 +27,8 @@ worker_node_pools:
     instance_type: cx23
     instance_count: 1
     location: nbg1
+
+  - name: workers-finland
+    instance_type: cx23
+    instance_count: 1
+    location: hel1
