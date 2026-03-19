@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "hl-leaderboard.name" . }}
+  labels:
+    {{- include "hl-leaderboard.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "hl-leaderboard.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: hl-leaderboard
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["/bin/bash", "/app/run.sh"]
+              envFrom:
+                - secretRef:
+                    name: {{ include "hl-leaderboard.name" . }}-secret
+              volumeMounts:
+                - name: scripts
+                  mountPath: /app/run.sh
+                  subPath: run.sh
+                - name: scripts
+                  mountPath: /app/hl_leaderboard.py
+                  subPath: hl_leaderboard.py
+                - name: scripts
+                  mountPath: /app/wallets-of-interest.txt
+                  subPath: wallets-of-interest.txt
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+          volumes:
+            - name: scripts
+              configMap:
+                name: {{ include "hl-leaderboard.name" . }}-scripts
+                defaultMode: 0755

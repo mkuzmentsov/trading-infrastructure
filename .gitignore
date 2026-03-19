@@ -9,6 +9,9 @@ freqtrade/k8s/helm/bots/*
 polymarket/k8s/helm/bots/*
 !polymarket/k8s/helm/bots/pm_claude_1.yaml.example
 
+util/k8s/helm/jobs/*
+!util/k8s/helm/jobs/hl_leaderboard_1.yaml.example
+
 logs
 
 util/output

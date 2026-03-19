@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hl-leaderboard
+description: CronJob that runs the Hyperliquid leaderboard scanner and sends results to Telegram
+type: application
+version: 0.1.0
+appVersion: "latest"

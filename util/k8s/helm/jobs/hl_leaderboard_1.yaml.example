@@ -1,0 +1,22 @@
+schedule: "0 0,12 * * *"
+leaderboardArgs: "--top 20 --min-account 10000 --min-age-days 180"
+
+telegram:
+  token: ""
+  chatId: ""
+
+walletsOfInterest: |
+  # Add wallet addresses to always include, one per line
+  # Lines starting with # are ignored
+
+# Deploy:
+#   ./util/k8s/helm/deploy.sh hl_leaderboard_1
+#
+# Trigger manually (runs immediately):
+#   kubectl create job --from=cronjob/hl-leaderboard-1 manual-$(date +%s) -n util
+#
+# View logs:
+#   kubectl logs -n util -l app.kubernetes.io/name=hl-leaderboard --tail=500
+#
+# Status:
+#   helm list -n util
