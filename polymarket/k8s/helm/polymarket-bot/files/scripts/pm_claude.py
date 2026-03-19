@@ -31,6 +31,7 @@ Environment variables (set via Kubernetes Secret):
 
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -496,9 +497,9 @@ If nothing has edge, respond with: []"""
     logger.info(f"  Claude raw response: {text[:500]}")
 
     try:
-        match = re.search(r'\[.*\]', text, re.DOTALL)
-        raw_bets = json.loads(match.group()) if match else []
-    except Exception as e:
+        start = text.index('[')
+        raw_bets, _ = json.JSONDecoder().raw_decode(text, start)
+    except (ValueError, json.JSONDecodeError) as e:
         logger.error(f"Failed to parse Claude JSON: {e}\nRaw: {text[:300]}")
         return []
 
@@ -543,6 +544,9 @@ If nothing has edge, respond with: []"""
             logger.info(f"  Budget exhausted after {len(results)} positions")
             break
         bet_usdc = min(bet_usdc, remaining)
+        if bet_usdc < 1.0:
+            logger.info(f"  Skipping [{idx}:{outcome_idx}] — bet_usdc ${bet_usdc:.2f} below $1 minimum")
+            continue
         total_allocated += bet_usdc
 
         logger.info(
@@ -589,7 +593,7 @@ def place_order(market: Market, assessment: Assessment) -> Optional[str]:
     try:
         clob        = _get_clob_client()
         min_shares  = max(1.0, market.min_size)
-        size_shares = max(min_shares, round(assessment.bet_usdc / limit_price, 2))
+        size_shares = max(min_shares, math.ceil(assessment.bet_usdc / limit_price * 100) / 100)
         order       = clob.create_order(
             OrderArgs(token_id=token_id, price=limit_price, size=size_shares, side=BUY),
             options=PartialCreateOrderOptions(neg_risk=market.neg_risk),
