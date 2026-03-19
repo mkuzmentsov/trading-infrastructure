@@ -23,16 +23,15 @@ with open(outfile, 'rb') as f:
 filename  = datetime.now(timezone.utc).strftime('%d-%m-%Y-%H-%M') + '.txt'
 boundary  = b'----Boundary7a3f9e1d'
 
+def part(name, value):
+    return b'--' + boundary + b'\r\nContent-Disposition: form-data; name="' + name.encode() + b'"\r\n\r\n' + value + b'\r\n'
+
 body = (
-    b'--' + boundary + b'\r\n'
-    b'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
-    + chat_id.encode() + b'\r\n'
+    part('chat_id', chat_id.encode())
+    + part('caption', caption.encode())
     + b'--' + boundary + b'\r\n'
-    b'Content-Disposition: form-data; name="caption"\r\n\r\n'
-    + caption.encode() + b'\r\n'
-    + b'--' + boundary + b'\r\n'
-    + f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'.encode()
-    b'Content-Type: text/plain\r\n\r\n'
+    + b'Content-Disposition: form-data; name="document"; filename="' + filename.encode() + b'"\r\n'
+    + b'Content-Type: text/plain\r\n\r\n'
     + file_data + b'\r\n'
     + b'--' + boundary + b'--\r\n'
 )

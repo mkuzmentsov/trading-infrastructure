@@ -3,8 +3,8 @@ image:
   tag: "3.12-slim"
   pullPolicy: IfNotPresent
 
-# Cron schedule — runs at midnight and noon UTC
-schedule: "0 0,12 * * *"
+# Cron schedule — runs at midnight UTC
+schedule: "0 0 * * *"
 
 # Extra args passed to hl_leaderboard.py
 leaderboardArgs: "--top 20 --min-account 10000 --min-age-days 180"
