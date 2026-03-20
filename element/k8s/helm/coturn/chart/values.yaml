@@ -1,0 +1,28 @@
+image:
+  repository: coturn/coturn
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# The public IP of the Coturn LoadBalancer.
+# Leave empty on first deploy, then fill in after running:
+#   kubectl get svc coturn -n element  (copy EXTERNAL-IP)
+# and redeploy.
+externalIp: ""
+
+# Must match synapse.turn.sharedSecret in the synapse values.yaml
+sharedSecret: ""
+
+# Must match serverName in synapse values.yaml
+realm: "matrix.example.com"
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+resources:
+  requests:
+    memory: 64Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: 200m

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: coturn
+description: Helm chart for deploying Coturn TURN/STUN server for Matrix voice/video calls
+type: application
+version: 0.1.0
+appVersion: "latest"

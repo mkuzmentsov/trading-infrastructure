@@ -1,0 +1,28 @@
+# The Matrix server name — appears in all user IDs as @user:your-domain.com
+# Must match your public DNS hostname. CANNOT be changed after first deployment.
+serverName: "matrix.example.com"
+
+synapse:
+  reportStats: false
+  # Generate all three with: python3 -c "import secrets; print(secrets.token_hex(32))"
+  registrationSharedSecret: "CHANGE_ME"
+  macaroonSecretKey: "CHANGE_ME"
+  formSecret: "CHANGE_ME"
+
+ingress:
+  enabled: true
+  className: traefik
+  host: "matrix.example.com"
+  tls:
+    enabled: true
+    certManager: "letsencrypt-prod"
+    secretName: "synapse-tls"
+
+turn:
+  enabled: true
+  externalIp: "1.2.3.4"
+  sharedSecret: "CHANGE_ME"  # must match coturn values.instance.yaml sharedSecret
+
+persistence:
+  size: 10Gi
+  storageClass: ""  # leave empty for k3s default (local-path)

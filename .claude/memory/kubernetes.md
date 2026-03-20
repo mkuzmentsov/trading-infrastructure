@@ -39,8 +39,11 @@ hetzner-k3s delete --config hetzner-k3s/cluster.yaml
 - `hummingbot` — Hummingbot arbitrage bots
 
 ## Ingress
-- Class: `nginx`
-- TLS optional per bot (`ingress.tls.enabled`)
+- Class: `traefik` (pre-installed by K3s; nginx-ingress deprecated/removed)
+- Hetzner LB provisioned via `kubectl apply -f hetzner-k3s/traefik-config.yaml`
+- Get LB IP: `kubectl get svc -n kube-system traefik`
+- TLS optional per service (`ingress.tls.enabled` + cert-manager ClusterIssuer)
+- **Note:** existing freqtrade/hummingbot charts still reference `className: nginx` — update to `traefik` when redeploying
 
 ## Common kubectl Commands
 ```bash

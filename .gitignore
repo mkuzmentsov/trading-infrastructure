@@ -17,3 +17,6 @@ logs
 util/output
 
 hetzner-k3s/kubeconfig
+
+element/k8s/helm/synapse/values.instance.yaml
+element/k8s/helm/coturn/values.instance.yaml
