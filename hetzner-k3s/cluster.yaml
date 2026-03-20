@@ -4,6 +4,11 @@ k3s_version: v1.35.1+k3s1
 
 protect_against_deletion: false
 
+# Provisions a Hetzner Load Balancer in front of the k3s API server (port 6443).
+# Gives the API a stable public IP independent of master node IPs.
+# Required if you ever scale masters to >1. Safe to enable on single-master too.
+create_load_balancer_for_the_kubernetes_api: false
+
 networking:
   ssh:
     port: 22

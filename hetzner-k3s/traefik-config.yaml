@@ -1,0 +1,54 @@
+# Installs Traefik via the K3s Helm controller (HelmChart CRD).
+# K3s was deployed with --disable traefik so this installs it explicitly.
+# The Hetzner CCM (already running) will provision a real Hetzner LB automatically.
+#
+# Apply:
+#   kubectl apply -f hetzner-k3s/traefik-config.yaml
+#
+# Watch install progress:
+#   kubectl get helmchart traefik -n kube-system
+#   kubectl get pods -n kube-system | grep traefik
+#
+# Get public IP (ready in ~60s after Hetzner provisions the LB):
+#   kubectl get svc -n kube-system traefik
+#   → Point your A records to EXTERNAL-IP
+
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  repo: https://traefik.github.io/charts
+  chart: traefik
+  targetNamespace: kube-system
+  valuesContent: |-
+    service:
+      type: LoadBalancer
+      annotations:
+        load-balancer.hetzner.cloud/location: "nbg1"
+        load-balancer.hetzner.cloud/name: "k8s-ingress-lb"
+        load-balancer.hetzner.cloud/type: "lb11"
+        load-balancer.hetzner.cloud/algorithm-type: "round_robin"
+        load-balancer.hetzner.cloud/use-private-ip: "false"
+
+    # Increase timeouts for large uploads (Matrix media, etc.)
+    ports:
+      web:
+        transport:
+          respondingTimeouts:
+            readTimeout: 600
+      websecure:
+        transport:
+          respondingTimeouts:
+            readTimeout: 600
+      turn:
+        port: 3478
+        expose:
+          default: true
+        exposedPort: 3478
+        protocol: TCP
+
+    logs:
+      access:
+        enabled: true

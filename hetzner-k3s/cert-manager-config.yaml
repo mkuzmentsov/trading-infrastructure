@@ -1,0 +1,27 @@
+# Installs cert-manager via the K3s Helm controller + creates a Let's Encrypt ClusterIssuer.
+#
+# Apply:
+#   kubectl apply -f hetzner-k3s/cert-manager-config.yaml
+#
+# Watch install progress:
+#   kubectl get helmchart cert-manager -n kube-system
+#   kubectl get pods -n cert-manager
+#
+# Verify ClusterIssuer is ready:
+#   kubectl get clusterissuer letsencrypt-prod
+
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cert-manager
+  namespace: kube-system
+spec:
+  repo: https://charts.jetstack.io
+  chart: cert-manager
+  targetNamespace: cert-manager
+  createNamespace: true
+  valuesContent: |-
+    crds:
+      enabled: true
+
