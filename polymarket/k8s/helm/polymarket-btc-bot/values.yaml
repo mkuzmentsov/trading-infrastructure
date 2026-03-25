@@ -1,0 +1,48 @@
+botName: polymarket-btc-bot
+
+image:
+  repository: mkuzmentsov/pm-btc-bot
+  tag: "0.2"
+  pullPolicy: Always
+
+bot:
+  dryRun: "true"
+  # Min probability edge over market price required to place a bet (0.05 = 5pp)
+  minEdge: "0.05"
+  # Per-bet size in USDC — quarter-Kelly stays within these bounds
+  betSizeMin: "0.50"
+  betSizeMax: "5.00"
+  # Seconds between scan cycles (5 minutes matches the 5m model target)
+  loopIntervalSecs: "300"
+  # Path to the LightGBM model inside the container (mounted from PVC)
+  modelPath: "/app/data/model.txt"
+
+credentials:
+  polymarketPrivateKey: ""   # hex private key (0x...)
+  polymarketAddress: ""      # 0x... wallet address
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  # 0 = EOA (MetaMask), 2 = Gnosis Safe
+  polymarketSignatureType: "0"
+  polymarketFunder: ""
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
+resources:
+  requests:
+    memory: 512Mi   # LightGBM + pandas need more RAM than the Claude bot
+    cpu: 100m
+  limits:
+    memory: 1Gi
+    cpu: 500m

@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
+# pandas-ta==0.4.71b0 requires numpy>=2.2.6 and pandas>=2.3.2 — let pip resolve them
+RUN pip install --no-cache-dir \
+    py-clob-client==0.19.0 \
+    requests==2.32.3 \
+    lightgbm==4.6.0 \
+    ccxt==4.5.9 \
+    pandas-ta==0.4.71b0 \
+    scipy
+
+CMD ["python", "-u", "/app/pm_btc.py"]

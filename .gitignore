@@ -8,6 +8,7 @@ freqtrade/k8s/helm/bots/*
 
 polymarket/k8s/helm/bots/*
 !polymarket/k8s/helm/bots/pm_claude_1.yaml.example
+!polymarket/k8s/helm/bots/pm_btc_1.yaml.example
 
 util/k8s/helm/jobs/*
 !util/k8s/helm/jobs/hl_leaderboard_1.yaml.example
@@ -20,3 +21,12 @@ hetzner-k3s/kubeconfig
 
 element/k8s/helm/synapse/values.instance.yaml
 element/k8s/helm/coturn/values.instance.yaml
+element/k8s/helm/livekit/values.instance.yaml
+element/k8s/helm/lk-jwt-service/values.instance.yaml
+
+ai/.venv
+ai/model_target*
+ai/report_target*
+ai/*.csv
+ai/inputs
+ai/outputs

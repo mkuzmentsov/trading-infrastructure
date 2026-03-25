@@ -1,0 +1,21 @@
+externalIp: "46.225.38.114"
+
+# Generate: python3 -c "import secrets; print(secrets.token_hex(16))"
+# Must match lk-jwt-service values.instance.yaml livekitKey
+apiKey: "CHANGE_ME"
+
+# Generate: python3 -c "import secrets; print(secrets.token_hex(32))"
+# Must match lk-jwt-service values.instance.yaml livekitSecret
+apiSecret: "CHANGE_ME"
+
+ingress:
+  enabled: true
+  className: traefik
+  host: "livekit.kuzmentsov.com"
+  tls:
+    enabled: true
+    certManager: "letsencrypt-prod"
+    secretName: "livekit-tls"
+
+service:
+  type: ClusterIP

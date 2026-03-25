@@ -36,6 +36,11 @@ turn:
   # Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
   sharedSecret: ""
 
+livekit:
+  enabled: false
+  # Public HTTPS URL of lk-jwt-service — must match lk-jwt-service ingress host
+  jwtServiceUrl: "https://lk-jwt.matrix.example.com"
+
 persistence:
   # Always enabled — Synapse stores signing key, SQLite DB and media on disk.
   size: 10Gi

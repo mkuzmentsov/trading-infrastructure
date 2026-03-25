@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "polymarket-btc-bot.name" . }}
+  labels:
+    {{- include "polymarket-btc-bot.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "polymarket-btc-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "polymarket-btc-bot.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
+    spec:
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: polymarket-btc
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "polymarket-btc-bot.name" . }}-secret
+          volumeMounts:
+            - name: script
+              mountPath: /app/pm_btc.py
+              subPath: pm_btc.py
+            - name: data
+              mountPath: /app/data
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: script
+          configMap:
+            name: {{ include "polymarket-btc-bot.name" . }}-script
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "polymarket-btc-bot.name" . }}-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

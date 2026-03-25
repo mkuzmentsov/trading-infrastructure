@@ -1,0 +1,6 @@
+apiVersion: v2
+name: polymarket-btc-bot
+description: Polymarket BTC direction betting bot powered by a local LightGBM model
+type: application
+version: 0.1.0
+appVersion: "latest"
