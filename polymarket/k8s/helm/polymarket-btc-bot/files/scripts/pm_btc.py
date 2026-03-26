@@ -560,7 +560,7 @@ def build_clob_client():
     return client
 
 
-def place_bet(clob, token: dict, size_usdc: float) -> Optional[str]:
+def place_bet(clob, token: dict, size_usdc: float, condition_id: str = "", fee_rate_bps: int = 0) -> Optional[str]:
     """
     Buy the given token for `size_usdc` USDC.
     token dict must have keys: token_id, price.
@@ -572,7 +572,7 @@ def place_bet(clob, token: dict, size_usdc: float) -> Optional[str]:
         log.warning("No token_id in token dict: %s", token)
         return None
     try:
-        order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc)
+        order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc, fee_rate_bps=fee_rate_bps)
         signed = clob.create_market_order(order_args)
         resp   = clob.post_order(signed, OrderType.FOK)
         order_id = resp.get("orderID") or resp.get("order_id", "")
@@ -703,7 +703,7 @@ def run_cycle(clob) -> None:
             "ts": int(time.time()), "dry": True,
         }
     else:
-        order_id  = place_bet(clob, token, size)
+        order_id  = place_bet(clob, token, size, condition_id, int(market.get("takerBaseFee", 0)))
         if order_id:
             log.info("  Placed order %s", order_id)
             positions[condition_id] = {
@@ -743,8 +743,10 @@ def main() -> None:
     if not DRY_RUN:
         try:
             clob = build_clob_client()
-            bal = clob.get_balance()
-            log.info("Wallet %s  balance: %s USDC", POLYMARKET_ADDRESS, bal)
+            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+            bal_data = clob.get_balance_allowance(params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+            bal = float(bal_data.get("balance", 0)) / 1_000_000
+            log.info("Wallet %s  balance: %.2f USDC", POLYMARKET_ADDRESS, bal)
         except Exception as exc:
             log.error("CLOB client init failed: %s", exc)
             if not DRY_RUN:
