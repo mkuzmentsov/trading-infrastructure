@@ -633,6 +633,10 @@ def run_once(positions: dict[str, Position], balance_usdc: float) -> dict[str, P
     held_ids = set(positions.keys())
     logger.info(f"  Held positions: {len(held_ids)}")
 
+    if balance_usdc < 5.0:
+        logger.warning(f"  Balance ${balance_usdc:.2f} < $5.00 — skipping news fetch and Claude call")
+        return positions
+
     # Paginate until we have MAX_MARKETS_PER_LOOP candidates not already held
     candidates: list[tuple[Market, str]] = []
     offset = 0
