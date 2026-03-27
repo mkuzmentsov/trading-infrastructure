@@ -2,8 +2,8 @@ botName: polymarket-btc-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot
-  tag: "0.2"
-  pullPolicy: Always
+  tag: "0.3"
+  pullPolicy: IfNotPresent
 
 bot:
   dryRun: "true"
@@ -16,6 +16,8 @@ bot:
   loopIntervalSecs: "300"
   # Path to the LightGBM model inside the container (mounted from PVC)
   modelPath: "/app/data/model.txt"
+  # Polygon JSON-RPC endpoint used for on-chain redemption
+  polygonRpcUrl: "https://rpc.ankr.com/polygon"
 
 credentials:
   polymarketPrivateKey: ""   # hex private key (0x...)

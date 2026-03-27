@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional
 
 import ccxt
+import eth_abi
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -53,6 +54,12 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("pm_btc")
+
+# Silence noisy third-party loggers that flood DEBUG output
+logging.getLogger("ccxt").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ── Config from env ───────────────────────────────────────────────────────────
 MODEL_PATH         = os.getenv("MODEL_PATH",         "/app/data/model.txt")
@@ -76,7 +83,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID","")
 
 GAMMA_API  = "https://gamma-api.polymarket.com"
 CLOB_HOST  = "https://clob.polymarket.com"
+DATA_API   = "https://data-api.polymarket.com"
 CHAIN_ID   = 137   # Polygon
+
+CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"  # ConditionalTokens on Polygon
+USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # USDC.e on Polygon
+POLYGON_RPC  = os.getenv("POLYGON_RPC_URL", "https://rpc.ankr.com/polygon")
 
 CANDLES_NEEDED = 350  # warm-up buffer for longest indicator lookbacks
 
@@ -426,6 +438,20 @@ def current_5m_slug() -> str:
     return f"btc-updown-5m-{ts}"
 
 
+def _gamma_get(params: dict):
+    """GET /markets from Gamma API with full request/response logging."""
+    url = f"{GAMMA_API}/markets"
+    log.info("Gamma API REQUEST  url=%s  params=%s", url, params)
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        log.info("Gamma API RESPONSE status=%d  url=%s  body=%s", r.status_code, r.url, r.text)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        log.warning("Gamma API ERROR (params=%s): %s", params, exc)
+        return None
+
+
 def fetch_btc_5m_market() -> Optional[dict]:
     """
     Fetch the current BTC Up/Down 5-minute market by slug.
@@ -436,9 +462,7 @@ def fetch_btc_5m_market() -> Optional[dict]:
         ts   = (int(time.time()) // 300) * 300 + offset_secs
         slug = f"btc-updown-5m-{ts}"
         try:
-            r = requests.get(f"{GAMMA_API}/markets", params={"slug": slug}, timeout=15)
-            r.raise_for_status()
-            data = r.json()
+            data = _gamma_get({"slug": slug})
             market = (data[0] if isinstance(data, list) else data) if data else None
             if market and market.get("active") and not market.get("closed"):
                 log.info("Found market: %s  (slug=%s)", market.get("question", ""), slug)
@@ -573,8 +597,15 @@ def place_bet(clob, token: dict, size_usdc: float, condition_id: str = "", fee_r
         return None
     try:
         order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc, fee_rate_bps=fee_rate_bps)
+        log.debug(
+            "CLOB create_market_order REQUEST  token_id=%s  amount=%s  fee_rate_bps=%s",
+            token_id, size_usdc, fee_rate_bps,
+        )
         signed = clob.create_market_order(order_args)
+        log.info("CLOB create_market_order RESPONSE  signed=%s", signed)
+        log.info("CLOB post_order REQUEST  order_type=FOK  signed=%s", signed)
         resp   = clob.post_order(signed, OrderType.FOK)
+        log.info("CLOB post_order RESPONSE  %s", resp)
         order_id = resp.get("orderID") or resp.get("order_id", "")
         return order_id
     except Exception as exc:
@@ -582,24 +613,303 @@ def place_bet(clob, token: dict, size_usdc: float, condition_id: str = "", fee_r
         return None
 
 
-# ── Positions state ───────────────────────────────────────────────────────────
+# ── On-chain redemption ────────────────────────────────────────────────────────
 
-def load_positions() -> dict:
-    path = DATA_DIR / "btc_positions.json"
-    if path.exists():
+
+def _rpc(method: str, params: list):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    log.info("Polygon RPC REQUEST  method=%s  params=%s", method, params)
+    resp = requests.post(POLYGON_RPC, json=payload, timeout=15)
+    log.info("Polygon RPC RESPONSE  status=%d  body=%s", resp.status_code, resp.text)
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"RPC error: {data['error']}")
+    return data["result"]
+
+
+def _erc1155_balance(token_id_str: str, address: str) -> int:
+    from eth_utils import keccak, to_checksum_address
+    selector = keccak(b"balanceOf(address,uint256)")[:4]
+    calldata = "0x" + (selector + eth_abi.encode(["address", "uint256"], [to_checksum_address(address), int(token_id_str)])).hex()
+    log.info("ERC-1155 balanceOf REQUEST  contract=%s  token_id=%s  address=%s", CTF_CONTRACT, token_id_str, address)
+    result = _rpc("eth_call", [{"to": CTF_CONTRACT, "data": calldata}, "latest"])
+    balance = int(result, 16)
+    log.info("ERC-1155 balanceOf RESPONSE  token_id=%s  balance=%d", token_id_str, balance)
+    return balance
+
+
+def _fetch_redeemable_positions() -> list:
+    """Fetch positions with redeemable=true from the Data API."""
+    url = f"{DATA_API}/positions"
+    user = POLYMARKET_FUNDER if POLYMARKET_FUNDER else POLYMARKET_ADDRESS
+    params = {"user": user, "redeemable": "true", "sizeThreshold": "0.01"}
+    log.info("Data API positions REQUEST  url=%s  params=%s", url, params)
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        log.info("Data API positions RESPONSE  status=%d  body=%s", r.status_code, r.text[:1000])
+        r.raise_for_status()
+        result = r.json()
+        if not isinstance(result, list):
+            result = []
+        return result
+    except Exception as exc:
+        log.warning("Data API positions ERROR: %s", exc)
+        return []
+
+
+def _fetch_recent_trades(clob) -> list:
+    from py_clob_client.clob_types import TradeParams
+    after_ts = int(time.time()) - 86400
+    log.info("CLOB get_trades REQUEST  after=%d (last 24h)", after_ts)
+    result = clob.get_trades(TradeParams(after=after_ts))
+    if result is None:
+        result = []
+    log.info("CLOB get_trades RESPONSE  count=%d  data=%s", len(result), result)
+    return result
+
+
+def _has_trade_on_market(clob, condition_id: str) -> bool:
+    from py_clob_client.clob_types import TradeParams
+    log.info("CLOB get_trades REQUEST  market=%s", condition_id)
+    result = clob.get_trades(TradeParams(market=condition_id))
+    if result is None:
+        result = []
+    log.info("CLOB get_trades RESPONSE  market=%s  count=%d  data=%s", condition_id, len(result), result)
+    return len(result) > 0
+
+
+def _build_redeem_calldata(condition_id_hex: str) -> str:
+    from eth_abi import encode
+    from eth_utils import keccak, to_checksum_address
+
+    selector = keccak(b"redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
+    cid_bytes = bytes.fromhex(condition_id_hex.removeprefix("0x")).rjust(32, b"\x00")
+    encoded_args = encode(
+        ["address", "bytes32", "bytes32", "uint256[]"],
+        [to_checksum_address(USDC_ADDRESS), b"\x00" * 32, cid_bytes, [1, 2]],
+    )
+    return "0x" + (selector + encoded_args).hex()
+
+
+def _send_tx(calldata: str, nonce: int, gas_price: int) -> str:
+    from eth_utils import to_checksum_address
+    from eth_account import Account
+
+    account = Account.from_key(POLYMARKET_PK)
+    tx = {
+        "to": to_checksum_address(CTF_CONTRACT),
+        "data": calldata,
+        "nonce": nonce,
+        "gasPrice": gas_price,
+        "gas": 250_000,
+        "chainId": CHAIN_ID,
+        "value": 0,
+    }
+    signed = account.sign_transaction(tx)
+    raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
+    return _rpc("eth_sendRawTransaction", ["0x" + raw.hex()])
+
+
+def _send_tx_via_safe(calldata: str, to: str, nonce: int, gas_price: int) -> str:
+    """Submit a call through the Gnosis Safe (SIGNATURE_TYPE=2).
+
+    The proxy wallet (POLYMARKET_ADDRESS) is the sole Safe owner and signs the
+    EIP-712 SafeTx hash, then sends execTransaction to the Safe contract.
+    """
+    from eth_abi import encode
+    from eth_utils import keccak, to_checksum_address
+    from eth_account import Account
+    from eth_keys import keys as eth_keys_lib
+
+    account  = Account.from_key(POLYMARKET_PK)
+    safe     = to_checksum_address(POLYMARKET_FUNDER)
+    to_addr  = to_checksum_address(to)
+    data_bytes = bytes.fromhex(calldata.removeprefix("0x"))
+
+    # Get Safe's current nonce
+    nonce_sel  = keccak(b"nonce()")[:4]
+    raw_nonce  = _rpc("eth_call", [{"to": safe, "data": "0x" + nonce_sel.hex()}, "latest"])
+    safe_nonce = int(raw_nonce, 16)
+
+    # EIP-712 domain + SafeTx hash
+    DOMAIN_SEP_TYPEHASH = keccak(b"EIP712Domain(uint256 chainId,address verifyingContract)")
+    SAFE_TX_TYPEHASH    = keccak(
+        b"SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+        b"uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,"
+        b"address refundReceiver,uint256 nonce)"
+    )
+    ZERO_ADDR = "0x0000000000000000000000000000000000000000"
+
+    domain_sep = keccak(encode(
+        ["bytes32", "uint256", "address"],
+        [DOMAIN_SEP_TYPEHASH, CHAIN_ID, safe],
+    ))
+    safe_tx_hash = keccak(encode(
+        ["bytes32", "address", "uint256", "bytes32", "uint8",
+         "uint256", "uint256", "uint256", "address", "address", "uint256"],
+        [SAFE_TX_TYPEHASH, to_addr, 0, keccak(data_bytes), 0,
+         0, 0, 0, ZERO_ADDR, ZERO_ADDR, safe_nonce],
+    ))
+    msg_hash = keccak(b"\x19\x01" + domain_sep + safe_tx_hash)
+
+    # Sign raw hash with proxy wallet private key
+    pk = eth_keys_lib.PrivateKey(bytes.fromhex(POLYMARKET_PK.removeprefix("0x")))
+    sig = pk.sign_msg_hash(msg_hash)
+    signature = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([sig.v + 27])
+
+    # Build execTransaction calldata
+    exec_sel  = keccak(b"execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)")[:4]
+    exec_data = "0x" + (exec_sel + encode(
+        ["address", "uint256", "bytes", "uint8", "uint256", "uint256", "uint256", "address", "address", "bytes"],
+        [to_addr, 0, data_bytes, 0, 0, 0, 0, ZERO_ADDR, ZERO_ADDR, signature],
+    )).hex()
+
+    tx = {
+        "to": safe,
+        "data": exec_data,
+        "nonce": nonce,
+        "gasPrice": gas_price,
+        "gas": 300_000,
+        "chainId": CHAIN_ID,
+        "value": 0,
+    }
+    signed = account.sign_transaction(tx)
+    raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
+    return _rpc("eth_sendRawTransaction", ["0x" + raw.hex()])
+
+
+def redeem_resolved_positions() -> None:
+    """
+    Check recent trades against the Gamma API.
+    If the market is closed/resolved and we hold tokens, call redeemPositions on-chain.
+    Fetches nonce once and increments per tx to avoid collisions.
+    """
+    from eth_account import Account
+
+    positions = _fetch_redeemable_positions()
+    if not positions:
+        log.info("No redeemable positions found")
+        return
+
+    # Check on-chain balance for each redeemable position
+    to_redeem = []
+    for pos in positions:
+        condition_id = pos.get("conditionId", "")
+        token_id     = pos.get("asset", "")
+        question     = pos.get("title", condition_id[:16])
+
+        if not condition_id or not token_id:
+            log.warning("Position missing conditionId or asset: %s", pos)
+            continue
+
         try:
-            return json.loads(path.read_text())
-        except Exception:
-            pass
-    return {}
+            holder = POLYMARKET_FUNDER if POLYMARKET_FUNDER else POLYMARKET_ADDRESS
+            balance = _erc1155_balance(token_id, holder)
+        except Exception as exc:
+            log.warning("Could not check ERC-1155 balance for %s: %s", condition_id[:16], exc)
+            continue
+
+        if balance <= 0:
+            log.info("No on-chain token balance for %s — skipping", condition_id[:16])
+            continue
+
+        to_redeem.append((condition_id, question))
+
+    if not to_redeem:
+        return
+
+    # Fetch nonce once with "pending" tag, increment per tx
+    account = Account.from_key(POLYMARKET_PK)
+    nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
+    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
+
+    for condition_id, question in to_redeem:
+        log.info("Market resolved, redeeming: %s", question[:60])
+        try:
+            calldata = _build_redeem_calldata(condition_id)
+            if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
+                tx_hash = _send_tx_via_safe(calldata, CTF_CONTRACT, nonce, gas_price)
+            else:
+                tx_hash = _send_tx(calldata, nonce, gas_price)
+            log.info("Redeemed %s  tx=%s", question[:40], tx_hash)
+            tg(f"💰 <b>Redeemed</b>\n{question[:80]}\ntx: {tx_hash}")
+            nonce += 1
+        except Exception as exc:
+            err = str(exc)
+            # Already redeemed externally (nonce consumed or tokens gone) — mark done
+            if "nonce too low" in err or "already known" in err:
+                log.info("Position already redeemed externally: %s", question[:40])
+                nonce += 1
+            else:
+                log.error("Redeem failed for %s: %s", question[:40], exc)
+
+    # Always attempt to claim any USDC.e sitting in the proxy wallet
+    if POLYMARKET_FUNDER:
+        try:
+            _claim_to_funder()
+        except Exception as exc:
+            log.error("Claim failed: %s", exc)
 
 
-def save_positions(pos: dict) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "btc_positions.json").write_text(json.dumps(pos, indent=2))
+def _claim_to_funder() -> None:
+    """
+    Transfer all USDC.e from the proxy wallet (POLYMARKET_ADDRESS) to the funder (POLYMARKET_FUNDER).
+    Only relevant for Gnosis Safe setup (signature type 2) where they are different addresses.
+    """
+    from eth_abi import encode
+    from eth_utils import keccak, to_checksum_address
+    from eth_account import Account
+
+    account = Account.from_key(POLYMARKET_PK)
+    usdc    = to_checksum_address(USDC_ADDRESS)
+    funder  = to_checksum_address(POLYMARKET_FUNDER)
+
+    # Check proxy wallet USDC.e balance
+    bal_selector = keccak(b"balanceOf(address)")[:4]
+    bal_data     = "0x" + (bal_selector + encode(["address"], [account.address])).hex()
+    raw_bal      = _rpc("eth_call", [{"to": usdc, "data": bal_data}, "latest"])
+    balance      = int(raw_bal, 16)
+
+    if balance == 0:
+        log.info("Claim: proxy wallet USDC.e balance is 0 — nothing to claim")
+        return
+
+    usdc_amount = balance / 1_000_000
+    log.info("Claiming %.2f USDC.e from proxy %s → funder %s", usdc_amount, account.address, funder)
+
+    transfer_selector = keccak(b"transfer(address,uint256)")[:4]
+    transfer_data     = "0x" + (transfer_selector + encode(["address", "uint256"], [funder, balance])).hex()
+
+    nonce     = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
+    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
+
+    tx = {
+        "to": usdc,
+        "data": transfer_data,
+        "nonce": nonce,
+        "gasPrice": gas_price,
+        "gas": 100_000,
+        "chainId": CHAIN_ID,
+        "value": 0,
+    }
+    signed   = account.sign_transaction(tx)
+    raw      = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
+    tx_hash  = _rpc("eth_sendRawTransaction", ["0x" + raw.hex()])
+    log.info("Claim tx sent: %s  (%.2f USDC.e)", tx_hash, usdc_amount)
+    tg(f"🏦 <b>Claimed</b>\n{usdc_amount:.2f} USDC.e → funder\ntx: {tx_hash}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
+
+def _run_redemption(clob) -> None:  # noqa: ARG001
+    if DRY_RUN:
+        return
+    try:
+        redeem_resolved_positions()
+    except Exception as exc:
+        log.error("Redemption sweep failed: %s", exc)
+
 
 def run_cycle(clob) -> None:
     cycle_start = time.time()
@@ -629,12 +939,14 @@ def run_cycle(clob) -> None:
     confidence = abs(p_up - 0.5) * 2   # 0 = no signal, 1 = max confidence
     if confidence < 0.10:
         log.info("Low confidence (%.2f) — skipping cycle", confidence)
+        _run_redemption(clob)
         return
 
     # 3. Fetch balance (drives true Kelly sizing)
     balance = fetch_usdc_balance()
     if balance < BET_SIZE_MIN and not DRY_RUN:
         log.warning("Balance $%.2f below minimum bet — skipping cycle", balance)
+        _run_redemption(clob)
         return
 
     # 4. Fetch the current BTC Up/Down 5-min market by slug
@@ -642,27 +954,28 @@ def run_cycle(clob) -> None:
         market = fetch_btc_5m_market()
     except Exception as exc:
         log.error("Failed to fetch market: %s", exc)
+        _run_redemption(clob)
         return
 
     if market is None:
         log.info("No active btc-updown-5m market found — skipping cycle")
+        _run_redemption(clob)
         return
 
     condition_id = market.get("conditionId") or market.get("condition_id", "")
     question     = market.get("question", "")
 
-    positions = load_positions()
-
-    if condition_id in positions:
+    if not DRY_RUN and _has_trade_on_market(clob, condition_id):
         log.info("Already bet on this market (%s) — skipping", question[:60])
-        save_positions(positions)
         elapsed = time.time() - cycle_start
         log.info("── Cycle done in %.1fs ─────────────────────", elapsed)
+        _run_redemption(clob)
         return
 
     up_token, down_token = get_up_down_tokens(market)
     if up_token is None or down_token is None:
         log.warning("Could not identify Up/Down tokens in market: %s", market)
+        _run_redemption(clob)
         return
 
     up_price   = float(up_token.get("price",   0.5))
@@ -682,9 +995,9 @@ def run_cycle(clob) -> None:
         direction, token, price, edge = "down", down_token, down_price, edge_down
     else:
         log.info("No edge above %.2f on either side — skipping", MIN_EDGE)
-        save_positions(positions)
         elapsed = time.time() - cycle_start
         log.info("── Cycle done in %.1fs ─────────────────────", elapsed)
+        _run_redemption(clob)
         return
 
     size = kelly_size(edge, price, balance)
@@ -696,21 +1009,11 @@ def run_cycle(clob) -> None:
 
     bets_placed = 0
     if DRY_RUN:
-        log.info("  DRY_RUN — order not placed")
-        positions[condition_id] = {
-            "question": question, "direction": direction,
-            "edge": edge, "size": size, "price": price,
-            "ts": int(time.time()), "dry": True,
-        }
+        log.info("  DRY_RUN — would bet %s $%.2f on %s", direction.upper(), size, question[:60])
     else:
-        order_id  = place_bet(clob, token, size, condition_id, int(market.get("takerBaseFee", 0)))
+        order_id = place_bet(clob, token, size, condition_id, int(market.get("takerBaseFee", 0)))
         if order_id:
             log.info("  Placed order %s", order_id)
-            positions[condition_id] = {
-                "question": question, "direction": direction,
-                "edge": edge, "size": size, "price": price,
-                "order_id": order_id, "ts": int(time.time()),
-            }
             tg(
                 f"🎯 <b>BTC 5m Bet</b>\n"
                 f"Market: {question[:80]}\n"
@@ -720,9 +1023,9 @@ def run_cycle(clob) -> None:
             )
             bets_placed += 1
 
-    save_positions(positions)
     elapsed = time.time() - cycle_start
     log.info("── Cycle done in %.1fs | bets=%d ─────────────", elapsed, bets_placed)
+    _run_redemption(clob)
 
 
 def main() -> None:
@@ -753,7 +1056,6 @@ def main() -> None:
                 raise
 
     def sleep_until_next_boundary() -> None:
-        """Sleep until the next LOOP_INTERVAL boundary (e.g. 13:00, 13:05, 13:10)."""
         now = time.time()
         next_boundary = math.ceil(now / LOOP_INTERVAL) * LOOP_INTERVAL
         wait = next_boundary - now
@@ -761,7 +1063,6 @@ def main() -> None:
         log.info("Sleeping %.1fs until next boundary %s …", wait, next_dt.strftime("%H:%M:%S UTC"))
         time.sleep(wait)
 
-    # Wait for the first aligned boundary before starting
     sleep_until_next_boundary()
 
     while True:
