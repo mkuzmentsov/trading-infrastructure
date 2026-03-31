@@ -43,11 +43,12 @@ LGB_PARAMS = {
     "bagging_freq":     5,
     "lambda_l1":        0.1,
     "lambda_l2":        0.1,
+    "is_unbalance":     True,
     "verbose":          -1,
 }
 
-NUM_BOOST_ROUND  = 500
-EARLY_STOPPING   = 30
+NUM_BOOST_ROUND  = 1000
+EARLY_STOPPING   = 50
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -134,8 +135,10 @@ def main(input_path: str, target_col: str) -> None:
 
     # ── Save ──
     date_str = datetime.now().strftime("%Y%m%d")
-    model_path  = Path(f"model_{target_col}_{date_str}.txt")
-    report_path = Path(f"report_{target_col}_{date_str}.txt")
+    out_dir = Path("outputs")
+    out_dir.mkdir(exist_ok=True)
+    model_path  = out_dir / f"model_{target_col}_{date_str}.txt"
+    report_path = out_dir / f"report_{target_col}_{date_str}.txt"
 
     booster.save_model(str(model_path))
     print(f"\nModel saved → {model_path}")
@@ -158,10 +161,10 @@ def main(input_path: str, target_col: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input",  default="BTCUSD_features.csv")
+    parser.add_argument("--input",  default="BINANCE_5m_features.csv")
     parser.add_argument(
-        "--target", default="target_dir_15m",
-        help="Target column: target_dir_5m / 15m / 60m / 240m  or  target_ret_*",
+        "--target", default="target_dir_1bar",
+        help="Target column: target_dir_1bar (5min) / 3bar (15min) / 12bar (1h) / 48bar (4h)",
     )
     args = parser.parse_args()
     main(args.input, args.target)

@@ -136,6 +136,9 @@ def _add_ma(df: pd.DataFrame) -> pd.DataFrame:
 
 def _add_momentum(df: pd.DataFrame) -> pd.DataFrame:
     c, h, l = df["close"], df["high"], df["low"]
+    for p in [3, 5]:
+        rsi = ta.rsi(c, length=p)
+        df[f"rsi{p}"] = rsi / 100.0 if rsi is not None else np.nan
     for p in [7, 14, 21]:
         rsi = ta.rsi(c, length=p)
         df[f"rsi{p}"] = rsi / 100.0 if rsi is not None else np.nan
@@ -174,11 +177,11 @@ def _add_volatility(df: pd.DataFrame) -> pd.DataFrame:
         df["bb_pos"]   = _safe_div(c - bb.iloc[:, 2], bb.iloc[:, 0] - bb.iloc[:, 2])
     log_ret = np.log(c / c.shift(1))
     for p in [20, 60, 120]:
-        df[f"hvol{p}"] = log_ret.rolling(p).std() * np.sqrt(1440)
+        df[f"hvol{p}"] = log_ret.rolling(p).std() * np.sqrt(288)
     log_hl = np.log(h / l)
     log_co = np.log(c / o)
     gk = 0.5 * log_hl**2 - (2 * np.log(2) - 1) * log_co**2
-    df["gk_vol20"] = gk.rolling(20).mean().apply(np.sqrt) * np.sqrt(1440)
+    df["gk_vol20"] = gk.rolling(20).mean().apply(np.sqrt) * np.sqrt(288)
     ema20  = c.ewm(span=20, adjust=False).mean()
     atr14  = ta.atr(h, l, c, length=14)
     if atr14 is not None:
@@ -303,7 +306,7 @@ def _add_time(df: pd.DataFrame, dt_col: pd.Series) -> pd.DataFrame:
 def _add_mtf(df: pd.DataFrame, dt_series: pd.Series) -> pd.DataFrame:
     tmp = df.copy()
     tmp.index = dt_series
-    for minutes in [5, 15, 60]:
+    for minutes in [15, 60, 240]:
         rule = f"{minutes}min"
         ohlcv = tmp[["open", "high", "low", "close", "volume"]].resample(
             rule, label="right", closed="right"
@@ -323,7 +326,22 @@ def _add_mtf(df: pd.DataFrame, dt_series: pd.Series) -> pd.DataFrame:
     return df
 
 
-# Ordered feature list matching the trained model (107 features)
+def _add_microstructure(df: pd.DataFrame) -> pd.DataFrame:
+    c, v = df["close"], df["volume"]
+    for p in [5, 10, 20]:
+        df[f"dist_high{p}"] = (c.rolling(p).max() - c) / c
+        df[f"dist_low{p}"]  = (c - c.rolling(p).min()) / c
+    for p in [3, 5, 8]:
+        ema = c.ewm(span=p, adjust=False).mean()
+        df[f"ema{p}_dev"] = _safe_div(c - ema, c)
+    df["vol_vs_prev"] = _safe_div(v, v.shift(1))
+    direction = np.sign(c.diff())
+    changes = (direction != direction.shift(1)).cumsum()
+    df["bar_streak"] = direction * (changes.groupby(changes).cumcount() + 1)
+    return df
+
+
+# Ordered feature list matching the trained model
 FEATURE_COLS = [
     # price
     "ret_1m","log_ret_1m","ret_5m","log_ret_5m","ret_15m","log_ret_15m",
@@ -335,7 +353,7 @@ FEATURE_COLS = [
     "ema9_x_ema21","ema21_x_ema50","ema50_x_ema200",
     "ema9_ema21_spread","ema21_ema50_spread","ema50_ema200_spread",
     # momentum
-    "rsi7","rsi14","rsi21","macd","macd_signal","macd_hist",
+    "rsi3","rsi5","rsi7","rsi14","rsi21","macd","macd_signal","macd_hist",
     "stoch_k","stoch_d","cci20","willr14","roc10","roc20","mom10","mom20",
     # volatility
     "atr7_ratio","atr14_ratio","atr21_ratio",
@@ -354,9 +372,14 @@ FEATURE_COLS = [
     # time
     "hour","dow","is_weekend","hour_sin","hour_cos","dow_sin","dow_cos","session",
     # multi-timeframe
-    "mtf_5m_rsi14","mtf_5m_ema21_r","mtf_5m_atr14_r",
     "mtf_15m_rsi14","mtf_15m_ema21_r","mtf_15m_atr14_r",
     "mtf_60m_rsi14","mtf_60m_ema21_r","mtf_60m_atr14_r",
+    "mtf_240m_rsi14","mtf_240m_ema21_r","mtf_240m_atr14_r",
+    # microstructure
+    "dist_high5","dist_high10","dist_high20",
+    "dist_low5","dist_low10","dist_low20",
+    "ema3_dev","ema5_dev","ema8_dev",
+    "vol_vs_prev","bar_streak",
 ]
 
 
@@ -377,6 +400,7 @@ def compute_features(ohlcv_df: pd.DataFrame) -> pd.Series:
     df = _add_statistical(df)
     df = _add_time(df, dt)
     df = _add_mtf(df, dt)
+    df = _add_microstructure(df)
 
     last = df.iloc[-1]
     # Ensure all feature cols exist (fill missing with NaN — LightGBM handles it)
@@ -390,8 +414,8 @@ _exchange = ccxt.binance({"enableRateLimit": True})
 
 
 def fetch_btc_ohlcv(n: int = CANDLES_NEEDED) -> pd.DataFrame:
-    """Fetch last n 1-minute BTC/USDT candles from Binance."""
-    raw = _exchange.fetch_ohlcv("BTC/USDT", timeframe="1m", limit=n)
+    """Fetch last n 5-minute BTC/USDT candles from Binance."""
+    raw = _exchange.fetch_ohlcv("BTC/USDT", timeframe="5m", limit=n)
     df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
     df["timestamp"] = df["timestamp"] // 1000  # ms → seconds
     # Binance doesn't provide trade count; approximate from volume/close

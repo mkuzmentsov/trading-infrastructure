@@ -1,7 +1,9 @@
 """
-Feature engineering script for 1-minute OHLCV+trades data.
+Feature engineering script for 5-minute OHLCV+trades data.
 
-Input CSV columns: timestamp (unix seconds), open, high, low, close, volume, trades
+Accepts two input formats:
+  - Binance klines CSV (no header, microsecond open_time in col 0)
+  - Legacy CSV with header: timestamp(unix s), open, high, low, close, volume, trades
 
 Dependencies:
     pip install pandas numpy pandas-ta scipy
@@ -9,6 +11,7 @@ Dependencies:
 
 import warnings
 import argparse
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import pandas_ta as ta
@@ -17,8 +20,8 @@ warnings.filterwarnings("ignore")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-FORWARD_RETURNS = [5, 15, 60, 240]   # minutes ahead for target labels
-MTF_PERIODS     = [5, 15, 60]        # minutes for multi-timeframe resample
+FORWARD_RETURNS = [1, 3, 12, 48]     # bars ahead (5m bars: 1=5min, 3=15min, 12=1h, 48=4h)
+MTF_PERIODS     = [15, 60, 240]      # minutes for multi-timeframe resample
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -92,6 +95,11 @@ def add_momentum(df: pd.DataFrame) -> pd.DataFrame:
     """RSI, MACD, Stochastic, CCI, Williams %R, ROC."""
     c, h, l = df["close"], df["high"], df["low"]
 
+    # Fast RSI (microstructure)
+    for p in [3, 5]:
+        rsi = ta.rsi(c, length=p)
+        df[f"rsi{p}"] = rsi / 100.0 if rsi is not None else np.nan
+
     # RSI at three periods
     for p in [7, 14, 21]:
         rsi = ta.rsi(c, length=p)
@@ -152,13 +160,13 @@ def add_volatility(df: pd.DataFrame) -> pd.DataFrame:
     # Historical volatility: rolling std of log returns, annualised proxy
     log_ret = np.log(c / c.shift(1))
     for p in [20, 60, 120]:
-        df[f"hvol{p}"] = log_ret.rolling(p).std() * np.sqrt(1440)  # 1440 min/day
+        df[f"hvol{p}"] = log_ret.rolling(p).std() * np.sqrt(288)  # 1440 min/day
 
     # Garman-Klass volatility estimator (20-period)
     log_hl = np.log(h / l)
     log_co = np.log(c / o)
     gk_daily = 0.5 * log_hl**2 - (2 * np.log(2) - 1) * log_co**2
-    df["gk_vol20"] = gk_daily.rolling(20).mean().apply(np.sqrt) * np.sqrt(1440)
+    df["gk_vol20"] = gk_daily.rolling(20).mean().apply(np.sqrt) * np.sqrt(288)
 
     # Keltner channel position (using EMA20 ± 2*ATR14)
     ema20 = c.ewm(span=20, adjust=False).mean()
@@ -345,29 +353,122 @@ def add_multitimeframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_microstructure(df: pd.DataFrame) -> pd.DataFrame:
+    """Fast mean-reversion signals: distance from recent high/low, bar streak, volume pulse."""
+    c, v = df["close"], df["volume"]
+
+    # Distance from N-bar rolling high/low (normalised by price)
+    for p in [5, 10, 20]:
+        df[f"dist_high{p}"] = (c.rolling(p).max() - c) / c
+        df[f"dist_low{p}"]  = (c - c.rolling(p).min()) / c
+
+    # Distance from fast EMA (mean-reversion signal)
+    for p in [3, 5, 8]:
+        ema = c.ewm(span=p, adjust=False).mean()
+        df[f"ema{p}_dev"] = _safe_div(c - ema, c)
+
+    # Volume vs previous bar
+    df["vol_vs_prev"] = _safe_div(v, v.shift(1))
+
+    # Consecutive bar streak (+N = N up bars in a row, -N = N down bars)
+    direction = np.sign(c.diff())
+    changes = (direction != direction.shift(1)).cumsum()
+    df["bar_streak"] = direction * (changes.groupby(changes).cumcount() + 1)
+
+    return df
+
+
 def add_target(df: pd.DataFrame) -> pd.DataFrame:
-    """Forward returns and binary direction labels."""
-    c = df["close"]
+    """Forward returns and binary direction labels (bar-based, 1 bar = 5 min).
+
+    Labels use an ATR-relative threshold to filter micro-noise:
+      - fwd_ret >  0.15 * ATR14/close  → 1 (UP)
+      - fwd_ret < -0.15 * ATR14/close  → 0 (DOWN)
+      - |fwd_ret| <= threshold          → NaN (ambiguous, excluded from training)
+    """
+    c, h, l = df["close"], df["high"], df["low"]
+    atr14 = ta.atr(h, l, c, length=14)
+    threshold = (atr14 / c * 0.08) if atr14 is not None else None
+
     for n in FORWARD_RETURNS:
         fwd_ret = c.shift(-n) / c - 1
-        df[f"target_ret_{n}m"]  = fwd_ret
-        df[f"target_dir_{n}m"]  = (fwd_ret > 0).astype(float)
+        df[f"target_ret_{n}bar"] = fwd_ret
+        if threshold is not None:
+            df[f"target_dir_{n}bar"] = np.where(
+                fwd_ret > threshold, 1.0,
+                np.where(fwd_ret < -threshold, 0.0, np.nan)
+            )
+        else:
+            df[f"target_dir_{n}bar"] = (fwd_ret > 0).astype(float)
         # Last n rows have no valid target
-        df.loc[df.index[-n:], [f"target_ret_{n}m", f"target_dir_{n}m"]] = np.nan
+        df.loc[df.index[-n:], [f"target_ret_{n}bar", f"target_dir_{n}bar"]] = np.nan
     return df
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def build_features(input_path: str, output_path: str) -> pd.DataFrame:
-    print(f"Loading {input_path} …")
-    df = pd.read_csv(input_path)
+def _load_csv(input_path: str) -> pd.DataFrame:
+    """Load and normalise a klines CSV to (timestamp_s, open, high, low, close, volume, trades).
+
+    Supported formats:
+      - Binance klines: 12 cols, no header, microsecond open_time
+      - Kraken OHLCVT:  7 cols,  no header, unix-second timestamp
+      - Legacy:         header row with 'timestamp' column
+    """
+    probe = pd.read_csv(input_path, header=None, nrows=1)
+    first_val = probe.iloc[0, 0]
+    n_cols = probe.shape[1]
+    is_header = isinstance(first_val, str)
+
+    if not is_header and n_cols == 12:
+        # Binance klines (microseconds)
+        df = pd.read_csv(input_path, header=None, names=[
+            "timestamp", "open", "high", "low", "close", "volume",
+            "close_time", "quote_vol", "trades", "taker_base", "taker_quote", "ignore",
+        ])
+        df = df[["timestamp", "open", "high", "low", "close", "volume", "trades"]].copy()
+        df["timestamp"] = df["timestamp"] // 1_000_000   # microseconds → seconds
+        df = df.iloc[:-1]  # drop last incomplete candle
+    elif not is_header and n_cols == 7:
+        # Kraken OHLCVT (unix seconds)
+        df = pd.read_csv(input_path, header=None,
+                         names=["timestamp", "open", "high", "low", "close", "volume", "trades"])
+    else:
+        df = pd.read_csv(input_path)
+
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = df[col].astype(float)
+    df["trades"] = df["trades"].astype(int)
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # Resample to 5m if data is 1m (median interval < 120 s)
+    median_interval = df["timestamp"].diff().median()
+    if median_interval < 120:
+        print(f"  Resampling 1m → 5m ({input_path}) …")
+        df.index = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+        df = df[["open", "high", "low", "close", "volume", "trades"]].resample("5min").agg({
+            "open": "first", "high": "max", "low": "min",
+            "close": "last", "volume": "sum", "trades": "sum",
+        }).dropna()
+        df["timestamp"] = df.index.astype(int) // 10**9
+        df = df.reset_index(drop=True)
+
+    return df
+
+
+def build_features(input_paths: list, output_path: str) -> pd.DataFrame:
+    frames = []
+    for path in input_paths:
+        print(f"Loading {path} …")
+        frames.append(_load_csv(path))
+    df = pd.concat(frames).sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
+    print(f"  Total rows: {len(df):,}")
 
     # Parse timestamp
     df["timestamp_dt"]     = pd.to_datetime(df["timestamp"], unit="s", utc=True)
     df["timestamp_dt_mtf"] = df["timestamp_dt"]   # keep copy before MTF sets index
 
-    print(f"  Rows: {len(df):,}  |  Date range: {df['timestamp_dt'].iloc[0]}  →  {df['timestamp_dt'].iloc[-1]}")
+    print(f"  Date range: {df['timestamp_dt'].iloc[0]}  →  {df['timestamp_dt'].iloc[-1]}")
 
     steps = [
         ("Price / candle structure",  add_price_features),
@@ -379,6 +480,7 @@ def build_features(input_path: str, output_path: str) -> pd.DataFrame:
         ("Statistical",               add_statistical_features),
         ("Time",                      add_time_features),
         ("Multi-timeframe",           add_multitimeframe),
+        ("Microstructure",            add_microstructure),
         ("Target labels",             add_target),
     ]
 
@@ -396,6 +498,7 @@ def build_features(input_path: str, output_path: str) -> pd.DataFrame:
                        and not c.startswith("target_")])
     n_targets  = len([c for c in df.columns if c.startswith("target_")])
     print(f"\nFeature matrix: {len(df):,} rows × {n_features} features + {n_targets} target columns")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     print(f"Saving to {output_path} …")
     df.to_csv(output_path, index=False)
     print("Done.")
@@ -404,9 +507,9 @@ def build_features(input_path: str, output_path: str) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate ML features from 1-minute OHLCV+trades CSV")
-    parser.add_argument("--input",  default="BTCUSD_1.csv",      help="Input CSV path")
-    parser.add_argument("--output", default="BTCUSD_features.csv", help="Output CSV path")
+    parser = argparse.ArgumentParser(description="Generate ML features from 5-minute OHLCV+trades CSV(s)")
+    parser.add_argument("--input",  nargs="+", required=True, help="One or more input CSV paths")
+    parser.add_argument("--output", default="outputs/features.csv", help="Output CSV path")
     args = parser.parse_args()
 
     build_features(args.input, args.output)
