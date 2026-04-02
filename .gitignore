@@ -9,6 +9,7 @@ freqtrade/k8s/helm/bots/*
 polymarket/k8s/helm/bots/*
 !polymarket/k8s/helm/bots/pm_claude_1.yaml.example
 !polymarket/k8s/helm/bots/pm_btc_1.yaml.example
+polymarket/k8s/helm/polymarket-btc-bot/files/old_scripts_ignore
 
 util/k8s/helm/jobs/*
 !util/k8s/helm/jobs/hl_leaderboard_1.yaml.example
@@ -30,3 +31,4 @@ ai/report_target*
 ai/*.csv
 ai/inputs
 ai/outputs
+ai/hf-models

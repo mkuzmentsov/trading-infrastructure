@@ -27,13 +27,16 @@ spec:
         - name: polymarket-btc
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "/app/scripts/main.py"]
+          env:
+            - name: PYTHONPATH
+              value: /app/scripts
           envFrom:
             - secretRef:
                 name: {{ include "polymarket-btc-bot.name" . }}-secret
           volumeMounts:
             - name: script
-              mountPath: /app/pm_btc.py
-              subPath: pm_btc.py
+              mountPath: /app/scripts
             - name: data
               mountPath: /app/data
           resources:

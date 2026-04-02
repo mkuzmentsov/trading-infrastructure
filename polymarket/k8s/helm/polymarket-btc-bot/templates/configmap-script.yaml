@@ -5,5 +5,7 @@ metadata:
   labels:
     {{- include "polymarket-btc-bot.labels" . | nindent 4 }}
 data:
-  pm_btc.py: |
-{{ .Files.Get "files/scripts/pm_btc.py" | indent 4 }}
+  {{- range $path, $content := .Files.Glob "files/scripts/*.py" }}
+  {{ base $path }}: |
+{{ $content | toString | indent 4 }}
+  {{- end }}
