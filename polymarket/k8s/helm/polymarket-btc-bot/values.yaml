@@ -2,31 +2,41 @@ botName: polymarket-btc-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot
-  tag: "0.3"
+  tag: "0.4"
   pullPolicy: IfNotPresent
 
 bot:
   dryRun: "true"
-  # Min probability edge over market price required to place a bet (0.05 = 5pp)
-  minEdge: "0.05"
-  # Per-bet size in USDC — quarter-Kelly stays within these bounds
+  loopIntervalSecs: "300"
+  # Signal parameters
+  minEdge: "0.03"        # net edge required after cost buffer
+  costBuffer: "0.02"     # fee + slippage allowance deducted from edge
+  kellyScale: "0.5"      # half-Kelly sizing
   betSizeMin: "0.50"
   betSizeMax: "5.00"
-  # Seconds between scan cycles (5 minutes matches the 5m model target)
-  loopIntervalSecs: "300"
-  # Path to the LightGBM model inside the container (mounted from PVC)
-  modelPath: "/app/data/model.txt"
-  # Polygon JSON-RPC endpoint used for on-chain redemption
+  # Drift estimation coefficients (hand-tuned; backtest to refine)
+  driftA1: "1.8"         # 30s momentum weight
+  driftA2: "1.2"         # 60s momentum weight
+  driftA3: "0.003"       # book imbalance weight
+  driftA4: "0.8"         # distance-from-open weight
+  # Position management
+  evalIntervalSecs: "5"      # signal re-evaluation frequency
+  takeProfit: "0.15"         # exit if bid rises entry + this
+  stopLoss: "0.08"           # exit if bid falls entry - this
+  signalExitEdge: "0.05"     # exit if opposite signal edge >= this
+  minExitBid: "0.03"         # don't sell below this price
+  orderReplaceGap: "0.02"    # cancel+replace sell if bid drifts by more than this
+  # Misc
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
+  marketRefreshSecs: "60"
 
 credentials:
-  polymarketPrivateKey: ""   # hex private key (0x...)
-  polymarketAddress: ""      # 0x... wallet address
+  polymarketPrivateKey: ""
+  polymarketAddress: ""
   polymarketApiKey: ""
   polymarketApiSecret: ""
   polymarketApiPassphrase: ""
-  # 0 = EOA (MetaMask), 2 = Gnosis Safe
-  polymarketSignatureType: "0"
+  polymarketSignatureType: "0"   # 0=EOA, 2=Gnosis Safe
   polymarketFunder: ""
 
 telegram:
@@ -34,17 +44,15 @@ telegram:
   chatId: ""
 
 persistence:
-  enabled: true
-  size: 10Gi
-  storageClass: ""
+  enabled: false   # no model file needed anymore
 
 nodeSelector:
   topology.kubernetes.io/region: hel1
 
 resources:
   requests:
-    memory: 512Mi   # LightGBM + pandas need more RAM than the Claude bot
-    cpu: 100m
+    memory: 128Mi   # much lighter without LightGBM/pandas
+    cpu: 50m
   limits:
-    memory: 1Gi
-    cpu: 500m
+    memory: 256Mi
+    cpu: 200m

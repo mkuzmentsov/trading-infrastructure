@@ -37,18 +37,9 @@ spec:
           volumeMounts:
             - name: script
               mountPath: /app/scripts
-            - name: data
-              mountPath: /app/data
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: script
           configMap:
             name: {{ include "polymarket-btc-bot.name" . }}-script
-        - name: data
-          {{- if .Values.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "polymarket-btc-bot.name" . }}-pvc
-          {{- else }}
-          emptyDir: {}
-          {{- end }}

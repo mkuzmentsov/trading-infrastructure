@@ -31,6 +31,7 @@ from generate_features import (
     add_volume_features,
     add_trend_features,
     add_statistical_features,
+    add_regime_features,
     add_time_features,
     add_multitimeframe,
     add_microstructure,
@@ -70,8 +71,8 @@ def build_features_from_df(df: pd.DataFrame) -> pd.DataFrame:
 
     for fn in [add_price_features, add_moving_averages, add_momentum,
                add_volatility, add_volume_features, add_trend_features,
-               add_statistical_features, add_time_features, add_multitimeframe,
-               add_microstructure]:
+               add_statistical_features, add_regime_features,
+               add_time_features, add_multitimeframe, add_microstructure]:
         df = fn(df)
 
     return df.iloc[WARMUP:].reset_index(drop=True)
@@ -79,8 +80,18 @@ def build_features_from_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def run_backtest(df_feat: pd.DataFrame, booster: lgb.Booster,
                  min_edge: float) -> pd.DataFrame:
-    feature_cols = [c for c in df_feat.columns if c not in FEATURE_COLS_EXCLUDE
+    # Use exactly the features the model was trained on (handles version mismatches)
+    model_features = booster.feature_name()
+    all_features = [c for c in df_feat.columns if c not in FEATURE_COLS_EXCLUDE
                     and not c.startswith("target_")]
+    if set(model_features) != set(all_features):
+        missing = [f for f in model_features if f not in df_feat.columns]
+        if missing:
+            raise ValueError(f"Model expects features not in data: {missing}")
+        extra = len(all_features) - len(model_features)
+        if extra:
+            print(f"  Note: dropping {extra} extra features not in this model")
+    feature_cols = model_features
 
     records = []
     close = df_feat["close"].values

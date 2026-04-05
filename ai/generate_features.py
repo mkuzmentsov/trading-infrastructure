@@ -279,17 +279,73 @@ def add_statistical_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"ret_kurt{p}"]  = log_ret.rolling(p).kurt()
         df[f"close_z{p}"]   = (c - c.rolling(p).mean()) / (c.rolling(p).std() + EPS)
 
-    # 1-lag autocorrelation of returns (mean-reversion vs momentum signal)
-    for p in [20, 60]:
-        df[f"ret_ac1_{p}"] = log_ret.rolling(p).apply(
-            lambda x: pd.Series(x).autocorr(lag=1), raw=False
-        )
+    # Multi-lag autocorrelation of returns (mean-reversion vs momentum)
+    for lag in [1, 2, 3, 5]:
+        for p in [20, 60]:
+            df[f"ret_ac{lag}_{p}"] = log_ret.rolling(p).apply(
+                lambda x: pd.Series(x).autocorr(lag=lag), raw=False
+            )
 
     # price entropy proxy: normalised range of returns distribution
     for p in [30, 60]:
         df[f"ret_range{p}"] = (
             log_ret.rolling(p).max() - log_ret.rolling(p).min()
         )
+
+    return df
+
+
+def _hurst_rs(arr: np.ndarray) -> float:
+    """Hurst exponent via R/S analysis. H>0.5=trending, H<0.5=mean-reverting."""
+    n = len(arr)
+    if n < 8:
+        return 0.5
+    log_ret = np.diff(np.log(np.maximum(arr, 1e-10)))
+    mean_r = log_ret.mean()
+    dev = np.cumsum(log_ret - mean_r)
+    R = dev.max() - dev.min()
+    S = log_ret.std(ddof=1)
+    if S < 1e-12 or R <= 0:
+        return 0.5
+    return float(np.log(R / S) / np.log(n - 1))
+
+
+def add_regime_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Hurst exponent (trend/mean-reversion regime), volatility regime, trend R²."""
+    c = df["close"]
+    log_ret = np.log(c / c.shift(1))
+
+    # Hurst exponent at multiple lookbacks — powerful regime detector
+    for w in [30, 60, 100]:
+        df[f"hurst_{w}"] = c.rolling(w).apply(_hurst_rs, raw=True)
+
+    # Volatility regime: short-term vol vs long-term vol ratio
+    # >1 means currently high-volatility, <1 means low/calm
+    hvol20  = log_ret.rolling(20).std()
+    hvol100 = log_ret.rolling(100).std()
+    df["vol_regime"] = (hvol20 / (hvol100 + EPS)).clip(0, 5)
+
+    # Volatility percentile (where is current vol vs recent 200-bar distribution)
+    df["vol_pct100"] = hvol20.rolling(100).rank(pct=True)
+
+    # Trend R²: measures how well a linear trend fits recent price action
+    for w in [20, 50]:
+        x = np.arange(w, dtype=float)
+        x -= x.mean()
+        x2_sum = (x * x).sum()
+
+        def _r2(y):
+            if np.isnan(y).any():
+                return np.nan
+            log_y = np.log(np.maximum(y, 1e-10))
+            log_y -= log_y.mean()
+            slope = (x * log_y).sum() / (x2_sum + EPS)
+            trend = slope * x
+            ss_res = ((log_y - trend) ** 2).sum()
+            ss_tot = (log_y ** 2).sum()
+            return float(1.0 - ss_res / (ss_tot + EPS))
+
+        df[f"trend_r2_{w}"] = c.rolling(w).apply(_r2, raw=True)
 
     return df
 
@@ -456,13 +512,66 @@ def _load_csv(input_path: str) -> pd.DataFrame:
     return df
 
 
+def _validate_and_clean(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove bad/impossible candles and report what was dropped."""
+    n0 = len(df)
+
+    # 1. Remove zero or negative prices
+    price_cols = ["open", "high", "low", "close"]
+    bad_price = (df[price_cols] <= 0).any(axis=1)
+    if bad_price.sum():
+        print(f"    [clean] dropped {bad_price.sum()} rows with zero/negative price")
+    df = df[~bad_price]
+
+    # 2. OHLC consistency: high must be >= all others, low must be <= all others
+    bad_ohlc = (
+        (df["high"] < df["low"]) |
+        (df["high"] < df["open"]) |
+        (df["high"] < df["close"]) |
+        (df["low"]  > df["open"]) |
+        (df["low"]  > df["close"])
+    )
+    if bad_ohlc.sum():
+        print(f"    [clean] dropped {bad_ohlc.sum()} rows with OHLC inconsistency")
+    df = df[~bad_ohlc]
+
+    # 3. Price spike filter: drop candles where close changes >15% vs previous close
+    #    (Kraken occasionally has data errors; 15% in 5 min is essentially impossible)
+    pct_change = df["close"].pct_change().abs()
+    spikes = pct_change > 0.15
+    if spikes.sum():
+        print(f"    [clean] dropped {spikes.sum()} rows with >15% price spike")
+    df = df[~spikes]
+
+    # 4. Zero volume candles: keep but flag (some are valid in thin hours)
+    zero_vol = (df["volume"] == 0)
+    if zero_vol.sum():
+        print(f"    [clean] note: {zero_vol.sum()} zero-volume candles kept (thin market)")
+
+    # 5. Report gaps (missing 5m bars)
+    ts_diff = df["timestamp"].diff()
+    expected = 300  # 5 minutes in seconds
+    gaps = ts_diff[ts_diff > expected * 2]
+    if len(gaps):
+        total_gap_bars = int((gaps - expected).sum() / expected)
+        print(f"    [clean] {len(gaps)} time gaps detected (~{total_gap_bars} missing bars)")
+
+    n_dropped = n0 - len(df)
+    if n_dropped:
+        print(f"    [clean] total dropped: {n_dropped} / {n0} rows ({n_dropped/n0*100:.2f}%)")
+
+    return df.reset_index(drop=True)
+
+
 def build_features(input_paths: list, output_path: str) -> pd.DataFrame:
     frames = []
     for path in input_paths:
         print(f"Loading {path} …")
         frames.append(_load_csv(path))
     df = pd.concat(frames).sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
-    print(f"  Total rows: {len(df):,}")
+    print(f"  Total rows before cleaning: {len(df):,}")
+    df = _validate_and_clean(df)
+    print(f"  Total rows after cleaning:  {len(df):,}")
 
     # Parse timestamp
     df["timestamp_dt"]     = pd.to_datetime(df["timestamp"], unit="s", utc=True)
@@ -478,6 +587,7 @@ def build_features(input_paths: list, output_path: str) -> pd.DataFrame:
         ("Volume",                    add_volume_features),
         ("Trend (ADX / Ichimoku)",    add_trend_features),
         ("Statistical",               add_statistical_features),
+        ("Regime (Hurst / vol)",      add_regime_features),
         ("Time",                      add_time_features),
         ("Multi-timeframe",           add_multitimeframe),
         ("Microstructure",            add_microstructure),

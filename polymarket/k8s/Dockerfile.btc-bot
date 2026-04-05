@@ -1,0 +1,11 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    websockets==12.0 \
+    py-clob-client==0.19.0 \
+    requests==2.32.3
+
+# Scripts are injected at runtime via ConfigMap — no COPY needed.
+CMD ["python", "-u", "/app/scripts/main.py"]
