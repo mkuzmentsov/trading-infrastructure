@@ -33,7 +33,9 @@ from config import (
     BET_SIZE_MIN,
     DRY_RUN,
     ENTRY_MIN_SECONDS_LEFT,
+    ENTRY_CONFIRMATION_TICKS,
     EVAL_INTERVAL_SECS,
+    FEED_STALE_SECS,
     LOOP_INTERVAL,
     MIN_EDGE,
     MIN_EXIT_BID,
@@ -43,6 +45,7 @@ from config import (
     SIGNAL_EXIT_EDGE,
     STOP_LOSS,
     TAKE_PROFIT,
+    WS_HEARTBEAT_SECS,
     log,
 )
 from math_signal import generate_signal
@@ -58,6 +61,25 @@ _approved_ctf_tokens: set[str] = set()
 _balance_cache: list = [0.0, 0.0]
 _BALANCE_TTL = 30.0
 _PENDING_BUY_TIMEOUT = 60.0
+_last_feed_diag_at = 0.0
+_entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
+
+
+async def _init_clob() -> object:
+    clob = build_clob_client()
+    from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+    bal_data = clob.get_balance_allowance(
+        params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+    )
+    bal = float(bal_data.get("balance", 0)) / 1_000_000
+    log.info("Wallet %s  balance: %.2f USDC", POLYMARKET_ADDRESS, bal)
+
+    ensure_approvals(clob)
+
+    if pm_state.token_id_up:
+        await _ensure_ctf_approval_for_token(clob, pm_state.token_id_up)
+    return clob
 
 
 async def _wait_for_ready(timeout: float = 60.0) -> bool:
@@ -71,11 +93,15 @@ async def _wait_for_ready(timeout: float = 60.0) -> bool:
 
 def _seconds_left_in_bar() -> int:
     now = time.time()
+    if pm_state.market_end_ts > 0:
+        return max(0, int(pm_state.market_end_ts - now))
     bar_end = math.ceil(now / LOOP_INTERVAL) * LOOP_INTERVAL
     return max(0, int(bar_end - now))
 
 
 def _next_bar_boundary() -> float:
+    if pm_state.market_end_ts > 0:
+        return float(pm_state.market_end_ts)
     now = time.time()
     return (math.floor(now / LOOP_INTERVAL) + 1) * LOOP_INTERVAL
 
@@ -85,6 +111,66 @@ def _current_bid_for_position() -> float:
     if pos is None:
         return 0.0
     return pm_state.up_bid if pos.direction == "UP" else pm_state.down_bid
+
+
+def _feed_staleness() -> dict:
+    now = time.time()
+    price_age = now - btc_state.last_updated_at if btc_state.last_updated_at > 0 else float("inf")
+    depth_age = now - btc_state.last_depth_update_ts if btc_state.last_depth_update_ts > 0 else float("inf")
+    up_age = now - pm_state.last_up_book_ts if pm_state.last_up_book_ts > 0 else float("inf")
+    down_age = now - pm_state.last_down_book_ts if pm_state.last_down_book_ts > 0 else float("inf")
+    return {
+        "price_age": price_age,
+        "depth_age": depth_age,
+        "pm_up_age": up_age,
+        "pm_down_age": down_age,
+    }
+
+
+def _feeds_are_fresh() -> bool:
+    ages = _feed_staleness()
+    return (
+        ages["price_age"] <= FEED_STALE_SECS
+        and ages["depth_age"] <= FEED_STALE_SECS
+        and ages["pm_up_age"] <= FEED_STALE_SECS
+        and ages["pm_down_age"] <= FEED_STALE_SECS
+    )
+
+
+def _log_feed_diag(force: bool = False, reason: str = "") -> None:
+    global _last_feed_diag_at
+    now = time.time()
+    if not force and now - _last_feed_diag_at < WS_HEARTBEAT_SECS:
+        return
+    _last_feed_diag_at = now
+    ages = _feed_staleness()
+    pos = pos_store.position
+    pos_desc = "none"
+    if pos:
+        pos_desc = f"{pos.direction}:{pos.shares}@{pos.entry_price:.3f}"
+        if pos.hold_to_expiry:
+            pos_desc += ":hold"
+    prefix = f"{reason}  " if reason else ""
+    log.info(
+        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s pending=%s",
+        prefix,
+        _feeds_are_fresh(),
+        btc_state.price_source,
+        btc_state.current_price,
+        btc_state.bar_open,
+        ages["price_age"],
+        btc_state.last_round_id,
+        ages["depth_age"],
+        pm_state.ready,
+        pm_state.up_bid,
+        pm_state.up_ask,
+        ages["pm_up_age"],
+        pm_state.down_bid,
+        pm_state.down_ask,
+        ages["pm_down_age"],
+        pos_desc,
+        "yes" if pos_store.pending_buy else "no",
+    )
 
 
 async def _get_balance(clob) -> float:
@@ -191,12 +277,32 @@ async def _manage_position(clob) -> None:
         return
 
     if pos.condition_id != pm_state.condition_id and pm_state.condition_id:
-        log.info("Old market expired — clearing position  dir=%s  market=%s", pos.direction, pos.condition_id[:16])
-        pos_store.close()
+        if pos.sell_order_id and not DRY_RUN:
+            status, sold_shares, avg_price = await asyncio.to_thread(
+                get_order_fill_info, clob, pos.sell_order_id, pos.sell_price, pos.shares
+            )
+            if status == "filled":
+                exit_price = avg_price or pos.sell_price
+                realized_shares = sold_shares or pos.shares
+                pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
+                log.info(
+                    "Old-market sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%d  pnl=$%.2f  order=%s",
+                    pos.direction, pos.entry_price, exit_price, realized_shares, pnl, pos.sell_order_id,
+                )
+                pos_store.close()
+                _balance_cache[1] = 0.0
+                return
+        if not pos.hold_to_expiry:
+            log.info(
+                "Market rotated while position still open — holding to expiry  dir=%s  market=%s",
+                pos.direction,
+                pos.condition_id[:16],
+            )
+            pos.hold_to_expiry = True
         return
 
     if pos.hold_to_expiry:
-        log.debug("Position hold-to-expiry  dir=%s  shares=%s", pos.direction, pos.shares)
+        _log_feed_diag(reason="hold_to_expiry")
         return
 
     if pos.sell_order_id:
@@ -344,6 +450,11 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
 
 async def _try_enter(clob, balance: float) -> None:
     if not pm_state.ready or not btc_state.ready:
+        _log_feed_diag(reason="entry_blocked:not_ready")
+        return
+
+    if not _feeds_are_fresh():
+        _log_feed_diag(force=True, reason="entry_blocked:stale_feeds")
         return
 
     seconds_left = _seconds_left_in_bar()
@@ -369,6 +480,32 @@ async def _try_enter(clob, balance: float) -> None:
     log.info("Signal: %s  p_up=%.3f  edge=%.4f  %s", signal.action, signal.p_up, signal.edge, signal.reason)
 
     if signal.action == "NO_TRADE":
+        _entry_confirmation["condition_id"] = ""
+        _entry_confirmation["action"] = ""
+        _entry_confirmation["count"] = 0
+        _entry_confirmation["edge"] = 0.0
+        return
+
+    if (
+        _entry_confirmation["condition_id"] == pm_state.condition_id
+        and _entry_confirmation["action"] == signal.action
+    ):
+        _entry_confirmation["count"] += 1
+        _entry_confirmation["edge"] = signal.edge
+    else:
+        _entry_confirmation["condition_id"] = pm_state.condition_id
+        _entry_confirmation["action"] = signal.action
+        _entry_confirmation["count"] = 1
+        _entry_confirmation["edge"] = signal.edge
+
+    if _entry_confirmation["count"] < ENTRY_CONFIRMATION_TICKS:
+        log.info(
+            "Entry confirmation pending  action=%s  count=%d/%d  edge=%.4f",
+            signal.action,
+            _entry_confirmation["count"],
+            ENTRY_CONFIRMATION_TICKS,
+            signal.edge,
+        )
         return
 
     direction = "UP" if signal.action == "BUY_UP" else "DOWN"
@@ -389,6 +526,7 @@ async def _try_enter(clob, balance: float) -> None:
             entry_time=time.time(),
         )
         _traded_markets.add(pm_state.condition_id)
+        _entry_confirmation["count"] = 0
         return
 
     await _ensure_ctf_approval_for_token(clob, token_id)
@@ -419,6 +557,7 @@ async def _try_enter(clob, balance: float) -> None:
             shares=signal.size,
             price=signal.price,
         )
+        _entry_confirmation["count"] = 0
         tg(
             f"📋 <b>BTC 5m Order placed</b>\n"
             f"Market: {pm_state.question[:80]}\n"
@@ -432,13 +571,14 @@ async def _try_enter(clob, balance: float) -> None:
 
 async def _tick(clob) -> None:
     log.debug(
-        "Tick  BTC=$%.2f  up=%.3f/%.3f  down=%.3f/%.3f  pos=%s  pending=%s",
+        "Tick  settle=$%.2f  up=%.3f/%.3f  down=%.3f/%.3f  pos=%s  pending=%s",
         btc_state.current_price,
         pm_state.up_bid, pm_state.up_ask,
         pm_state.down_bid, pm_state.down_ask,
         pos_store.position.direction if pos_store.position else "none",
         pos_store.pending_buy.order_id[:10] if pos_store.pending_buy else "none",
     )
+    _log_feed_diag()
 
     if pos_store.has_position():
         await _manage_position(clob)
@@ -459,6 +599,10 @@ async def _tick(clob) -> None:
         balance = float(os.getenv("DRY_RUN_BALANCE", "100.0"))
     else:
         if not pm_state.ready or not btc_state.ready:
+            _log_feed_diag(reason="skip_balance:not_ready")
+            return
+        if not _feeds_are_fresh():
+            _log_feed_diag(force=True, reason="skip_balance:stale_feeds")
             return
         balance = await _get_balance(clob)
         if balance < BET_SIZE_MIN:
@@ -492,42 +636,34 @@ async def main() -> None:
     log.info("Waiting for WebSocket feeds …")
     ready = await _wait_for_ready(timeout=60)
     if not ready:
-        log.warning("Feeds not ready after 60s — proceeding anyway")
+        log.warning("Feeds not ready after 60s — trading stays blocked until feeds recover")
     else:
-        log.info("Feeds ready  BTC=$%.2f  PM=%s", btc_state.current_price, pm_state.question[:50])
+        log.info("Feeds ready  Chainlink BTC=$%.2f  PM=%s", btc_state.current_price, pm_state.question[:50])
 
     clob = None
-    if not DRY_RUN:
+    if not DRY_RUN and ready:
         try:
-            clob = build_clob_client()
-            from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
-
-            bal_data = clob.get_balance_allowance(
-                params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-            )
-            bal = float(bal_data.get("balance", 0)) / 1_000_000
-            log.info("Wallet %s  balance: %.2f USDC", POLYMARKET_ADDRESS, bal)
-
-            ensure_approvals(clob)
-
-            if pm_state.token_id_up:
-                await _ensure_ctf_approval_for_token(clob, pm_state.token_id_up)
+            clob = await _init_clob()
         except Exception as exc:
             log.error("CLOB client init failed: %s", exc)
             raise
 
-    next_redemption = _next_bar_boundary()
+    last_cleanup_boundary = 0.0
 
     while True:
         tick_start = time.time()
         try:
+            if not DRY_RUN and clob is None and btc_state.ready and pm_state.ready and _feeds_are_fresh():
+                log.info("Feeds recovered — initializing trading client")
+                clob = await _init_clob()
             await _tick(clob)
         except Exception as exc:
             log.exception("Tick error: %s", exc)
 
         now = time.time()
-        if now >= next_redemption:
-            next_redemption = (math.floor(now / LOOP_INTERVAL) + 1) * LOOP_INTERVAL
+        current_boundary = _next_bar_boundary()
+        if current_boundary > 0 and now >= current_boundary and current_boundary > last_cleanup_boundary:
+            last_cleanup_boundary = current_boundary
             if not DRY_RUN:
                 try:
                     await asyncio.to_thread(redeem_resolved_positions)
@@ -535,9 +671,10 @@ async def main() -> None:
                     log.error("Redemption sweep failed: %s", exc)
 
             pos = pos_store.position
-            if pos and pos.condition_id != pm_state.condition_id:
-                log.info("Bar boundary: clearing stale position (old market %s)", pos.condition_id[:16])
-                pos_store.close()
+            if pos and pos.condition_id != pm_state.condition_id and not pos.sell_order_id:
+                if not pos.hold_to_expiry:
+                    log.info("Bar boundary: old market position has no live exit — hold to expiry  %s", pos.condition_id[:16])
+                    pos.hold_to_expiry = True
             pb = pos_store.pending_buy
             if pb and pb.condition_id != pm_state.condition_id:
                 log.info("Bar boundary: clearing stale pending buy (old market %s)", pb.condition_id[:16])

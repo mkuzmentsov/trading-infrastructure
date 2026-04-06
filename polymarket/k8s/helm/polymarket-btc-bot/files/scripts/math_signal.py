@@ -31,6 +31,7 @@ from config import (
     MAX_ABS_DRIFT,
     MAX_ENTRY_SPREAD,
     MIN_EDGE,
+    MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
     MODEL_PROB_FLOOR,
     MODEL_PROB_SHRINK,
@@ -82,7 +83,7 @@ def fair_probability_up(
     if open_price <= 0 or current_price <= 0:
         return 0.5
     z = (math.log(current_price) + mu_rem - math.log(open_price)) / sigma_rem
-    z = _clip(z, -1.25, 1.25)
+    z = _clip(z, -0.95, 0.95)
     raw_p = _norm_cdf(z)
     shrunk = 0.5 + MODEL_PROB_SHRINK * (raw_p - 0.5)
     return _clip(shrunk, MODEL_PROB_FLOOR, MODEL_PROB_CEIL)
@@ -97,8 +98,7 @@ def kelly_fraction(p: float, c: float) -> float:
 def _round_trip_cost(bid: float, ask: float) -> float:
     spread = max(0.0, ask - bid)
     # Conservative all-in cost proxy: entry spread + some exit concession +
-    # a fixed mismatch buffer because the model watches Binance while the market
-    # resolves on Chainlink.
+    # an optional buffer for any residual source/latency mismatch.
     return max(COST_BUFFER, spread + max(0.01, spread / 2.0) + SOURCE_MISMATCH_BUFFER)
 
 
@@ -209,8 +209,14 @@ def generate_signal(
         return _no_trade("Budget below minimum", budget=round(budget, 4), **dbg)
 
     size = math.floor(budget / price)
-    if size < 5:
-        return _no_trade("Fewer than 5 shares", size=size, budget=round(budget, 4), price=price, **dbg)
+    if size < MIN_POSITION_SHARES:
+        return _no_trade(
+            f"Fewer than {MIN_POSITION_SHARES} shares",
+            size=size,
+            budget=round(budget, 4),
+            price=price,
+            **dbg,
+        )
 
     spend = size * price
     if spend < 1.0:

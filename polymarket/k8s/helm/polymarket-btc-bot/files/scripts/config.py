@@ -10,12 +10,15 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+APP_LOG_LEVEL = os.getenv("APP_LOG_LEVEL", "INFO").strip().upper()
+_LOG_LEVEL = getattr(logging, APP_LOG_LEVEL, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_LOG_LEVEL,
     format="%(asctime)s  %(levelname)-7s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("pm_btc")
+log.setLevel(_LOG_LEVEL)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -47,6 +50,8 @@ MODEL_PROB_SHRINK      = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
 MODEL_PROB_FLOOR       = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
 MODEL_PROB_CEIL        = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
 MAX_ABS_DRIFT          = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
+MIN_POSITION_SHARES    = int(os.getenv("MIN_POSITION_SHARES", "6"))
+ENTRY_CONFIRMATION_TICKS = int(os.getenv("ENTRY_CONFIRMATION_TICKS", "2"))
 
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))
@@ -74,8 +79,13 @@ GAMMA_API     = "https://gamma-api.polymarket.com"
 CLOB_HOST     = "https://clob.polymarket.com"
 DATA_API      = "https://data-api.polymarket.com"
 POLYMARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+POLYMARKET_RTDS_WS = os.getenv("POLYMARKET_RTDS_WS", "wss://ws-live-data.polymarket.com")
+POLYMARKET_RTDS_SYMBOL = os.getenv("POLYMARKET_RTDS_SYMBOL", "btc/usd")
+BINANCE_WS    = "wss://stream.binance.com:9443/stream?streams=btcusdt@depth20@100ms"
 
 MARKET_REFRESH_SECS = int(os.getenv("MARKET_REFRESH_SECS", "60"))
+WS_HEARTBEAT_SECS = int(os.getenv("WS_HEARTBEAT_SECS", "30"))
+FEED_STALE_SECS = int(os.getenv("FEED_STALE_SECS", "20"))
 
 # ── On-chain / Polygon ────────────────────────────────────────────────────────
 CHAIN_ID     = 137

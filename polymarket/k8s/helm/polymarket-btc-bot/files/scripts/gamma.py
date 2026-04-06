@@ -4,7 +4,9 @@ Polymarket Gamma API: market discovery and token parsing.
 from __future__ import annotations
 
 import json
+import re
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -43,6 +45,56 @@ def fetch_btc_5m_market() -> Optional[dict]:
         except Exception as exc:
             log.debug("Slug %s not found: %s", slug, exc)
     return None
+
+
+def _parse_ts(value) -> int:
+    if value in (None, ""):
+        return 0
+    if isinstance(value, (int, float)):
+        ts = int(value)
+        return ts // 1000 if ts > 10_000_000_000 else ts
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return 0
+        if raw.isdigit():
+            ts = int(raw)
+            return ts // 1000 if ts > 10_000_000_000 else ts
+        try:
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return int(dt.timestamp())
+        except ValueError:
+            return 0
+    return 0
+
+
+def get_market_window(market: dict) -> tuple[int, int]:
+    start_ts = 0
+    end_ts = 0
+
+    for key in ("startDate", "start_date", "gameStartTime", "startTime", "start_time"):
+        start_ts = max(start_ts, _parse_ts(market.get(key)))
+    for key in ("endDate", "end_date", "gameEndTime", "endTime", "end_time"):
+        end_ts = max(end_ts, _parse_ts(market.get(key)))
+
+    slug = str(market.get("slug") or market.get("market_slug") or "")
+    match = re.search(r"btc-updown-(\d+)m-(\d+)", slug)
+    if match:
+        duration_secs = int(match.group(1)) * 60
+        slug_start_ts = int(match.group(2))
+        start_ts = start_ts or slug_start_ts
+        end_ts = end_ts or (slug_start_ts + duration_secs)
+
+    if start_ts and not end_ts:
+        end_ts = start_ts + 300
+
+    return start_ts, end_ts
 
 
 def get_up_down_tokens(market: dict) -> tuple[Optional[dict], Optional[dict]]:
