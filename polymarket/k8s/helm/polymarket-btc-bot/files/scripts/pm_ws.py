@@ -5,6 +5,7 @@ On startup and every MARKET_REFRESH_SECS, fetches the active BTC 5-min
 UP/DOWN market from the Gamma REST API and subscribes to its token IDs.
 
 Book events update pm_state.up_bid / up_ask / down_bid / down_ask in place.
+A market is considered ready only after both sides have received live book data.
 """
 from __future__ import annotations
 
@@ -20,60 +21,79 @@ from gamma import fetch_btc_5m_market, get_up_down_tokens
 class PMState:
     def __init__(self) -> None:
         self.condition_id: str = ""
-        self.question: str     = ""
-        self.token_id_up: str   = ""
+        self.question: str = ""
+        self.token_id_up: str = ""
         self.token_id_down: str = ""
-        self.up_bid: float   = 0.5
-        self.up_ask: float   = 0.5
+        self.up_bid: float = 0.5
+        self.up_ask: float = 0.5
         self.down_bid: float = 0.5
         self.down_ask: float = 0.5
-        self.taker_fee: int  = 0
-        self.ready: bool     = False
+        self.taker_fee: int = 0
+        self.ready: bool = False
+        self.up_live: bool = False
+        self.down_live: bool = False
+
+    def reset_live_state(self) -> None:
+        self.ready = False
+        self.up_live = False
+        self.down_live = False
 
 
-# Singleton shared with main.py
 pm_state = PMState()
 
 
-# ── Market parsing ────────────────────────────────────────────────────────────
-
 def _apply_market(market: dict) -> list[str] | None:
-    """Update pm_state metadata from a Gamma market dict. Returns token ID list or None."""
+    """Update pm_state metadata from a Gamma market dict."""
     up, down = get_up_down_tokens(market)
     if not up or not down:
         return None
-    pm_state.condition_id  = market.get("conditionId") or market.get("condition_id", "")
-    pm_state.question      = market.get("question", "")
-    pm_state.token_id_up   = up["token_id"]
+
+    new_condition = market.get("conditionId") or market.get("condition_id", "")
+    if new_condition != pm_state.condition_id:
+        pm_state.reset_live_state()
+
+    pm_state.condition_id = new_condition
+    pm_state.question = market.get("question", "")
+    pm_state.token_id_up = up["token_id"]
     pm_state.token_id_down = down["token_id"]
-    pm_state.taker_fee     = int(market.get("takerBaseFee", 0))
-    # Seed from REST prices until first book event arrives
+    pm_state.taker_fee = int(market.get("takerBaseFee", 0))
+
+    # Seed prices from REST, but do not mark the book as live until WS updates arrive.
     pm_state.up_bid = pm_state.up_ask = float(up.get("price", 0.5))
     pm_state.down_bid = pm_state.down_ask = float(down.get("price", 0.5))
     return [pm_state.token_id_up, pm_state.token_id_down]
 
 
-# ── Book event handler ────────────────────────────────────────────────────────
-
 def _handle_book(msg: dict) -> None:
     asset_id = msg.get("asset_id", "")
-    bids     = msg.get("bids", [])
-    asks     = msg.get("asks", [])
+    bids = msg.get("bids", [])
+    asks = msg.get("asks", [])
 
     best_bid = max((float(b["price"]) for b in bids), default=0.0)
     best_ask = min((float(a["price"]) for a in asks), default=1.0)
 
     if asset_id == pm_state.token_id_up:
-        if 0 < best_bid: pm_state.up_bid = best_bid
-        if best_ask < 1: pm_state.up_ask = best_ask
-        pm_state.ready = True
+        if 0 < best_bid:
+            pm_state.up_bid = best_bid
+        if 0 < best_ask < 1:
+            pm_state.up_ask = best_ask
+        pm_state.up_live = True
     elif asset_id == pm_state.token_id_down:
-        if 0 < best_bid: pm_state.down_bid = best_bid
-        if best_ask < 1: pm_state.down_ask = best_ask
-        pm_state.ready = True
+        if 0 < best_bid:
+            pm_state.down_bid = best_bid
+        if 0 < best_ask < 1:
+            pm_state.down_ask = best_ask
+        pm_state.down_live = True
 
+    pm_state.ready = (
+        pm_state.up_live
+        and pm_state.down_live
+        and pm_state.up_bid > 0
+        and pm_state.down_bid > 0
+        and 0 < pm_state.up_ask < 1
+        and 0 < pm_state.down_ask < 1
+    )
 
-# ── Main WebSocket loop ───────────────────────────────────────────────────────
 
 async def run_pm_ws() -> None:
     backoff = 1
@@ -99,25 +119,19 @@ async def run_pm_ws() -> None:
 
                 last_refresh = asyncio.get_event_loop().time()
 
-                while True:
-                    # Wait for a message, but time out after MARKET_REFRESH_SECS
-                    # so market refresh fires even when the WS goes silent (e.g. after expiry)
+                async for raw in ws:
+                    if not raw or not raw.strip():
+                        continue
                     try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=MARKET_REFRESH_SECS)
-                        if raw and raw.strip():
-                            try:
-                                msgs = json.loads(raw)
-                                if not isinstance(msgs, list):
-                                    msgs = [msgs]
-                                for msg in msgs:
-                                    if msg.get("event_type") == "book":
-                                        _handle_book(msg)
-                            except Exception as exc:
-                                log.error("PM WS processing error: %s", exc)
-                    except asyncio.TimeoutError:
-                        pass  # no message — fall through to refresh
+                        msgs = json.loads(raw)
+                        if not isinstance(msgs, list):
+                            msgs = [msgs]
+                        for msg in msgs:
+                            if msg.get("event_type") == "book":
+                                _handle_book(msg)
+                    except Exception as exc:
+                        log.error("PM WS processing error: %s", exc)
 
-                    # Refresh market subscription periodically
                     now = asyncio.get_event_loop().time()
                     if now - last_refresh >= MARKET_REFRESH_SECS:
                         last_refresh = now

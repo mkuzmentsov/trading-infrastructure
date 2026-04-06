@@ -29,23 +29,32 @@ BET_SIZE_MIN = float(os.getenv("BET_SIZE_MIN", "0.50"))
 BET_SIZE_MAX = float(os.getenv("BET_SIZE_MAX", "5.00"))
 
 # ── Signal parameters ─────────────────────────────────────────────────────────
-MIN_EDGE    = float(os.getenv("MIN_EDGE",    "0.03"))   # net edge required to enter
-COST_BUFFER = float(os.getenv("COST_BUFFER", "0.02"))   # fees + slippage allowance
-KELLY_SCALE = float(os.getenv("KELLY_SCALE", "0.5"))    # fraction of full Kelly
+MIN_EDGE    = float(os.getenv("MIN_EDGE",    "0.03"))
+COST_BUFFER = float(os.getenv("COST_BUFFER", "0.02"))
+KELLY_SCALE = float(os.getenv("KELLY_SCALE", "0.5"))
 
-# Drift estimation coefficients — hand-tuned; backtest to refine
-DRIFT_A1 = float(os.getenv("DRIFT_A1", "1.8"))    # 30s momentum weight
-DRIFT_A2 = float(os.getenv("DRIFT_A2", "1.2"))    # 60s momentum weight
-DRIFT_A3 = float(os.getenv("DRIFT_A3", "0.003"))  # book imbalance weight
-DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))    # distance-from-open weight
+# Drift estimation coefficients — hand-tuned; keep configurable.
+DRIFT_A1 = float(os.getenv("DRIFT_A1", "1.8"))
+DRIFT_A2 = float(os.getenv("DRIFT_A2", "1.2"))
+DRIFT_A3 = float(os.getenv("DRIFT_A3", "0.003"))
+DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))
+
+# Extra signal guards to reduce overtrading / overconfidence.
+ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "45"))
+MAX_ENTRY_SPREAD       = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
+SOURCE_MISMATCH_BUFFER = float(os.getenv("SOURCE_MISMATCH_BUFFER", "0.01"))
+MODEL_PROB_SHRINK      = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
+MODEL_PROB_FLOOR       = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
+MODEL_PROB_CEIL        = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
+MAX_ABS_DRIFT          = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
 
 # ── Position management ───────────────────────────────────────────────────────
-EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))     # signal re-eval frequency
-TAKE_PROFIT        = float(os.getenv("TAKE_PROFIT",      "0.15"))  # exit if bid > entry + this
-STOP_LOSS          = float(os.getenv("STOP_LOSS",         "0.08"))  # exit if bid < entry - this
-SIGNAL_EXIT_EDGE   = float(os.getenv("SIGNAL_EXIT_EDGE",  "0.05"))  # exit if opposite edge ≥ this
-MIN_EXIT_BID       = float(os.getenv("MIN_EXIT_BID",      "0.03"))  # don't sell below this
-ORDER_REPLACE_GAP  = float(os.getenv("ORDER_REPLACE_GAP", "0.02"))  # cancel+replace if bid drifts by this
+EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))
+TAKE_PROFIT        = float(os.getenv("TAKE_PROFIT",      "0.15"))
+STOP_LOSS          = float(os.getenv("STOP_LOSS",         "0.08"))
+SIGNAL_EXIT_EDGE   = float(os.getenv("SIGNAL_EXIT_EDGE",  "0.05"))
+MIN_EXIT_BID       = float(os.getenv("MIN_EXIT_BID",      "0.03"))
+ORDER_REPLACE_GAP  = float(os.getenv("ORDER_REPLACE_GAP", "0.02"))
 
 # ── Polymarket credentials ────────────────────────────────────────────────────
 POLYMARKET_PK               = os.getenv("POLYMARKET_PK",               "")

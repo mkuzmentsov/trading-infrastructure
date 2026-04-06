@@ -3,20 +3,28 @@ Polymarket CLOB client: order placement, balance, sizing, and trade queries.
 """
 from __future__ import annotations
 
+import math
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from config import (
-    BET_SIZE_MAX, BET_SIZE_MIN, CHAIN_ID, CLOB_HOST,
-    DRY_RUN, POLYMARKET_API_KEY, POLYMARKET_API_PASSPHRASE,
-    POLYMARKET_API_SECRET, POLYMARKET_FUNDER, POLYMARKET_PK,
-    SIGNATURE_TYPE, log,
+    CHAIN_ID,
+    CLOB_HOST,
+    DRY_RUN,
+    POLYMARKET_API_KEY,
+    POLYMARKET_API_PASSPHRASE,
+    POLYMARKET_API_SECRET,
+    POLYMARKET_FUNDER,
+    POLYMARKET_PK,
+    SIGNATURE_TYPE,
+    log,
 )
 
 
 def build_clob_client():
     from py_clob_client.client import ClobClient
     from py_clob_client.clob_types import ApiCreds
+
     creds = None
     if POLYMARKET_API_KEY:
         creds = ApiCreds(
@@ -37,23 +45,44 @@ def build_clob_client():
     return client
 
 
-def ensure_approvals(clob) -> None:
-    """
-    Check and set on-chain approvals required for trading.
+def _as_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-    1. USDC collateral allowance — needed to buy tokens.
-    2. CTF conditional token allowance — needed for limit sell orders.
-       Without this, all limit sells fail with 'balance: 0'.
-    """
+
+def _order_view(resp: Any) -> dict:
+    if not isinstance(resp, dict):
+        return {}
+    order = resp.get("order")
+    if isinstance(order, dict):
+        merged = dict(order)
+        merged.update(resp)
+        return merged
+    return resp
+
+
+def _first_number(data: dict, *keys: str) -> float | None:
+    for key in keys:
+        if key in data:
+            val = _as_float(data.get(key))
+            if val is not None:
+                return val
+    return None
+
+
+def ensure_approvals(clob) -> None:
     from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
-    # ── USDC collateral ───────────────────────────────────────────────────────
     try:
         data = clob.get_balance_allowance(
             params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
         )
         allowance = int(data.get("allowance", 0))
-        if allowance < 1_000_000_000_000:   # < 1 million USDC
+        if allowance < 1_000_000_000_000:
             log.info("USDC allowance low (%d) — updating ...", allowance)
             clob.update_balance_allowance(
                 params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
@@ -64,17 +93,10 @@ def ensure_approvals(clob) -> None:
     except Exception as exc:
         log.warning("USDC approval check failed: %s", exc)
 
-    # CTF conditional token approval is done separately in ensure_ctf_approval()
-    # because it requires a valid token_id (ERC-1155) unavailable at startup.
-
 
 def ensure_ctf_approval(clob, token_id: str) -> None:
-    """
-    Set setApprovalForAll on the CTF Exchange for conditional tokens.
-    Must be called with a valid token_id (ERC-1155 requirement).
-    Idempotent — safe to call every startup.
-    """
     from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
     try:
         log.info("Setting CTF conditional token approval (token=%s) ...", token_id[:16])
         clob.update_balance_allowance(
@@ -86,18 +108,36 @@ def ensure_ctf_approval(clob, token_id: str) -> None:
 
 
 def fetch_usdc_balance(clob=None) -> float:
-    """Fetch available USDC balance from Polymarket (6-decimal ERC-20)."""
     if DRY_RUN:
         return float(os.getenv("DRY_RUN_BALANCE", "100.0"))
     try:
         from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
         client = clob or build_clob_client()
-        data = client.get_balance_allowance(params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
-        bal  = float(data.get("balance", 0)) / 1_000_000
+        data = client.get_balance_allowance(
+            params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        bal = float(data.get("balance", 0)) / 1_000_000
         log.info("Balance: $%.2f USDC", bal)
         return bal
     except Exception as exc:
         log.warning("Balance fetch failed: %s", exc)
+        return 0.0
+
+
+def fetch_token_balance(clob, token_id: str) -> float:
+    """Fetch conditional token balance in whole-share units (6 decimals on-chain)."""
+    try:
+        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+        data = clob.get_balance_allowance(
+            params=BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id)
+        )
+        bal = float(data.get("balance", 0)) / 1_000_000
+        log.info("Token balance  token=%s  balance=%.6f", token_id[:16], bal)
+        return bal
+    except Exception as exc:
+        log.warning("Token balance fetch failed for %s: %s", token_id[:16], exc)
         return 0.0
 
 
@@ -109,16 +149,8 @@ def place_bet(
     condition_id: str = "",
     fee_rate_bps: int = 0,
 ) -> Optional[str]:
-    """
-    Place a GTC limit BUY order for `shares` tokens at `price`.
-
-    Uses a limit order (not market FOK) so the order rests in the book if
-    there is no immediate liquidity — solving the 'no match' problem.
-    expiration must be 0 for GTC orders (non-zero is only valid for GTD).
-
-    Returns order_id or None on failure.
-    """
     from py_clob_client.clob_types import OrderArgs, OrderType
+
     try:
         order_args = OrderArgs(
             token_id=token_id,
@@ -138,7 +170,7 @@ def place_bet(
         log.info("CLOB post_order BUY GTC RESPONSE  %s", resp)
         return resp.get("orderID") or resp.get("order_id") or None
     except Exception as exc:
-        if "does not exist" in str(exc).lower() or "No orderbook" in str(exc):
+        if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
             raise
         log.error("Order failed: %s", exc)
         return None
@@ -146,6 +178,7 @@ def place_bet(
 
 def has_trade_on_market(clob, condition_id: str) -> bool:
     from py_clob_client.clob_types import TradeParams
+
     log.info("CLOB get_trades REQUEST  market=%s", condition_id)
     result = clob.get_trades(TradeParams(market=condition_id))
     if result is None:
@@ -162,11 +195,8 @@ def place_limit_sell(
     condition_id: str = "",
     fee_rate_bps: int = 0,
 ) -> Optional[str]:
-    """
-    Post a GTC limit sell order for `shares` at `price`.
-    Returns order_id or None on failure.
-    """
     from py_clob_client.clob_types import OrderArgs, OrderType
+
     try:
         order_args = OrderArgs(
             token_id=token_id,
@@ -183,13 +213,12 @@ def place_limit_sell(
         return resp.get("orderID") or resp.get("order_id") or None
     except Exception as exc:
         if "not enough balance" in str(exc).lower() or "balance is not enough" in str(exc).lower():
-            raise   # let caller handle partial-fill retry
+            raise
         log.error("Limit sell failed: %s", exc)
         return None
 
 
 def cancel_order(clob, order_id: str) -> bool:
-    """Cancel an open order by ID. Returns True on success."""
     try:
         log.info("CLOB cancel_order REQUEST  order_id=%s", order_id)
         resp = clob.cancel(order_id)
@@ -200,22 +229,69 @@ def cancel_order(clob, order_id: str) -> bool:
         return False
 
 
-def get_order_status(clob, order_id: str) -> str:
-    """
-    Return order status string: 'filled', 'open', 'cancelled', 'unknown'.
-    """
+def get_order_details(clob, order_id: str) -> dict:
     try:
         log.debug("CLOB get_order REQUEST  order_id=%s", order_id)
         resp = clob.get_order(order_id)
         log.debug("CLOB get_order RESPONSE  %s", resp)
-        status = (resp.get("status") or "").lower()
-        if status in ("matched", "filled"):
-            return "filled"
-        if status in ("cancelled", "canceled", "expired"):
-            return "cancelled"
-        if status in ("open", "live"):
-            return "open"
-        return status or "unknown"
+        return _order_view(resp)
     except Exception as exc:
-        log.warning("get_order_status %s failed: %s", order_id, exc)
-        return "unknown"
+        log.warning("get_order_details %s failed: %s", order_id, exc)
+        return {}
+
+
+def get_order_status(clob, order_id: str) -> str:
+    resp = get_order_details(clob, order_id)
+    status = str(resp.get("status") or "").lower()
+    if status in ("matched", "filled"):
+        return "filled"
+    if status in ("cancelled", "canceled", "expired"):
+        return "cancelled"
+    if status in ("open", "live"):
+        return "open"
+    return status or "unknown"
+
+
+def get_order_fill_info(clob, order_id: str, fallback_price: float, fallback_shares: int) -> tuple[str, int, float]:
+    """Return (status, matched_whole_shares, avg_price) for an order."""
+    resp = get_order_details(clob, order_id)
+    status = str(resp.get("status") or "").lower()
+    if status in ("matched", "filled"):
+        norm_status = "filled"
+    elif status in ("cancelled", "canceled", "expired"):
+        norm_status = "cancelled"
+    elif status in ("open", "live"):
+        norm_status = "open"
+    else:
+        norm_status = status or "unknown"
+
+    matched = _first_number(
+        resp,
+        "size_matched",
+        "sizeMatched",
+        "matched_size",
+        "matchedSize",
+        "filled_size",
+        "filledSize",
+        "original_size",
+        "originalSize",
+        "size",
+        "makingAmount",
+    )
+    if matched is None:
+        matched_shares = fallback_shares if norm_status == "filled" else 0
+    else:
+        matched_shares = max(0, int(math.floor(matched)))
+
+    avg_price = _first_number(
+        resp,
+        "avg_price",
+        "avgPrice",
+        "average_price",
+        "averagePrice",
+        "price",
+    )
+    if avg_price is None or avg_price <= 0:
+        avg_price = fallback_price
+
+    return norm_status, matched_shares, float(avg_price)
