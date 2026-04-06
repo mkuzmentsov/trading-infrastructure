@@ -7,6 +7,7 @@ Binance is kept only for order-book imbalance features.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import time
@@ -18,6 +19,7 @@ import websockets
 from config import BINANCE_WS, POLYMARKET_RTDS_SYMBOL, POLYMARKET_RTDS_WS, log
 
 RTDS_TOPICS = {"crypto_prices_chainlink", "crypto_prices"}
+RTDS_NO_TICK_RECONNECT_SECS = 10
 
 
 class BTCState:
@@ -36,6 +38,14 @@ class BTCState:
         self.depth_updates: int = 0
         self.price_updates: int = 0
         self.price_source: str = "polymarket_rtds_chainlink"
+        self.rtds_session_id: int = 0
+        self.rtds_connect_count: int = 0
+        self.last_rtds_connect_at: float = 0.0
+        self.last_rtds_disconnect_at: float = 0.0
+        self.last_rtds_message_at: float = 0.0
+        self.last_rtds_message_kind: str = "never"
+        self.last_rtds_close_reason: str = ""
+        self.last_rtds_error: str = ""
 
         self._prices: deque[tuple[int, float]] = deque(maxlen=600)
         self._lock = asyncio.Lock()
@@ -144,6 +154,46 @@ def _build_rtds_subscribe() -> str:
     )
 
 
+async def _rtds_ping_loop(ws) -> None:
+    while True:
+        await asyncio.sleep(5)
+        silence = time.time() - btc_state.last_price_poll_at if btc_state.last_price_poll_at > 0 else -1.0
+        log.info(
+            "RTDS PING  session=%d silence=%.1fs last_msg_kind=%s",
+            btc_state.rtds_session_id,
+            silence,
+            btc_state.last_rtds_message_kind,
+        )
+        await ws.send("PING")
+
+
+async def _rtds_watchdog(ws) -> None:
+    while True:
+        await asyncio.sleep(2)
+        if btc_state.last_price_poll_at <= 0:
+            continue
+        silence = time.time() - btc_state.last_price_poll_at
+        if silence >= RTDS_NO_TICK_RECONNECT_SECS:
+            message_age = (
+                time.time() - btc_state.last_rtds_message_at
+                if btc_state.last_rtds_message_at > 0
+                else -1.0
+            )
+            log.warning(
+                "RTDS silent for %.1fs — reconnecting  session=%d msg_age=%.1fs last_msg_kind=%s last_tick=%s updates=%d ws_state=%s",
+                silence,
+                btc_state.rtds_session_id,
+                message_age,
+                btc_state.last_rtds_message_kind,
+                btc_state.last_round_id,
+                btc_state.price_updates,
+                getattr(ws, "state", "unknown"),
+            )
+            btc_state.last_rtds_close_reason = f"watchdog_silence:{silence:.1f}s"
+            await ws.close()
+            return
+
+
 def _coerce_payload(payload: Any) -> dict:
     if isinstance(payload, dict):
         return payload
@@ -201,73 +251,177 @@ async def _run_polymarket_rtds() -> None:
     last_tick_log_at = 0.0
     while True:
         try:
+            next_session_id = btc_state.rtds_session_id + 1
+            log.info(
+                "RTDS connect attempt  session=%d url=%s backoff=%ds symbol=%s",
+                next_session_id,
+                POLYMARKET_RTDS_WS,
+                backoff,
+                POLYMARKET_RTDS_SYMBOL,
+            )
             async with websockets.connect(POLYMARKET_RTDS_WS, ping_interval=20, ping_timeout=30) as ws:
-                await ws.send(_build_rtds_subscribe())
+                subscribe_payload = _build_rtds_subscribe()
+                btc_state.rtds_session_id = next_session_id
+                btc_state.rtds_connect_count += 1
+                btc_state.last_rtds_connect_at = time.time()
+                btc_state.last_rtds_close_reason = ""
+                btc_state.last_rtds_error = ""
                 log.info(
-                    "Polymarket RTDS connected  topic=crypto_prices_chainlink symbol=%s",
+                    "RTDS subscribe  session=%d payload=%s",
+                    btc_state.rtds_session_id,
+                    subscribe_payload,
+                )
+                await ws.send(subscribe_payload)
+                log.info(
+                    "Polymarket RTDS connected  session=%d topic=crypto_prices_chainlink symbol=%s",
+                    btc_state.rtds_session_id,
                     POLYMARKET_RTDS_SYMBOL,
                 )
+                ping_task = asyncio.create_task(_rtds_ping_loop(ws), name="rtds_ping")
+                watchdog_task = asyncio.create_task(_rtds_watchdog(ws), name="rtds_watchdog")
                 backoff = 1
-                async for raw in ws:
-                    if not raw or not raw.strip():
-                        continue
-                    log.info("RTDS RAW  %s", raw[:500].replace("\n", "\\n"))
-                    try:
-                        msg = json.loads(raw)
-                    except Exception as exc:
-                        snippet = raw[:200].replace("\n", "\\n")
-                        log.error("Polymarket RTDS JSON error: %s  raw=%s", exc, snippet)
-                        continue
-                    log.info("RTDS decoded  type=%s", type(msg).__name__)
-                    if isinstance(msg, dict):
-                        topic = msg.get("topic")
-                    else:
-                        topic = None
-                    if topic and topic not in RTDS_TOPICS:
-                        log.info("RTDS skipping message with topic=%s", topic)
-                        continue
-                    try:
-                        points = _extract_rtds_points(msg)
-                        log.info("RTDS extracted  points=%d", len(points))
-                        if not points:
-                            log.warning("RTDS message had no usable price points")
+                try:
+                    async for raw in ws:
+                        btc_state.last_rtds_message_at = time.time()
+                        if not raw or not raw.strip():
+                            btc_state.last_rtds_message_kind = "empty"
+                            continue
+                        if raw.strip() == "PONG":
+                            btc_state.last_rtds_message_kind = "pong"
+                            log.info("RTDS PONG  session=%d", btc_state.rtds_session_id)
+                            continue
+                        btc_state.last_rtds_message_kind = "raw"
+                        log.info(
+                            "RTDS RAW  session=%d len=%d body=%s",
+                            btc_state.rtds_session_id,
+                            len(raw),
+                            raw[:500].replace("\n", "\\n"),
+                        )
+                        try:
+                            msg = json.loads(raw)
+                        except Exception as exc:
+                            snippet = raw[:200].replace("\n", "\\n")
+                            btc_state.last_rtds_error = f"json:{exc}"
+                            log.error("Polymarket RTDS JSON error: %s  raw=%s", exc, snippet)
                             continue
                         log.info(
-                            "RTDS sample  first_ts=%d first_price=%.2f last_ts=%d last_price=%.2f",
-                            points[0][0],
-                            points[0][1],
-                            points[-1][0],
-                            points[-1][1],
+                            "RTDS decoded  session=%d type=%s",
+                            btc_state.rtds_session_id,
+                            type(msg).__name__,
                         )
-                        applied = await btc_state.apply_price_points(points)
-                        log.info(
-                            "RTDS state after apply  applied=%d current=%.2f open=%.2f last_ts=%d updates=%d ready=%s",
-                            applied,
-                            btc_state.current_price,
-                            btc_state.bar_open,
-                            btc_state.last_round_id,
-                            btc_state.price_updates,
-                            btc_state.ready,
-                        )
-                        if applied <= 0:
-                            log.warning("RTDS extracted price points but none were applied")
-                            continue
-                        now = time.time()
-                        if now - last_tick_log_at >= 30:
-                            last_tick_log_at = now
+                        if isinstance(msg, dict):
+                            topic = msg.get("topic")
+                            event = msg.get("event")
+                        else:
+                            topic = None
+                            event = None
+                        if topic or event:
+                            btc_state.last_rtds_message_kind = f"topic={topic or '-'} event={event or '-'}"
+                        if topic and topic not in RTDS_TOPICS:
                             log.info(
-                                "RTDS applied  points=%d latest=%.2f ts=%d total_updates=%d ready=%s",
+                                "RTDS skipping message  session=%d topic=%s event=%s",
+                                btc_state.rtds_session_id,
+                                topic,
+                                event,
+                            )
+                            continue
+                        try:
+                            points = _extract_rtds_points(msg)
+                            log.info(
+                                "RTDS extracted  session=%d topic=%s event=%s points=%d",
+                                btc_state.rtds_session_id,
+                                topic,
+                                event,
+                                len(points),
+                            )
+                            if not points:
+                                log.warning(
+                                    "RTDS message had no usable price points  session=%d topic=%s event=%s keys=%s",
+                                    btc_state.rtds_session_id,
+                                    topic,
+                                    event,
+                                    sorted(msg.keys()) if isinstance(msg, dict) else [],
+                                )
+                                continue
+                            log.info(
+                                "RTDS sample  session=%d first_ts=%d first_price=%.2f last_ts=%d last_price=%.2f",
+                                btc_state.rtds_session_id,
+                                points[0][0],
+                                points[0][1],
+                                points[-1][0],
+                                points[-1][1],
+                            )
+                            applied = await btc_state.apply_price_points(points)
+                            log.info(
+                                "RTDS state after apply  session=%d applied=%d current=%.2f open=%.2f last_ts=%d updates=%d ready=%s",
+                                btc_state.rtds_session_id,
                                 applied,
                                 btc_state.current_price,
+                                btc_state.bar_open,
                                 btc_state.last_round_id,
                                 btc_state.price_updates,
                                 btc_state.ready,
                             )
-                    except Exception as exc:
-                        log.error("Polymarket RTDS price processing error: %s", exc)
+                            if applied <= 0:
+                                log.warning(
+                                    "RTDS extracted price points but none were applied  session=%d",
+                                    btc_state.rtds_session_id,
+                                )
+                                continue
+                            now = time.time()
+                            if now - last_tick_log_at >= 30:
+                                last_tick_log_at = now
+                                log.info(
+                                    "RTDS applied  session=%d points=%d latest=%.2f ts=%d total_updates=%d ready=%s",
+                                    btc_state.rtds_session_id,
+                                    applied,
+                                    btc_state.current_price,
+                                    btc_state.last_round_id,
+                                    btc_state.price_updates,
+                                    btc_state.ready,
+                                )
+                        except Exception as exc:
+                            btc_state.last_rtds_error = f"process:{exc}"
+                            log.error("Polymarket RTDS price processing error: %s", exc)
+                    btc_state.last_rtds_close_reason = "async_for_completed"
+                    log.warning(
+                        "RTDS message loop ended  session=%d close_code=%s close_reason=%s",
+                        btc_state.rtds_session_id,
+                        getattr(ws, "close_code", None),
+                        getattr(ws, "close_reason", None),
+                    )
+                finally:
+                    ping_task.cancel()
+                    watchdog_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await ping_task
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await watchdog_task
+                    btc_state.last_rtds_disconnect_at = time.time()
+                    log.info(
+                        "RTDS session cleanup  session=%d close_code=%s close_reason=%s local_reason=%s msg_age=%.1fs last_msg_kind=%s",
+                        btc_state.rtds_session_id,
+                        getattr(ws, "close_code", None),
+                        getattr(ws, "close_reason", None),
+                        btc_state.last_rtds_close_reason or "unknown",
+                        (
+                            time.time() - btc_state.last_rtds_message_at
+                            if btc_state.last_rtds_message_at > 0
+                            else -1.0
+                        ),
+                        btc_state.last_rtds_message_kind,
+                    )
+                    log.info(
+                        "RTDS scheduling reconnect  next_backoff=%ds session=%d last_error=%s",
+                        backoff,
+                        btc_state.rtds_session_id,
+                        btc_state.last_rtds_error or "-",
+                    )
         except (websockets.ConnectionClosed, ConnectionError, OSError) as exc:
+            btc_state.last_rtds_error = str(exc)
             log.warning("Polymarket RTDS disconnected: %s — reconnect in %ds", exc, backoff)
         except Exception as exc:
+            btc_state.last_rtds_error = str(exc)
             log.exception("Polymarket RTDS unexpected error: %s — reconnect in %ds", exc, backoff)
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, 60)

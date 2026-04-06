@@ -152,7 +152,7 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
             pos_desc += ":hold"
     prefix = f"{reason}  " if reason else ""
     log.info(
-        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s pending=%s",
+        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d depth_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
         prefix,
         _feeds_are_fresh(),
         btc_state.price_source,
@@ -170,6 +170,15 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         ages["pm_down_age"],
         pos_desc,
         "yes" if pos_store.pending_buy else "no",
+        btc_state.rtds_session_id,
+        now - btc_state.last_rtds_message_at if btc_state.last_rtds_message_at > 0 else -1,
+        btc_state.last_rtds_message_kind,
+        btc_state.last_rtds_error or "-",
+        btc_state.price_updates,
+        btc_state.depth_updates,
+        pm_state.ws_session_id,
+        pm_state.book_events,
+        now - pm_state.last_ws_message_at if pm_state.last_ws_message_at > 0 else -1,
     )
 
 
