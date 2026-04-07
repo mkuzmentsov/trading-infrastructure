@@ -261,11 +261,6 @@ async def _run_polymarket_rtds() -> None:
                             btc_state.last_rtds_error = f"json:{exc}"
                             log.error("Polymarket RTDS JSON error: %s  raw=%s", exc, snippet)
                             continue
-                        log.info(
-                            "RTDS decoded  session=%d type=%s",
-                            btc_state.rtds_session_id,
-                            type(msg).__name__,
-                        )
                         if isinstance(msg, dict):
                             topic = msg.get("topic")
                             event = msg.get("event")
@@ -284,13 +279,6 @@ async def _run_polymarket_rtds() -> None:
                             continue
                         try:
                             points = _extract_rtds_points(msg)
-                            log.info(
-                                "RTDS extracted  session=%d topic=%s event=%s points=%d",
-                                btc_state.rtds_session_id,
-                                topic,
-                                event,
-                                len(points),
-                            )
                             if not points:
                                 log.warning(
                                     "RTDS message had no usable price points  session=%d topic=%s event=%s keys=%s",
@@ -300,25 +288,7 @@ async def _run_polymarket_rtds() -> None:
                                     sorted(msg.keys()) if isinstance(msg, dict) else [],
                                 )
                                 continue
-                            log.info(
-                                "RTDS sample  session=%d first_ts=%d first_price=%.2f last_ts=%d last_price=%.2f",
-                                btc_state.rtds_session_id,
-                                points[0][0],
-                                points[0][1],
-                                points[-1][0],
-                                points[-1][1],
-                            )
                             applied = await btc_state.apply_price_points(points)
-                            log.info(
-                                "RTDS state after apply  session=%d applied=%d current=%.2f open=%.2f last_ts=%d updates=%d ready=%s",
-                                btc_state.rtds_session_id,
-                                applied,
-                                btc_state.current_price,
-                                btc_state.bar_open,
-                                btc_state.last_round_id,
-                                btc_state.price_updates,
-                                btc_state.ready,
-                            )
                             if applied <= 0:
                                 log.warning(
                                     "RTDS extracted price points but none were applied  session=%d",
@@ -329,9 +299,8 @@ async def _run_polymarket_rtds() -> None:
                             if now - last_tick_log_at >= 30:
                                 last_tick_log_at = now
                                 log.info(
-                                    "RTDS applied  session=%d points=%d latest=%.2f ts=%d total_updates=%d ready=%s",
+                                    "RTDS heartbeat  session=%d latest=%.2f ts=%d total_updates=%d ready=%s",
                                     btc_state.rtds_session_id,
-                                    applied,
                                     btc_state.current_price,
                                     btc_state.last_round_id,
                                     btc_state.price_updates,
