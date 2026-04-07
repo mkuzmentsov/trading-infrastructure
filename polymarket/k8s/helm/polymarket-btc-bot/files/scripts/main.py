@@ -25,15 +25,17 @@ from clob import (
     fetch_usdc_balance,
     get_order_fill_info,
     get_order_status,
-    has_trade_on_market,
     place_bet,
     place_limit_sell,
 )
 from config import (
     BET_SIZE_MIN,
     DRY_RUN,
+    ENTRY_ORDER_TIMEOUT_SECS,
     ENTRY_MIN_SECONDS_LEFT,
     ENTRY_CONFIRMATION_TICKS,
+    ENTRY_REPLACE_GAP,
+    ENTRY_REPLACE_MIN_AGE_SECS,
     EVAL_INTERVAL_SECS,
     FEED_STALE_SECS,
     LOOP_INTERVAL,
@@ -54,13 +56,10 @@ from positions import pos_store
 from redemptions import redeem_resolved_positions
 from telegram import tg
 
-_traded_markets: set[str] = set()
-_checked_markets: set[str] = set()
 _approved_ctf_tokens: set[str] = set()
 
 _balance_cache: list = [0.0, 0.0]
 _BALANCE_TTL = 30.0
-_PENDING_BUY_TIMEOUT = 60.0
 _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
 
@@ -204,6 +203,9 @@ async def _check_pending_buy(clob) -> None:
     if pb is None:
         return
 
+    def _pending_buy_market_price() -> float:
+        return pm_state.up_ask if pb.direction == "UP" else pm_state.down_ask
+
     if pb.condition_id != pm_state.condition_id:
         log.info("Pending buy is for old market — cancelling  order=%s", pb.order_id)
         if not DRY_RUN:
@@ -260,8 +262,36 @@ async def _check_pending_buy(clob) -> None:
         pos_store.clear_pending_buy()
     else:
         age = time.time() - pb.placed_at
+        seconds_left = _seconds_left_in_bar()
+        current_ask = _pending_buy_market_price()
         log.debug("Pending buy still open  order=%s  age=%.0fs", pb.order_id, age)
-        if age > _PENDING_BUY_TIMEOUT:
+        if seconds_left < ENTRY_MIN_SECONDS_LEFT:
+            log.info(
+                "Pending buy too late in bar — cancelling  order=%s age=%.0fs secs_left=%d",
+                pb.order_id,
+                age,
+                seconds_left,
+            )
+            await asyncio.to_thread(cancel_order, clob, pb.order_id)
+            pos_store.clear_pending_buy()
+            return
+        if (
+            current_ask > 0
+            and age >= ENTRY_REPLACE_MIN_AGE_SECS
+            and abs(current_ask - pb.price) >= ENTRY_REPLACE_GAP
+        ):
+            log.info(
+                "Pending buy stale vs market — cancelling  order=%s dir=%s old=%.4f ask=%.4f age=%.0fs",
+                pb.order_id,
+                pb.direction,
+                pb.price,
+                current_ask,
+                age,
+            )
+            await asyncio.to_thread(cancel_order, clob, pb.order_id)
+            pos_store.clear_pending_buy()
+            return
+        if age > ENTRY_ORDER_TIMEOUT_SECS:
             log.info("Pending buy timed out after %.0fs — cancelling", age)
             await asyncio.to_thread(cancel_order, clob, pb.order_id)
             pos_store.clear_pending_buy()
@@ -276,7 +306,6 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         entry_price=entry_price,
         entry_time=time.time(),
     )
-    _traded_markets.add(pb.condition_id)
     pos_store.clear_pending_buy()
 
 
@@ -534,7 +563,6 @@ async def _try_enter(clob, balance: float) -> None:
             entry_price=signal.price,
             entry_time=time.time(),
         )
-        _traded_markets.add(pm_state.condition_id)
         _entry_confirmation["count"] = 0
         return
 
@@ -548,7 +576,6 @@ async def _try_enter(clob, balance: float) -> None:
         if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
             log.warning("Token orderbook gone — skipping market %s", pm_state.condition_id[:16])
             pm_state.ready = False
-            _traded_markets.add(pm_state.condition_id)
         else:
             log.error("Order failed: %s", exc)
         return
@@ -598,11 +625,6 @@ async def _tick(clob) -> None:
         return
 
     cid = pm_state.condition_id
-    if cid in _traded_markets:
-        secs = _seconds_left_in_bar()
-        if secs % 60 < 5:
-            log.info("Already traded market %s — next bar in %ds", cid[:16], secs)
-        return
 
     if DRY_RUN:
         balance = float(os.getenv("DRY_RUN_BALANCE", "100.0"))
@@ -616,14 +638,6 @@ async def _tick(clob) -> None:
         balance = await _get_balance(clob)
         if balance < BET_SIZE_MIN:
             log.info("Balance $%.2f below minimum — skipping entry", balance)
-            return
-
-    if not DRY_RUN and cid and cid not in _checked_markets:
-        already = await asyncio.to_thread(has_trade_on_market, clob, cid)
-        _checked_markets.add(cid)
-        if already:
-            log.info("Existing trade on %s — skipping entry", cid[:16])
-            _traded_markets.add(cid)
             return
 
     await _try_enter(clob, balance)

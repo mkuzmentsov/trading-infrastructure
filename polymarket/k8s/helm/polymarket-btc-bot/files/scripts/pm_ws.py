@@ -213,7 +213,7 @@ async def run_pm_ws() -> None:
                         break
                     if stripped[0] not in "[{":
                         pm_state.last_ws_message_kind = "control"
-                        log.info("PM WS control message: %s", stripped[:120])
+                        log.debug("PM WS control message: %s", stripped[:120])
                         _log_book_heartbeat()
                         continue
                     try:

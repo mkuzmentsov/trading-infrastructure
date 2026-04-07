@@ -19,7 +19,6 @@ import websockets
 from config import BINANCE_WS, POLYMARKET_RTDS_SYMBOL, POLYMARKET_RTDS_WS, log
 
 RTDS_TOPICS = {"crypto_prices_chainlink", "crypto_prices"}
-RTDS_NO_TICK_RECONNECT_SECS = 10
 
 
 class BTCState:
@@ -147,51 +146,11 @@ def _build_rtds_subscribe() -> str:
                 {
                     "topic": "crypto_prices_chainlink",
                     "type": "*",
-                    "filters": json.dumps({"symbol": POLYMARKET_RTDS_SYMBOL}),
+                    "filters": json.dumps({"symbol": POLYMARKET_RTDS_SYMBOL}, separators=(",", ":")),
                 }
             ],
         }
     )
-
-
-async def _rtds_ping_loop(ws) -> None:
-    while True:
-        await asyncio.sleep(5)
-        silence = time.time() - btc_state.last_price_poll_at if btc_state.last_price_poll_at > 0 else -1.0
-        log.info(
-            "RTDS PING  session=%d silence=%.1fs last_msg_kind=%s",
-            btc_state.rtds_session_id,
-            silence,
-            btc_state.last_rtds_message_kind,
-        )
-        await ws.send("PING")
-
-
-async def _rtds_watchdog(ws) -> None:
-    while True:
-        await asyncio.sleep(2)
-        if btc_state.last_price_poll_at <= 0:
-            continue
-        silence = time.time() - btc_state.last_price_poll_at
-        if silence >= RTDS_NO_TICK_RECONNECT_SECS:
-            message_age = (
-                time.time() - btc_state.last_rtds_message_at
-                if btc_state.last_rtds_message_at > 0
-                else -1.0
-            )
-            log.warning(
-                "RTDS silent for %.1fs — reconnecting  session=%d msg_age=%.1fs last_msg_kind=%s last_tick=%s updates=%d ws_state=%s",
-                silence,
-                btc_state.rtds_session_id,
-                message_age,
-                btc_state.last_rtds_message_kind,
-                btc_state.last_round_id,
-                btc_state.price_updates,
-                getattr(ws, "state", "unknown"),
-            )
-            btc_state.last_rtds_close_reason = f"watchdog_silence:{silence:.1f}s"
-            await ws.close()
-            return
 
 
 def _coerce_payload(payload: Any) -> dict:
@@ -259,7 +218,7 @@ async def _run_polymarket_rtds() -> None:
                 backoff,
                 POLYMARKET_RTDS_SYMBOL,
             )
-            async with websockets.connect(POLYMARKET_RTDS_WS, ping_interval=20, ping_timeout=30) as ws:
+            async with websockets.connect(POLYMARKET_RTDS_WS, ping_interval=None, ping_timeout=None) as ws:
                 subscribe_payload = _build_rtds_subscribe()
                 btc_state.rtds_session_id = next_session_id
                 btc_state.rtds_connect_count += 1
@@ -277,8 +236,6 @@ async def _run_polymarket_rtds() -> None:
                     btc_state.rtds_session_id,
                     POLYMARKET_RTDS_SYMBOL,
                 )
-                ping_task = asyncio.create_task(_rtds_ping_loop(ws), name="rtds_ping")
-                watchdog_task = asyncio.create_task(_rtds_watchdog(ws), name="rtds_watchdog")
                 backoff = 1
                 try:
                     async for raw in ws:
@@ -391,12 +348,6 @@ async def _run_polymarket_rtds() -> None:
                         getattr(ws, "close_reason", None),
                     )
                 finally:
-                    ping_task.cancel()
-                    watchdog_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await ping_task
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await watchdog_task
                     btc_state.last_rtds_disconnect_at = time.time()
                     log.info(
                         "RTDS session cleanup  session=%d close_code=%s close_reason=%s local_reason=%s msg_age=%.1fs last_msg_kind=%s",

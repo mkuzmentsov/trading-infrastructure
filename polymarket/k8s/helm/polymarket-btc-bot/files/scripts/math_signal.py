@@ -27,6 +27,8 @@ from config import (
     DRIFT_A2,
     DRIFT_A3,
     DRIFT_A4,
+    EARLY_BAR_MIN_CONFIDENCE,
+    EARLY_BAR_RAMP_SECS,
     KELLY_SCALE,
     MAX_ABS_DRIFT,
     MAX_ENTRY_SPREAD,
@@ -74,18 +76,31 @@ def estimate_remaining_sigma(seconds_left: int, sigma_5m: float) -> float:
     return max(sigma_5m * math.sqrt(time_frac), 1e-6)
 
 
+def early_bar_confidence_scale(seconds_left: int) -> float:
+    elapsed = _clip(300 - seconds_left, 0, 300)
+    ramp = max(EARLY_BAR_RAMP_SECS, 1)
+    progress = min(elapsed / ramp, 1.0)
+    return _clip(
+        EARLY_BAR_MIN_CONFIDENCE + (1.0 - EARLY_BAR_MIN_CONFIDENCE) * progress,
+        0.0,
+        1.0,
+    )
+
+
 def fair_probability_up(
     open_price: float,
     current_price: float,
     mu_rem: float,
     sigma_rem: float,
+    confidence_scale: float,
 ) -> float:
     if open_price <= 0 or current_price <= 0:
         return 0.5
     z = (math.log(current_price) + mu_rem - math.log(open_price)) / sigma_rem
     z = _clip(z, -0.95, 0.95)
     raw_p = _norm_cdf(z)
-    shrunk = 0.5 + MODEL_PROB_SHRINK * (raw_p - 0.5)
+    effective_shrink = MODEL_PROB_SHRINK * _clip(confidence_scale, 0.0, 1.0)
+    shrunk = 0.5 + effective_shrink * (raw_p - 0.5)
     return _clip(shrunk, MODEL_PROB_FLOOR, MODEL_PROB_CEIL)
 
 
@@ -162,7 +177,8 @@ def generate_signal(
 
     mu_rem = estimate_remaining_drift(seconds_left, ret_30s, ret_60s, distance, imbalance)
     sigma_rem = estimate_remaining_sigma(seconds_left, sigma_5m)
-    p_up = fair_probability_up(bar_open, current_price, mu_rem, sigma_rem)
+    confidence_scale = early_bar_confidence_scale(seconds_left)
+    p_up = fair_probability_up(bar_open, current_price, mu_rem, sigma_rem, confidence_scale)
     p_down = 1.0 - p_up
 
     cost_up = _round_trip_cost(up_bid, up_ask)
@@ -180,6 +196,7 @@ def generate_signal(
         imbalance=round(imbalance, 4),
         distance=round(distance, 6),
         seconds_left=seconds_left,
+        confidence_scale=round(confidence_scale, 4),
         spread_up=round(spread_up, 4),
         spread_down=round(spread_down, 4),
         cost_up=round(cost_up, 4),
