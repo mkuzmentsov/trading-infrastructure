@@ -10,7 +10,7 @@ Only one position is tracked at a time (one active market).
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -44,6 +44,7 @@ class PendingBuy:
 class PositionStore:
     position: Optional[Position] = None
     pending_buy: Optional[PendingBuy] = None
+    held_positions: list[Position] = field(default_factory=list)
 
     def has_position(self) -> bool:
         return self.position is not None
@@ -93,6 +94,11 @@ class PositionStore:
 
     def close(self) -> None:
         self.position = None
+
+    def park_current_position(self) -> None:
+        if self.position:
+            self.held_positions.append(self.position)
+            self.position = None
 
     def attach_sell_order(self, order_id: str, price: float) -> None:
         if self.position:

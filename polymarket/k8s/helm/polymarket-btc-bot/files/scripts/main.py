@@ -149,9 +149,10 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         pos_desc = f"{pos.direction}:{pos.shares}@{pos.entry_price:.3f}"
         if pos.hold_to_expiry:
             pos_desc += ":hold"
+    held_count = len(pos_store.held_positions)
     prefix = f"{reason}  " if reason else ""
     log.info(
-        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d depth_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
+        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d depth_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
         prefix,
         _feeds_are_fresh(),
         btc_state.price_source,
@@ -168,6 +169,7 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         pm_state.down_ask,
         ages["pm_down_age"],
         pos_desc,
+        held_count,
         "yes" if pos_store.pending_buy else "no",
         btc_state.rtds_session_id,
         now - btc_state.last_rtds_message_at if btc_state.last_rtds_message_at > 0 else -1,
@@ -337,6 +339,14 @@ async def _manage_position(clob) -> None:
                 pos.condition_id[:16],
             )
             pos.hold_to_expiry = True
+        log.info(
+            "Parking old-market hold position  dir=%s shares=%d entry=%.4f market=%s",
+            pos.direction,
+            pos.shares,
+            pos.entry_price,
+            pos.condition_id[:16],
+        )
+        pos_store.park_current_position()
         return
 
     if pos.hold_to_expiry:
@@ -698,6 +708,14 @@ async def main() -> None:
                 if not pos.hold_to_expiry:
                     log.info("Bar boundary: old market position has no live exit — hold to expiry  %s", pos.condition_id[:16])
                     pos.hold_to_expiry = True
+                log.info(
+                    "Bar boundary: parking old-market hold position  dir=%s shares=%d entry=%.4f market=%s",
+                    pos.direction,
+                    pos.shares,
+                    pos.entry_price,
+                    pos.condition_id[:16],
+                )
+                pos_store.park_current_position()
             pb = pos_store.pending_buy
             if pb and pb.condition_id != pm_state.condition_id:
                 log.info("Bar boundary: clearing stale pending buy (old market %s)", pb.condition_id[:16])

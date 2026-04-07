@@ -32,6 +32,7 @@ from config import (
     KELLY_SCALE,
     MAX_ABS_DRIFT,
     MAX_ENTRY_SPREAD,
+    MAX_ENTRY_PRICE,
     MIN_EDGE,
     MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
@@ -205,6 +206,10 @@ def generate_signal(
 
     up_tradeable = 0.05 <= up_ask <= 0.95 and spread_up <= MAX_ENTRY_SPREAD
     down_tradeable = 0.05 <= down_ask <= 0.95 and spread_down <= MAX_ENTRY_SPREAD
+    if up_tradeable and up_ask > MAX_ENTRY_PRICE:
+        up_tradeable = False
+    if down_tradeable and down_ask > MAX_ENTRY_PRICE:
+        down_tradeable = False
 
     if net_up >= net_down and net_up >= MIN_EDGE and up_tradeable:
         action, price, p, edge = "BUY_UP", up_ask, p_up, net_up
@@ -213,9 +218,9 @@ def generate_signal(
     else:
         reason = "No edge above threshold"
         if net_up >= MIN_EDGE and not up_tradeable:
-            reason = f"UP token not tradeable (ask={up_ask:.3f}, spread={spread_up:.3f})"
+            reason = f"UP token not tradeable (ask={up_ask:.3f}, spread={spread_up:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
         elif net_down >= MIN_EDGE and not down_tradeable:
-            reason = f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f})"
+            reason = f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
         return _no_trade(reason, **dbg)
 
     kf = kelly_fraction(p, price)

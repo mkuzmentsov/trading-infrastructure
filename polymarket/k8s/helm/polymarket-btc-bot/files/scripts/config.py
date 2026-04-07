@@ -45,6 +45,7 @@ DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))
 # Extra signal guards to reduce overtrading / overconfidence.
 ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "45"))
 MAX_ENTRY_SPREAD       = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
+MAX_ENTRY_PRICE        = float(os.getenv("MAX_ENTRY_PRICE", "0.40"))
 SOURCE_MISMATCH_BUFFER = float(os.getenv("SOURCE_MISMATCH_BUFFER", "0.01"))
 MODEL_PROB_SHRINK      = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
 MODEL_PROB_FLOOR       = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
