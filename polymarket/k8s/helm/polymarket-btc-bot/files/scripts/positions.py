@@ -22,6 +22,10 @@ class Position:
     shares: int              # number of shares bought
     entry_price: float       # ask price paid per share
     entry_time: float        # time.time() at fill
+    entry_edge: float = 0.0
+    entry_p_up: float = 0.5
+    entry_seconds_left: int = 0
+    peak_bid: float = 0.0
 
     # Sell-order state (filled in after we post a GTC limit sell)
     sell_order_id: Optional[str] = None
@@ -39,6 +43,9 @@ class PendingBuy:
     shares: int
     price: float
     placed_at: float     # time.time() when placed
+    edge: float = 0.0
+    p_up: float = 0.5
+    seconds_left: int = 0
 
 
 @dataclass
@@ -61,6 +68,9 @@ class PositionStore:
         shares: int,
         entry_price: float,
         entry_time: float,
+        entry_edge: float = 0.0,
+        entry_p_up: float = 0.5,
+        entry_seconds_left: int = 0,
     ) -> None:
         self.position = Position(
             condition_id=condition_id,
@@ -69,6 +79,10 @@ class PositionStore:
             shares=shares,
             entry_price=entry_price,
             entry_time=entry_time,
+            entry_edge=entry_edge,
+            entry_p_up=entry_p_up,
+            entry_seconds_left=entry_seconds_left,
+            peak_bid=entry_price,
         )
 
     def open_pending_buy(
@@ -79,6 +93,9 @@ class PositionStore:
         direction: str,
         shares: int,
         price: float,
+        edge: float = 0.0,
+        p_up: float = 0.5,
+        seconds_left: int = 0,
     ) -> None:
         self.pending_buy = PendingBuy(
             order_id=order_id,
@@ -88,6 +105,9 @@ class PositionStore:
             shares=shares,
             price=price,
             placed_at=time.time(),
+            edge=edge,
+            p_up=p_up,
+            seconds_left=seconds_left,
         )
 
     def clear_pending_buy(self) -> None:

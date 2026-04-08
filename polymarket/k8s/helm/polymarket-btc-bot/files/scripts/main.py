@@ -48,8 +48,13 @@ from config import (
     POLYMARKET_PK,
     TRAINING_EVENT_LOG_PATH,
     TRAINING_LOG_PATH,
+    THESIS_EDGE_FRACTION,
+    THESIS_MIN_EDGE,
+    THESIS_PROFIT_LOCK,
     SIGNAL_EXIT_EDGE,
     STOP_LOSS,
+    TRAILING_ARM_GAIN,
+    TRAILING_STOP_GAP,
     TAKE_PROFIT,
     WS_HEARTBEAT_SECS,
     log,
@@ -151,6 +156,10 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
             "direction": pos.direction if pos else None,
             "shares": pos.shares if pos else 0,
             "entry_price": round(pos.entry_price, 4) if pos else None,
+            "entry_edge": round(pos.entry_edge, 4) if pos else None,
+            "entry_p_up": round(pos.entry_p_up, 4) if pos else None,
+            "entry_seconds_left": pos.entry_seconds_left if pos else None,
+            "peak_bid": round(pos.peak_bid, 4) if pos else None,
             "hold_to_expiry": pos.hold_to_expiry if pos else False,
         },
         "pending_buy": {
@@ -159,6 +168,9 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
             "direction": pos_store.pending_buy.direction if pos_store.pending_buy else None,
             "shares": pos_store.pending_buy.shares if pos_store.pending_buy else 0,
             "price": round(pos_store.pending_buy.price, 4) if pos_store.pending_buy else None,
+            "edge": round(pos_store.pending_buy.edge, 4) if pos_store.pending_buy else None,
+            "p_up": round(pos_store.pending_buy.p_up, 4) if pos_store.pending_buy else None,
+            "seconds_left": pos_store.pending_buy.seconds_left if pos_store.pending_buy else None,
         },
     }
     _append_jsonl(TRAINING_LOG_PATH, record, "Training snapshot")
@@ -432,6 +444,9 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         shares=shares,
         entry_price=entry_price,
         entry_time=time.time(),
+        entry_edge=pb.edge,
+        entry_p_up=pb.p_up,
+        entry_seconds_left=pb.seconds_left,
     )
     pos_store.clear_pending_buy()
     _write_training_event(
@@ -440,6 +455,9 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         token_id=pb.token_id,
         shares=shares,
         entry_price=round(entry_price, 4),
+        entry_edge=round(pb.edge, 4),
+        entry_p_up=round(pb.p_up, 4),
+        entry_seconds_left=pb.seconds_left,
         dry_run=DRY_RUN,
     )
 
@@ -542,28 +560,39 @@ async def _manage_position(clob) -> None:
                 pos_store.clear_sell_order()
 
     current_bid = _current_bid_for_position()
+    pos.peak_bid = max(pos.peak_bid, current_bid)
+    unrealized = current_bid - pos.entry_price
+    seconds_left = _seconds_left_in_bar()
 
-    if current_bid >= pos.entry_price + TAKE_PROFIT and not (
-        pos.sell_order_id and pos.exit_reason == "take_profit"
+    trailing_armed = pos.peak_bid >= pos.entry_price + TRAILING_ARM_GAIN
+    if trailing_armed and current_bid <= pos.peak_bid - TRAILING_STOP_GAP and not (
+        pos.sell_order_id and pos.exit_reason == "trailing_stop"
     ):
         log.info(
-            "TAKE_PROFIT  bid=%.4f  entry=%.4f  gain=%.4f",
-            current_bid, pos.entry_price, current_bid - pos.entry_price,
+            "TRAILING_STOP  bid=%.4f  peak=%.4f  entry=%.4f  drawdown=%.4f",
+            current_bid,
+            pos.peak_bid,
+            pos.entry_price,
+            pos.peak_bid - current_bid,
         )
-        await _exit_position(clob, pos, current_bid, reason="take_profit")
+        await _exit_position(clob, pos, current_bid, reason="trailing_stop")
         return
 
-    if current_bid <= pos.entry_price - STOP_LOSS and not (
+    stop_loss_gap = STOP_LOSS
+    if seconds_left > 180:
+        stop_loss_gap *= 1.25
+    elif seconds_left <= 90:
+        stop_loss_gap *= 0.75
+    if current_bid <= pos.entry_price - stop_loss_gap and not (
         pos.sell_order_id and pos.exit_reason == "stop_loss"
     ):
         log.info(
-            "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f",
-            current_bid, pos.entry_price, pos.entry_price - current_bid,
+            "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f",
+            current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap,
         )
         await _exit_position(clob, pos, current_bid, reason="stop_loss")
         return
 
-    seconds_left = _seconds_left_in_bar()
     signal = generate_signal(
         cash_amount=0,
         seconds_left=seconds_left,
@@ -587,12 +616,36 @@ async def _manage_position(clob) -> None:
         await _exit_position(clob, pos, current_bid, reason="signal_flip")
         return
 
+    current_side_edge = 0.0
+    if pos.direction == "UP":
+        current_side_edge = float(signal.debug.get("net_up", signal.edge if signal.action == "BUY_UP" else 0.0))
+    else:
+        current_side_edge = float(signal.debug.get("net_down", signal.edge if signal.action == "BUY_DOWN" else 0.0))
+
+    thesis_floor = max(THESIS_MIN_EDGE, pos.entry_edge * THESIS_EDGE_FRACTION)
+    if (
+        unrealized >= THESIS_PROFIT_LOCK
+        and current_side_edge < thesis_floor
+        and not (pos.sell_order_id and pos.exit_reason == "thesis_decay")
+    ):
+        log.info(
+            "THESIS_DECAY  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  edge_now=%.4f  edge_floor=%.4f",
+            pos.direction,
+            current_bid,
+            pos.entry_price,
+            unrealized,
+            current_side_edge,
+            thesis_floor,
+        )
+        await _exit_position(clob, pos, current_bid, reason="thesis_decay")
+        return
+
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
-        if pos.exit_reason == "take_profit":
+        if pos.exit_reason in {"take_profit", "trailing_stop", "thesis_decay"}:
             if current_bid > pos.sell_price:
                 new_price = max(current_bid, MIN_EXIT_BID)
                 log.info(
-                    "Take-profit improved  old=%.4f  bid=%.4f — replace at %.4f",
+                    "Exit improved  old=%.4f  bid=%.4f — replace at %.4f",
                     pos.sell_price,
                     current_bid,
                     new_price,
@@ -600,7 +653,7 @@ async def _manage_position(clob) -> None:
                 if not DRY_RUN:
                     await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
                 pos_store.clear_sell_order()
-                await _post_sell_order(clob, pos, new_price, reason="take_profit")
+                await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason or "take_profit")
                 return
         else:
             new_price = _exit_target_price(current_bid, pos.exit_reason or "")
@@ -612,8 +665,8 @@ async def _manage_position(clob) -> None:
             return
 
     log.debug(
-        "Holding position  dir=%s  entry=%.4f  bid=%.4f  secs_left=%d",
-        pos.direction, pos.entry_price, current_bid, _seconds_left_in_bar(),
+        "Holding position  dir=%s  entry=%.4f  bid=%.4f  peak=%.4f  edge_now=%.4f  secs_left=%d",
+        pos.direction, pos.entry_price, current_bid, pos.peak_bid, current_side_edge, _seconds_left_in_bar(),
     )
 
 
@@ -786,6 +839,9 @@ async def _try_enter(clob, balance: float) -> None:
             shares=signal.size,
             entry_price=signal.price,
             entry_time=time.time(),
+            entry_edge=signal.edge,
+            entry_p_up=signal.p_up,
+            entry_seconds_left=seconds_left,
         )
         _write_training_event(
             "position_opened",
@@ -793,6 +849,9 @@ async def _try_enter(clob, balance: float) -> None:
             token_id=token_id,
             shares=signal.size,
             entry_price=round(signal.price, 4),
+            entry_edge=round(signal.edge, 4),
+            entry_p_up=round(signal.p_up, 4),
+            entry_seconds_left=seconds_left,
             spend=round(spend, 2),
             source="dry_run_entry",
             dry_run=True,
@@ -836,6 +895,9 @@ async def _try_enter(clob, balance: float) -> None:
             direction=direction,
             shares=signal.size,
             price=signal.price,
+            edge=signal.edge,
+            p_up=signal.p_up,
+            seconds_left=seconds_left,
         )
         tg(
             f"📋 <b>BTC 5m Order placed</b>\n"

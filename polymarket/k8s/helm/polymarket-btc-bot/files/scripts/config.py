@@ -70,6 +70,11 @@ SIGNAL_EXIT_EDGE = float(os.getenv("SIGNAL_EXIT_EDGE", "0.05"))
 MIN_EXIT_BID = float(os.getenv("MIN_EXIT_BID", "0.03"))
 ORDER_REPLACE_GAP = float(os.getenv("ORDER_REPLACE_GAP", "0.02"))
 AGGRESSIVE_EXIT_SLIPPAGE = float(os.getenv("AGGRESSIVE_EXIT_SLIPPAGE", "0.02"))
+TRAILING_ARM_GAIN = float(os.getenv("TRAILING_ARM_GAIN", "0.12"))
+TRAILING_STOP_GAP = float(os.getenv("TRAILING_STOP_GAP", "0.05"))
+THESIS_EDGE_FRACTION = float(os.getenv("THESIS_EDGE_FRACTION", "0.55"))
+THESIS_MIN_EDGE = float(os.getenv("THESIS_MIN_EDGE", "0.02"))
+THESIS_PROFIT_LOCK = float(os.getenv("THESIS_PROFIT_LOCK", "0.03"))
 
 # ── Polymarket credentials ────────────────────────────────────────────────────
 POLYMARKET_PK               = os.getenv("POLYMARKET_PK",               "")
