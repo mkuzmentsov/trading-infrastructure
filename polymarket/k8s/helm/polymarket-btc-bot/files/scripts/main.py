@@ -11,6 +11,7 @@ This patched version fixes the major execution bugs:
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import os
 import time
@@ -45,6 +46,8 @@ from config import (
     ORDER_REPLACE_GAP,
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
+    TRAINING_EVENT_LOG_PATH,
+    TRAINING_LOG_PATH,
     SIGNAL_EXIT_EDGE,
     STOP_LOSS,
     TAKE_PROFIT,
@@ -63,6 +66,102 @@ _balance_cache: list = [0.0, 0.0]
 _BALANCE_TTL = 30.0
 _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
+
+
+def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
+    except Exception as exc:
+        log.warning("%s write failed: %s", warning_label, exc)
+
+
+def _write_training_event(event_type: str, **payload) -> None:
+    if not TRAINING_EVENT_LOG_PATH:
+        return
+    record = {
+        "ts": round(time.time(), 3),
+        "event": event_type,
+        "condition_id": pm_state.condition_id,
+        "question": pm_state.question,
+        "market_start_ts": pm_state.market_start_ts,
+        "market_end_ts": pm_state.market_end_ts,
+        "seconds_left": _seconds_left_in_bar(),
+        "btc_price": round(btc_state.current_price, 4),
+        "bar_open": round(btc_state.bar_open, 4),
+        "up_bid": round(pm_state.up_bid, 4),
+        "up_ask": round(pm_state.up_ask, 4),
+        "down_bid": round(pm_state.down_bid, 4),
+        "down_ask": round(pm_state.down_ask, 4),
+    }
+    record.update(payload)
+    _append_jsonl(TRAINING_EVENT_LOG_PATH, record, "Training event")
+
+
+def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int) -> None:
+    if not TRAINING_LOG_PATH:
+        return
+
+    pos = pos_store.position
+    record = {
+        "ts": round(time.time(), 3),
+        "context": context,
+        "condition_id": pm_state.condition_id,
+        "question": pm_state.question,
+        "market_start_ts": pm_state.market_start_ts,
+        "market_end_ts": pm_state.market_end_ts,
+        "seconds_left": seconds_left,
+        "cash_amount": round(cash_amount, 4),
+        "btc": {
+            "bar_open": round(btc_state.bar_open, 4),
+            "current_price": round(btc_state.current_price, 4),
+            "ret_30s": round(btc_state.ret_since(30), 6),
+            "ret_60s": round(btc_state.ret_since(60), 6),
+            "sigma_5m": round(btc_state.sigma_5m(), 6),
+            "last_updated_at": btc_state.last_updated_at,
+            "last_round_id": btc_state.last_round_id,
+        },
+        "pm": {
+            "ready": pm_state.ready,
+            "up_bid": round(pm_state.up_bid, 4),
+            "up_ask": round(pm_state.up_ask, 4),
+            "down_bid": round(pm_state.down_bid, 4),
+            "down_ask": round(pm_state.down_ask, 4),
+            "last_up_book_ts": round(pm_state.last_up_book_ts, 3),
+            "last_down_book_ts": round(pm_state.last_down_book_ts, 3),
+            "book_events": pm_state.book_events,
+            "last_ws_message_at": round(pm_state.last_ws_message_at, 3),
+        },
+        "feeds": {
+            "fresh": _feeds_are_fresh(),
+            "staleness": {k: round(v, 3) for k, v in _feed_staleness().items()},
+        },
+        "signal": {
+            "action": signal.action,
+            "price": round(signal.price, 4) if signal.price is not None else None,
+            "size": signal.size,
+            "p_up": signal.p_up,
+            "edge": signal.edge,
+            "reason": signal.reason,
+            "debug": signal.debug,
+        },
+        "position": {
+            "direction": pos.direction if pos else None,
+            "shares": pos.shares if pos else 0,
+            "entry_price": round(pos.entry_price, 4) if pos else None,
+            "hold_to_expiry": pos.hold_to_expiry if pos else False,
+        },
+        "pending_buy": {
+            "active": pos_store.pending_buy is not None,
+            "order_id": pos_store.pending_buy.order_id if pos_store.pending_buy else None,
+            "direction": pos_store.pending_buy.direction if pos_store.pending_buy else None,
+            "shares": pos_store.pending_buy.shares if pos_store.pending_buy else 0,
+            "price": round(pos_store.pending_buy.price, 4) if pos_store.pending_buy else None,
+        },
+    }
+    _append_jsonl(TRAINING_LOG_PATH, record, "Training snapshot")
 
 
 def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: int) -> None:
@@ -92,6 +191,7 @@ def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: in
         signal.reason,
         signal.debug,
     )
+    _write_training_snapshot(context, signal, cash_amount, seconds_left)
 
 
 async def _init_clob() -> object:
@@ -334,6 +434,14 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         entry_time=time.time(),
     )
     pos_store.clear_pending_buy()
+    _write_training_event(
+        "position_opened",
+        direction=pb.direction,
+        token_id=pb.token_id,
+        shares=shares,
+        entry_price=round(entry_price, 4),
+        dry_run=DRY_RUN,
+    )
 
 
 def _exit_target_price(current_bid: float, reason: str) -> float:
@@ -359,6 +467,17 @@ async def _manage_position(clob) -> None:
                 log.info(
                     "Old-market sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%d  pnl=$%.2f  order=%s",
                     pos.direction, pos.entry_price, exit_price, realized_shares, pnl, pos.sell_order_id,
+                )
+                _write_training_event(
+                    "position_closed",
+                    direction=pos.direction,
+                    shares=realized_shares,
+                    entry_price=round(pos.entry_price, 4),
+                    exit_price=round(exit_price, 4),
+                    pnl=round(pnl, 2),
+                    reason="market_rotated_filled",
+                    order_id=pos.sell_order_id,
+                    dry_run=False,
                 )
                 pos_store.close()
                 _balance_cache[1] = 0.0
@@ -403,6 +522,17 @@ async def _manage_position(clob) -> None:
                     f"Entry: {pos.entry_price:.4f}  Exit: {exit_price:.4f}\n"
                     f"Shares: {realized_shares}\n"
                     f"PnL: ${pnl:+.2f}"
+                )
+                _write_training_event(
+                    "position_closed",
+                    direction=pos.direction,
+                    shares=realized_shares,
+                    entry_price=round(pos.entry_price, 4),
+                    exit_price=round(exit_price, 4),
+                    pnl=round(pnl, 2),
+                    reason=pos.exit_reason or "sell_filled",
+                    order_id=pos.sell_order_id,
+                    dry_run=False,
                 )
                 pos_store.close()
                 _balance_cache[1] = 0.0
@@ -498,8 +628,28 @@ async def _exit_position(clob, pos, current_bid: float, reason: str) -> None:
 async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
     label = f" ({reason})" if reason else ""
     if DRY_RUN:
-        log.info("DRY_RUN — would sell  dir=%s  shares=%d  price=%.4f%s", pos.direction, pos.shares, price, label)
-        pos_store.attach_sell_order("dry-run-sell-id", price, reason)
+        pnl = round((price - pos.entry_price) * pos.shares, 2)
+        log.info(
+            "DRY_RUN — simulated sell  dir=%s  shares=%d  entry=%.4f  price=%.4f  pnl=$%.2f%s",
+            pos.direction,
+            pos.shares,
+            pos.entry_price,
+            price,
+            pnl,
+            label,
+        )
+        _write_training_event(
+            "position_closed",
+            direction=pos.direction,
+            shares=pos.shares,
+            entry_price=round(pos.entry_price, 4),
+            exit_price=round(price, 4),
+            pnl=round(pnl, 2),
+            reason=reason or "dry_run_exit",
+            dry_run=True,
+        )
+        pos_store.close()
+        _balance_cache[1] = 0.0
         return
 
     shares = pos.shares
@@ -542,6 +692,16 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
     if order_id:
         log.info("Limit sell posted  order=%s  price=%.4f%s", order_id, price, label)
         pos_store.attach_sell_order(order_id, price, reason)
+        _write_training_event(
+            "sell_order_posted",
+            direction=pos.direction,
+            shares=shares,
+            entry_price=round(pos.entry_price, 4),
+            exit_price=round(price, 4),
+            reason=reason or "",
+            order_id=order_id,
+            dry_run=False,
+        )
     else:
         log.warning("Limit sell failed — marking hold-to-expiry%s", label)
         if pos_store.position:
@@ -627,6 +787,16 @@ async def _try_enter(clob, balance: float) -> None:
             entry_price=signal.price,
             entry_time=time.time(),
         )
+        _write_training_event(
+            "position_opened",
+            direction=direction,
+            token_id=token_id,
+            shares=signal.size,
+            entry_price=round(signal.price, 4),
+            spend=round(spend, 2),
+            source="dry_run_entry",
+            dry_run=True,
+        )
         _entry_confirmation["count"] = 0
         return
 
@@ -648,6 +818,16 @@ async def _try_enter(clob, balance: float) -> None:
         log.info(
             "GTC buy placed  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
             order_id, direction, signal.price, signal.size, spend,
+        )
+        _write_training_event(
+            "buy_order_posted",
+            direction=direction,
+            token_id=token_id,
+            shares=signal.size,
+            entry_price=round(signal.price, 4),
+            spend=round(spend, 2),
+            order_id=order_id,
+            dry_run=False,
         )
         pos_store.open_pending_buy(
             order_id=order_id,

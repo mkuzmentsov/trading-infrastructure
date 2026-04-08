@@ -91,6 +91,8 @@ DATA_API      = "https://data-api.polymarket.com"
 POLYMARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 POLYMARKET_RTDS_WS = os.getenv("POLYMARKET_RTDS_WS", "wss://ws-live-data.polymarket.com")
 POLYMARKET_RTDS_SYMBOL = os.getenv("POLYMARKET_RTDS_SYMBOL", "btc/usd")
+TRAINING_LOG_PATH = os.getenv("TRAINING_LOG_PATH", "").strip()
+TRAINING_EVENT_LOG_PATH = os.getenv("TRAINING_EVENT_LOG_PATH", "").strip()
 
 MARKET_REFRESH_SECS = int(os.getenv("MARKET_REFRESH_SECS", "60"))
 WS_HEARTBEAT_SECS = int(os.getenv("WS_HEARTBEAT_SECS", "30"))
