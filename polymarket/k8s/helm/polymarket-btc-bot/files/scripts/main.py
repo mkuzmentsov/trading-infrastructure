@@ -46,6 +46,7 @@ from config import (
     ORDER_REPLACE_GAP,
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
+    REENTRY_EDGE_PENALTY,
     TRAINING_EVENT_LOG_PATH,
     TRAINING_LOG_PATH,
     THESIS_EDGE_FRACTION,
@@ -60,7 +61,7 @@ from config import (
     log,
 )
 from math_signal import generate_signal
-from pm_ws import pm_state, run_pm_ws
+from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
 from positions import pos_store
 from redemptions import redeem_resolved_positions
 from telegram import tg
@@ -71,6 +72,7 @@ _balance_cache: list = [0.0, 0.0]
 _BALANCE_TTL = 30.0
 _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
+_stop_loss_reentry_guard: dict[tuple[str, str], float] = {}
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -103,6 +105,16 @@ def _write_training_event(event_type: str, **payload) -> None:
     }
     record.update(payload)
     _append_jsonl(TRAINING_EVENT_LOG_PATH, record, "Training event")
+
+
+async def _refresh_pm_quotes_if_stale(reason: str) -> bool:
+    ages = _feed_staleness()
+    if ages["pm_up_age"] <= FEED_STALE_SECS and ages["pm_down_age"] <= FEED_STALE_SECS:
+        return False
+    refreshed = await asyncio.to_thread(refresh_pm_quotes_from_rest, reason)
+    if refreshed:
+        _log_feed_diag(force=True, reason=f"pm_rest_refresh:{reason}")
+    return refreshed
 
 
 def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int) -> None:
@@ -497,6 +509,8 @@ async def _manage_position(clob) -> None:
                     order_id=pos.sell_order_id,
                     dry_run=False,
                 )
+                if pos.exit_reason == "stop_loss":
+                    _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -552,6 +566,8 @@ async def _manage_position(clob) -> None:
                     order_id=pos.sell_order_id,
                     dry_run=False,
                 )
+                if pos.exit_reason == "stop_loss":
+                    _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -701,6 +717,8 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             reason=reason or "dry_run_exit",
             dry_run=True,
         )
+        if reason == "stop_loss":
+            _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
         pos_store.close()
         _balance_cache[1] = 0.0
         return
@@ -767,6 +785,8 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     if not _feeds_are_fresh():
+        await _refresh_pm_quotes_if_stale("entry")
+    if not _feeds_are_fresh():
         _log_feed_diag(force=True, reason="entry_blocked:stale_feeds")
         return
 
@@ -801,6 +821,19 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     direction = "UP" if signal.action == "BUY_UP" else "DOWN"
+    reentry_floor = _stop_loss_reentry_guard.get((pm_state.condition_id, direction))
+    if reentry_floor is not None and signal.edge < reentry_floor + REENTRY_EDGE_PENALTY:
+        log.info(
+            "Signal blocked by stop-loss reentry guard  dir=%s  edge=%.4f  required=%.4f",
+            direction,
+            signal.edge,
+            reentry_floor + REENTRY_EDGE_PENALTY,
+        )
+        _entry_confirmation["condition_id"] = ""
+        _entry_confirmation["action"] = ""
+        _entry_confirmation["count"] = 0
+        _entry_confirmation["edge"] = 0.0
+        return
 
     if (
         _entry_confirmation["condition_id"] == pm_state.condition_id
@@ -939,6 +972,8 @@ async def _tick(clob) -> None:
             _log_feed_diag(reason="skip_balance:not_ready")
             return
         if not _feeds_are_fresh():
+            await _refresh_pm_quotes_if_stale("pre_balance")
+        if not _feeds_are_fresh():
             _log_feed_diag(force=True, reason="skip_balance:stale_feeds")
             return
         balance = await _get_balance(clob)
@@ -993,6 +1028,9 @@ async def main() -> None:
         current_boundary = _next_bar_boundary()
         if current_boundary > 0 and now >= current_boundary and current_boundary > last_cleanup_boundary:
             last_cleanup_boundary = current_boundary
+            stale_keys = [key for key in _stop_loss_reentry_guard if key[0] != pm_state.condition_id]
+            for key in stale_keys:
+                _stop_loss_reentry_guard.pop(key, None)
             if not DRY_RUN:
                 try:
                     await asyncio.to_thread(redeem_resolved_positions)

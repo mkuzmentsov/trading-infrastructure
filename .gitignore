@@ -1,5 +1,7 @@
 .idea
 
+.venv
+
 hummingbot/k8s/helm/bots/*
 !hummingbot/k8s/helm/bots/hl_wb_arb_1.yaml.example
 

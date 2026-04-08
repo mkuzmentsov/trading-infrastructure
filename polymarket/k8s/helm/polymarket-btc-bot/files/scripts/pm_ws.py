@@ -154,6 +154,43 @@ def _handle_book(msg: dict) -> None:
     )
 
 
+def refresh_pm_quotes_from_rest(reason: str = "") -> bool:
+    market = fetch_btc_5m_market()
+    if not market:
+        return False
+
+    token_ids = _apply_market(market)
+    if not token_ids:
+        return False
+
+    now = time.time()
+    if 0 < pm_state.up_bid < 1 and 0 < pm_state.up_ask < 1:
+        pm_state.up_live = True
+        pm_state.last_up_book_ts = now
+    if 0 < pm_state.down_bid < 1 and 0 < pm_state.down_ask < 1:
+        pm_state.down_live = True
+        pm_state.last_down_book_ts = now
+
+    pm_state.ready = (
+        pm_state.up_live
+        and pm_state.down_live
+        and pm_state.up_bid > 0
+        and pm_state.down_bid > 0
+        and 0 < pm_state.up_ask < 1
+        and 0 < pm_state.down_ask < 1
+    )
+    log.info(
+        "PM REST refresh%s  ready=%s  up=%.3f/%.3f  down=%.3f/%.3f",
+        f" ({reason})" if reason else "",
+        pm_state.ready,
+        pm_state.up_bid,
+        pm_state.up_ask,
+        pm_state.down_bid,
+        pm_state.down_ask,
+    )
+    return True
+
+
 def _log_book_heartbeat(force: bool = False) -> None:
     now = time.time()
     if not force and now - pm_state.last_heartbeat_ts < WS_HEARTBEAT_SECS:

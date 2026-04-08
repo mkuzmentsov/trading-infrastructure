@@ -36,6 +36,9 @@ from config import (
     MODEL_PROB_FLOOR,
     MODEL_PROB_SHRINK,
     SOURCE_MISMATCH_BUFFER,
+    ULTRA_CHEAP_TAIL_EDGE,
+    ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT,
+    ULTRA_CHEAP_TAIL_PRICE,
 )
 
 
@@ -198,6 +201,7 @@ def generate_signal(
         spread_down=round(spread_down, 4),
         cost_up=round(cost_up, 4),
         cost_down=round(cost_down, 4),
+        ultra_cheap_tail_override=False,
     )
 
     up_tradeable = 0.05 <= up_ask <= 0.95 and spread_up <= MAX_ENTRY_SPREAD
@@ -219,12 +223,17 @@ def generate_signal(
             reason = f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
         return _no_trade(reason, p_up_value=p_up, edge_value=max(net_up, net_down), **dbg)
 
+    ultra_cheap_tail = price <= ULTRA_CHEAP_TAIL_PRICE and edge >= ULTRA_CHEAP_TAIL_EDGE
+    ultra_cheap_tail_override = ultra_cheap_tail and seconds_left >= ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT
+    dbg["ultra_cheap_tail_override"] = ultra_cheap_tail_override
+
     if (
         action == "BUY_DOWN"
         and price <= CONTRARIAN_TAIL_MAX_PRICE
         and distance >= CONTRARIAN_MOVE_FILTER
         and ret_30s > 0
         and ret_60s > 0
+        and not ultra_cheap_tail_override
     ):
         return _no_trade(
             "Reject contrarian DOWN tail during active up-move",
@@ -241,6 +250,7 @@ def generate_signal(
         and distance <= -CONTRARIAN_MOVE_FILTER
         and ret_30s < 0
         and ret_60s < 0
+        and not ultra_cheap_tail_override
     ):
         return _no_trade(
             "Reject contrarian UP tail during active down-move",

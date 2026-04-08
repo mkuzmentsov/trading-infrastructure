@@ -61,6 +61,10 @@ CONTRARIAN_MOVE_FILTER = float(os.getenv("CONTRARIAN_MOVE_FILTER", "0.0006"))
 CHEAP_TAIL_EDGE_BONUS = float(os.getenv("CHEAP_TAIL_EDGE_BONUS", "0.05"))
 LATE_BAR_EDGE_BONUS = float(os.getenv("LATE_BAR_EDGE_BONUS", "0.04"))
 LATE_BAR_WINDOW_SECS = int(os.getenv("LATE_BAR_WINDOW_SECS", "75"))
+ULTRA_CHEAP_TAIL_PRICE = float(os.getenv("ULTRA_CHEAP_TAIL_PRICE", "0.10"))
+ULTRA_CHEAP_TAIL_EDGE = float(os.getenv("ULTRA_CHEAP_TAIL_EDGE", "0.20"))
+ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT = int(os.getenv("ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT", "90"))
+REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))
