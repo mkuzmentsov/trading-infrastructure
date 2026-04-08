@@ -2,12 +2,10 @@
 BTC state for the Polymarket bot.
 
 Price comes from Polymarket RTDS `crypto_prices_chainlink` for `btc/usd`.
-Binance is kept only for order-book imbalance features.
 """
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import math
 import time
@@ -16,7 +14,11 @@ from typing import Any
 
 import websockets
 
-from config import BINANCE_WS, POLYMARKET_RTDS_SYMBOL, POLYMARKET_RTDS_WS, log
+from config import (
+    POLYMARKET_RTDS_SYMBOL,
+    POLYMARKET_RTDS_WS,
+    log,
+)
 
 RTDS_TOPICS = {"crypto_prices_chainlink", "crypto_prices"}
 
@@ -25,16 +27,12 @@ class BTCState:
     def __init__(self) -> None:
         self.bar_open: float = 0.0
         self.current_price: float = 0.0
-        self.bid_vol_top: float = 0.0
-        self.ask_vol_top: float = 0.0
         self.ready: bool = False
         self.last_round_id: int = 0
         self.last_updated_at: int = 0
         self.last_price_poll_at: float = 0.0
         self.market_start_ts: int = 0
         self.market_end_ts: int = 0
-        self.last_depth_update_ts: float = 0.0
-        self.depth_updates: int = 0
         self.price_updates: int = 0
         self.price_source: str = "polymarket_rtds_chainlink"
         self.rtds_session_id: int = 0
@@ -91,13 +89,24 @@ class BTCState:
             and self.market_end_ts > self.market_start_ts
         )
 
+    def _bar_open_from_history(self, start_ts: int) -> float:
+        if start_ts <= 0:
+            return 0.0
+        for ts, log_price in self._prices:
+            if ts >= start_ts:
+                return math.exp(log_price)
+        return 0.0
+
     async def set_market_window(self, start_ts: int, end_ts: int) -> None:
         async with self._lock:
             if start_ts == self.market_start_ts and end_ts == self.market_end_ts:
                 return
             self.market_start_ts = start_ts
             self.market_end_ts = end_ts
-            self.bar_open = self.current_price if self.current_price > 0 else 0.0
+            # Reset on a new market and backfill from RTDS history when we can.
+            # Using the current price here biases the signal toward mean reversion
+            # and materially distorts the fair probability calculation.
+            self.bar_open = self._bar_open_from_history(start_ts)
             self._refresh_ready()
 
     async def apply_price_tick(self, price: float, updated_at_ms: int) -> None:
@@ -248,11 +257,11 @@ async def _run_polymarket_rtds() -> None:
                             log.info("RTDS PONG  session=%d", btc_state.rtds_session_id)
                             continue
                         btc_state.last_rtds_message_kind = "raw"
-                        log.info(
+                        log.debug(
                             "RTDS RAW  session=%d len=%d body=%s",
                             btc_state.rtds_session_id,
                             len(raw),
-                            raw[:500].replace("\n", "\\n"),
+                            raw.replace("\n", "\\n"),
                         )
                         try:
                             msg = json.loads(raw)
@@ -347,42 +356,5 @@ async def _run_polymarket_rtds() -> None:
         backoff = min(backoff * 2, 60)
 
 
-async def _process_depth(raw: str) -> None:
-    msg = json.loads(raw)
-    data = msg.get("data", {})
-    bids = data.get("bids", [])
-    asks = data.get("asks", [])
-    if bids:
-        btc_state.bid_vol_top = sum(float(b[1]) for b in bids[:5])
-    if asks:
-        btc_state.ask_vol_top = sum(float(a[1]) for a in asks[:5])
-    btc_state.last_depth_update_ts = time.time()
-    btc_state.depth_updates += 1
-
-
-async def _run_binance_depth_ws() -> None:
-    backoff = 1
-    while True:
-        try:
-            async with websockets.connect(BINANCE_WS, ping_interval=20, ping_timeout=30) as ws:
-                log.info("Binance depth WebSocket connected")
-                backoff = 1
-                async for raw in ws:
-                    log.debug("Binance RAW  %s", raw[:300].replace("\n", "\\n"))
-                    try:
-                        await _process_depth(raw)
-                    except Exception as exc:
-                        log.error("Binance depth WS processing error: %s", exc)
-        except (websockets.ConnectionClosed, ConnectionError, OSError) as exc:
-            log.warning("Binance depth WS disconnected: %s — reconnect in %ds", exc, backoff)
-        except Exception as exc:
-            log.exception("Binance depth WS unexpected error: %s — reconnect in %ds", exc, backoff)
-        await asyncio.sleep(backoff)
-        backoff = min(backoff * 2, 60)
-
-
 async def run_btc_ws() -> None:
-    await asyncio.gather(
-        _run_polymarket_rtds(),
-        _run_binance_depth_ws(),
-    )
+    await _run_polymarket_rtds()

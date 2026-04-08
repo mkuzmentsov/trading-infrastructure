@@ -16,7 +16,12 @@ import time
 import websockets
 
 from btc_ws import btc_state
-from config import MARKET_REFRESH_SECS, POLYMARKET_WS, WS_HEARTBEAT_SECS, log
+from config import (
+    MARKET_REFRESH_SECS,
+    POLYMARKET_WS,
+    WS_HEARTBEAT_SECS,
+    log,
+)
 from gamma import fetch_btc_5m_market, get_market_window, get_up_down_tokens
 
 
@@ -102,10 +107,13 @@ def _handle_book(msg: dict) -> None:
     asset_id = msg.get("asset_id", "")
     bids = msg.get("bids", [])
     asks = msg.get("asks", [])
+    now = time.time()
 
     best_bid = max((float(b["price"]) for b in bids), default=0.0)
     best_ask = min((float(a["price"]) for a in asks), default=1.0)
-    if best_bid > 0 and best_ask < 1 and best_bid > best_ask:
+    has_bid = best_bid > 0
+    has_ask = 0 < best_ask <= 1
+    if has_bid and has_ask and best_bid > best_ask:
         log.warning(
             "PM WS crossed book  asset=%s bid=%.3f ask=%.3f — clamping",
             asset_id[:16],
@@ -115,21 +123,24 @@ def _handle_book(msg: dict) -> None:
         midpoint = round((best_bid + best_ask) / 2, 3)
         best_bid = midpoint
         best_ask = midpoint
+        has_bid = True
+        has_ask = True
+
+    quote_seen = has_bid or has_ask
+    book_live = has_bid and has_ask
 
     if asset_id == pm_state.token_id_up:
-        if 0 < best_bid:
-            pm_state.up_bid = best_bid
-        if 0 < best_ask < 1:
-            pm_state.up_ask = best_ask
-        pm_state.up_live = True
-        pm_state.last_up_book_ts = time.time()
+        pm_state.up_bid = best_bid if has_bid else 0.0
+        pm_state.up_ask = best_ask if has_ask else 1.0
+        pm_state.up_live = book_live
+        if quote_seen:
+            pm_state.last_up_book_ts = now
     elif asset_id == pm_state.token_id_down:
-        if 0 < best_bid:
-            pm_state.down_bid = best_bid
-        if 0 < best_ask < 1:
-            pm_state.down_ask = best_ask
-        pm_state.down_live = True
-        pm_state.last_down_book_ts = time.time()
+        pm_state.down_bid = best_bid if has_bid else 0.0
+        pm_state.down_ask = best_ask if has_ask else 1.0
+        pm_state.down_live = book_live
+        if quote_seen:
+            pm_state.last_down_book_ts = now
 
     pm_state.book_events += 1
 
@@ -205,7 +216,6 @@ async def run_pm_ws() -> None:
                         pm_state.last_ws_message_kind = "empty"
                         _log_book_heartbeat()
                         continue
-                    log.debug("PM WS RAW  %s", raw[:500].replace("\n", "\\n"))
                     stripped = raw.strip()
                     if stripped == "INVALID OPERATION":
                         pm_state.last_ws_message_kind = "invalid_operation"
@@ -213,9 +223,10 @@ async def run_pm_ws() -> None:
                         break
                     if stripped[0] not in "[{":
                         pm_state.last_ws_message_kind = "control"
-                        log.debug("PM WS control message: %s", stripped[:120])
+                        log.debug("PM WS control message: %s", stripped)
                         _log_book_heartbeat()
                         continue
+                    log.debug("PM WS RAW  %s", raw.replace("\n", "\\n"))
                     try:
                         msgs = json.loads(raw)
                         if not isinstance(msgs, list):

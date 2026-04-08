@@ -77,11 +77,29 @@ def _parse_ts(value) -> int:
 def get_market_window(market: dict) -> tuple[int, int]:
     start_ts = 0
     end_ts = 0
+    primary_event = {}
+    events = market.get("events")
+    if isinstance(events, list) and events and isinstance(events[0], dict):
+        primary_event = events[0]
 
-    for key in ("startDate", "start_date", "gameStartTime", "startTime", "start_time"):
-        start_ts = max(start_ts, _parse_ts(market.get(key)))
-    for key in ("endDate", "end_date", "gameEndTime", "endTime", "end_time"):
-        end_ts = max(end_ts, _parse_ts(market.get(key)))
+    # `startDate` is often the market metadata creation time rather than the
+    # actual 5m event boundary. Prefer the event/window timestamps first.
+    for source in (market, primary_event):
+        for key in (
+            "eventStartTime",
+            "event_start_time",
+            "gameStartTime",
+            "startTime",
+            "start_time",
+        ):
+            start_ts = max(start_ts, _parse_ts(source.get(key)))
+        for key in ("endDate", "end_date", "gameEndTime", "endTime", "end_time"):
+            end_ts = max(end_ts, _parse_ts(source.get(key)))
+
+    if not start_ts:
+        for source in (market, primary_event):
+            for key in ("startDate", "start_date"):
+                start_ts = max(start_ts, _parse_ts(source.get(key)))
 
     slug = str(market.get("slug") or market.get("market_slug") or "")
     match = re.search(r"btc-updown-(\d+)m-(\d+)", slug)

@@ -30,42 +30,46 @@ LOOP_INTERVAL = int(os.getenv("LOOP_INTERVAL_SECS", "300"))
 
 BET_SIZE_MIN = float(os.getenv("BET_SIZE_MIN", "0.50"))
 BET_SIZE_MAX = float(os.getenv("BET_SIZE_MAX", "5.00"))
+MIN_POSITION_SHARES = int(os.getenv("MIN_POSITION_SHARES", "6"))
 
 # ── Signal parameters ─────────────────────────────────────────────────────────
-MIN_EDGE    = float(os.getenv("MIN_EDGE",    "0.03"))
+MIN_EDGE = float(os.getenv("MIN_EDGE", "0.03"))
 COST_BUFFER = float(os.getenv("COST_BUFFER", "0.02"))
 KELLY_SCALE = float(os.getenv("KELLY_SCALE", "0.5"))
 
-# Drift estimation coefficients — hand-tuned; keep configurable.
 DRIFT_A1 = float(os.getenv("DRIFT_A1", "1.8"))
 DRIFT_A2 = float(os.getenv("DRIFT_A2", "1.2"))
 DRIFT_A3 = float(os.getenv("DRIFT_A3", "0.003"))
 DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))
 
-# Extra signal guards to reduce overtrading / overconfidence.
 ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "45"))
-MAX_ENTRY_SPREAD       = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
-MAX_ENTRY_PRICE        = float(os.getenv("MAX_ENTRY_PRICE", "0.40"))
+MAX_ENTRY_SPREAD = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
+MAX_ENTRY_PRICE = float(os.getenv("MAX_ENTRY_PRICE", "0.40"))
 SOURCE_MISMATCH_BUFFER = float(os.getenv("SOURCE_MISMATCH_BUFFER", "0.01"))
-MODEL_PROB_SHRINK      = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
-MODEL_PROB_FLOOR       = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
-MODEL_PROB_CEIL        = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
+MODEL_PROB_SHRINK = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
+MODEL_PROB_FLOOR = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
+MODEL_PROB_CEIL = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
 EARLY_BAR_MIN_CONFIDENCE = float(os.getenv("EARLY_BAR_MIN_CONFIDENCE", "0.35"))
-EARLY_BAR_RAMP_SECS      = int(os.getenv("EARLY_BAR_RAMP_SECS", "90"))
+EARLY_BAR_RAMP_SECS = int(os.getenv("EARLY_BAR_RAMP_SECS", "90"))
 ENTRY_ORDER_TIMEOUT_SECS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECS", "18"))
 ENTRY_REPLACE_MIN_AGE_SECS = int(os.getenv("ENTRY_REPLACE_MIN_AGE_SECS", "6"))
-ENTRY_REPLACE_GAP         = float(os.getenv("ENTRY_REPLACE_GAP", "0.02"))
-MAX_ABS_DRIFT          = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
-MIN_POSITION_SHARES    = int(os.getenv("MIN_POSITION_SHARES", "6"))
+ENTRY_REPLACE_GAP = float(os.getenv("ENTRY_REPLACE_GAP", "0.02"))
+MAX_ABS_DRIFT = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
 ENTRY_CONFIRMATION_TICKS = int(os.getenv("ENTRY_CONFIRMATION_TICKS", "2"))
+CONTRARIAN_TAIL_MAX_PRICE = float(os.getenv("CONTRARIAN_TAIL_MAX_PRICE", "0.25"))
+CONTRARIAN_MOVE_FILTER = float(os.getenv("CONTRARIAN_MOVE_FILTER", "0.0006"))
+CHEAP_TAIL_EDGE_BONUS = float(os.getenv("CHEAP_TAIL_EDGE_BONUS", "0.05"))
+LATE_BAR_EDGE_BONUS = float(os.getenv("LATE_BAR_EDGE_BONUS", "0.04"))
+LATE_BAR_WINDOW_SECS = int(os.getenv("LATE_BAR_WINDOW_SECS", "75"))
 
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))
-TAKE_PROFIT        = float(os.getenv("TAKE_PROFIT",      "0.15"))
-STOP_LOSS          = float(os.getenv("STOP_LOSS",         "0.08"))
-SIGNAL_EXIT_EDGE   = float(os.getenv("SIGNAL_EXIT_EDGE",  "0.05"))
-MIN_EXIT_BID       = float(os.getenv("MIN_EXIT_BID",      "0.03"))
-ORDER_REPLACE_GAP  = float(os.getenv("ORDER_REPLACE_GAP", "0.02"))
+TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.15"))
+STOP_LOSS = float(os.getenv("STOP_LOSS", "0.08"))
+SIGNAL_EXIT_EDGE = float(os.getenv("SIGNAL_EXIT_EDGE", "0.05"))
+MIN_EXIT_BID = float(os.getenv("MIN_EXIT_BID", "0.03"))
+ORDER_REPLACE_GAP = float(os.getenv("ORDER_REPLACE_GAP", "0.02"))
+AGGRESSIVE_EXIT_SLIPPAGE = float(os.getenv("AGGRESSIVE_EXIT_SLIPPAGE", "0.02"))
 
 # ── Polymarket credentials ────────────────────────────────────────────────────
 POLYMARKET_PK               = os.getenv("POLYMARKET_PK",               "")
@@ -87,7 +91,6 @@ DATA_API      = "https://data-api.polymarket.com"
 POLYMARKET_WS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 POLYMARKET_RTDS_WS = os.getenv("POLYMARKET_RTDS_WS", "wss://ws-live-data.polymarket.com")
 POLYMARKET_RTDS_SYMBOL = os.getenv("POLYMARKET_RTDS_SYMBOL", "btc/usd")
-BINANCE_WS    = "wss://stream.binance.com:9443/stream?streams=btcusdt@depth20@100ms"
 
 MARKET_REFRESH_SECS = int(os.getenv("MARKET_REFRESH_SECS", "60"))
 WS_HEARTBEAT_SECS = int(os.getenv("WS_HEARTBEAT_SECS", "30"))

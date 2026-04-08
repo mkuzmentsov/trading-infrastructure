@@ -17,6 +17,7 @@ bot:
   betSizeMax: "5.00"
   entryMinSecondsLeft: "45"
   maxEntrySpread: "0.03"
+  maxEntryPrice: "0.40"
   sourceMismatchBuffer: "0.00"
   modelProbShrink: "0.65"
   modelProbFloor: "0.12"
@@ -24,18 +25,24 @@ bot:
   maxAbsDrift: "0.004"
   minPositionShares: "6"
   entryConfirmationTicks: "2"
+  contrarianTailMaxPrice: "0.25"
+  contrarianMoveFilter: "0.0006"
+  cheapTailEdgeBonus: "0.05"
+  lateBarEdgeBonus: "0.04"
+  lateBarWindowSecs: "75"
   # Drift estimation coefficients (hand-tuned; backtest to refine)
   driftA1: "1.8"         # 30s momentum weight
   driftA2: "1.2"         # 60s momentum weight
   driftA3: "0.003"       # book imbalance weight
   driftA4: "0.8"         # distance-from-open weight
   # Position management
-  evalIntervalSecs: "5"      # signal re-evaluation frequency
+  evalIntervalSecs: "1"      # signal re-evaluation frequency
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
   orderReplaceGap: "0.02"    # cancel+replace sell if bid drifts by more than this
+  aggressiveExitSlippage: "0.02"
   # Misc
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
   polymarketRtdsWs: "wss://ws-live-data.polymarket.com"

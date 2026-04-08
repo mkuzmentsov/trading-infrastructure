@@ -29,11 +29,12 @@ from clob import (
     place_limit_sell,
 )
 from config import (
+    AGGRESSIVE_EXIT_SLIPPAGE,
     BET_SIZE_MIN,
     DRY_RUN,
-    ENTRY_ORDER_TIMEOUT_SECS,
-    ENTRY_MIN_SECONDS_LEFT,
     ENTRY_CONFIRMATION_TICKS,
+    ENTRY_MIN_SECONDS_LEFT,
+    ENTRY_ORDER_TIMEOUT_SECS,
     ENTRY_REPLACE_GAP,
     ENTRY_REPLACE_MIN_AGE_SECS,
     EVAL_INTERVAL_SECS,
@@ -62,6 +63,35 @@ _balance_cache: list = [0.0, 0.0]
 _BALANCE_TTL = 30.0
 _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
+
+
+def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: int) -> None:
+    log.info(
+        "Signal eval [%s] inputs: cash=%.2f secs_left=%d open=%.2f current=%.2f ret30=%.6f ret60=%.6f sigma5m=%.6f up_bid=%.3f up_ask=%.3f down_bid=%.3f down_ask=%.3f",
+        context,
+        cash_amount,
+        seconds_left,
+        btc_state.bar_open,
+        btc_state.current_price,
+        btc_state.ret_since(30),
+        btc_state.ret_since(60),
+        btc_state.sigma_5m(),
+        pm_state.up_bid,
+        pm_state.up_ask,
+        pm_state.down_bid,
+        pm_state.down_ask,
+    )
+    log.info(
+        "Signal eval [%s] result: action=%s price=%s size=%d p_up=%.4f edge=%.4f reason=%s debug=%s",
+        context,
+        signal.action,
+        f"{signal.price:.4f}" if signal.price is not None else "-",
+        signal.size,
+        signal.p_up,
+        signal.edge,
+        signal.reason,
+        signal.debug,
+    )
 
 
 async def _init_clob() -> object:
@@ -115,12 +145,10 @@ def _current_bid_for_position() -> float:
 def _feed_staleness() -> dict:
     now = time.time()
     price_age = now - btc_state.last_updated_at if btc_state.last_updated_at > 0 else float("inf")
-    depth_age = now - btc_state.last_depth_update_ts if btc_state.last_depth_update_ts > 0 else float("inf")
     up_age = now - pm_state.last_up_book_ts if pm_state.last_up_book_ts > 0 else float("inf")
     down_age = now - pm_state.last_down_book_ts if pm_state.last_down_book_ts > 0 else float("inf")
     return {
         "price_age": price_age,
-        "depth_age": depth_age,
         "pm_up_age": up_age,
         "pm_down_age": down_age,
     }
@@ -130,7 +158,6 @@ def _feeds_are_fresh() -> bool:
     ages = _feed_staleness()
     return (
         ages["price_age"] <= FEED_STALE_SECS
-        and ages["depth_age"] <= FEED_STALE_SECS
         and ages["pm_up_age"] <= FEED_STALE_SECS
         and ages["pm_down_age"] <= FEED_STALE_SECS
     )
@@ -152,7 +179,7 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
     held_count = len(pos_store.held_positions)
     prefix = f"{reason}  " if reason else ""
     log.info(
-        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s depth_age=%.1fs pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d depth_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
+        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
         prefix,
         _feeds_are_fresh(),
         btc_state.price_source,
@@ -160,7 +187,6 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         btc_state.bar_open,
         ages["price_age"],
         btc_state.last_round_id,
-        ages["depth_age"],
         pm_state.ready,
         pm_state.up_bid,
         pm_state.up_ask,
@@ -176,7 +202,6 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         btc_state.last_rtds_message_kind,
         btc_state.last_rtds_error or "-",
         btc_state.price_updates,
-        btc_state.depth_updates,
         pm_state.ws_session_id,
         pm_state.book_events,
         now - pm_state.last_ws_message_at if pm_state.last_ws_message_at > 0 else -1,
@@ -311,6 +336,12 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
     pos_store.clear_pending_buy()
 
 
+def _exit_target_price(current_bid: float, reason: str) -> float:
+    if reason in {"stop_loss", "signal_flip"}:
+        return max(MIN_EXIT_BID, current_bid - AGGRESSIVE_EXIT_SLIPPAGE)
+    return max(current_bid, MIN_EXIT_BID)
+
+
 async def _manage_position(clob) -> None:
     pos = pos_store.position
     if pos is None:
@@ -382,7 +413,9 @@ async def _manage_position(clob) -> None:
 
     current_bid = _current_bid_for_position()
 
-    if current_bid >= pos.entry_price + TAKE_PROFIT:
+    if current_bid >= pos.entry_price + TAKE_PROFIT and not (
+        pos.sell_order_id and pos.exit_reason == "take_profit"
+    ):
         log.info(
             "TAKE_PROFIT  bid=%.4f  entry=%.4f  gain=%.4f",
             current_bid, pos.entry_price, current_bid - pos.entry_price,
@@ -390,7 +423,9 @@ async def _manage_position(clob) -> None:
         await _exit_position(clob, pos, current_bid, reason="take_profit")
         return
 
-    if current_bid <= pos.entry_price - STOP_LOSS:
+    if current_bid <= pos.entry_price - STOP_LOSS and not (
+        pos.sell_order_id and pos.exit_reason == "stop_loss"
+    ):
         log.info(
             "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f",
             current_bid, pos.entry_price, pos.entry_price - current_bid,
@@ -406,14 +441,16 @@ async def _manage_position(clob) -> None:
         current_price=btc_state.current_price,
         ret_30s=btc_state.ret_since(30),
         ret_60s=btc_state.ret_since(60),
-        bid_vol_top=btc_state.bid_vol_top,
-        ask_vol_top=btc_state.ask_vol_top,
+        bid_vol_top=0.0,
+        ask_vol_top=0.0,
         sigma_5m=btc_state.sigma_5m(),
         up_bid=pm_state.up_bid,
         up_ask=pm_state.up_ask,
         down_bid=pm_state.down_bid,
         down_ask=pm_state.down_ask,
+        require_budget=False,
     )
+    _log_signal_debug("manage_position", signal, cash_amount=0, seconds_left=seconds_left)
     opposite_action = "BUY_DOWN" if pos.direction == "UP" else "BUY_UP"
     if signal.action == opposite_action and signal.edge >= SIGNAL_EXIT_EDGE:
         log.info("SIGNAL_FLIP  holding=%s  new=%s  edge=%.4f", pos.direction, signal.action, signal.edge)
@@ -421,13 +458,28 @@ async def _manage_position(clob) -> None:
         return
 
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
-        new_price = max(current_bid, MIN_EXIT_BID)
-        log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
-        if not DRY_RUN:
-            await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-        pos_store.clear_sell_order()
-        await _post_sell_order(clob, pos, new_price)
-        return
+        if pos.exit_reason == "take_profit":
+            if current_bid > pos.sell_price:
+                new_price = max(current_bid, MIN_EXIT_BID)
+                log.info(
+                    "Take-profit improved  old=%.4f  bid=%.4f — replace at %.4f",
+                    pos.sell_price,
+                    current_bid,
+                    new_price,
+                )
+                if not DRY_RUN:
+                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+                pos_store.clear_sell_order()
+                await _post_sell_order(clob, pos, new_price, reason="take_profit")
+                return
+        else:
+            new_price = _exit_target_price(current_bid, pos.exit_reason or "")
+            log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
+            if not DRY_RUN:
+                await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+            pos_store.clear_sell_order()
+            await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason)
+            return
 
     log.debug(
         "Holding position  dir=%s  entry=%.4f  bid=%.4f  secs_left=%d",
@@ -439,7 +491,7 @@ async def _exit_position(clob, pos, current_bid: float, reason: str) -> None:
     if pos.sell_order_id and not DRY_RUN:
         await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
         pos_store.clear_sell_order()
-    sell_price = max(current_bid, MIN_EXIT_BID)
+    sell_price = _exit_target_price(current_bid, reason)
     await _post_sell_order(clob, pos, sell_price, reason=reason)
 
 
@@ -447,7 +499,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
     label = f" ({reason})" if reason else ""
     if DRY_RUN:
         log.info("DRY_RUN — would sell  dir=%s  shares=%d  price=%.4f%s", pos.direction, pos.shares, price, label)
-        pos_store.attach_sell_order("dry-run-sell-id", price)
+        pos_store.attach_sell_order("dry-run-sell-id", price, reason)
         return
 
     shares = pos.shares
@@ -489,7 +541,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
 
     if order_id:
         log.info("Limit sell posted  order=%s  price=%.4f%s", order_id, price, label)
-        pos_store.attach_sell_order(order_id, price)
+        pos_store.attach_sell_order(order_id, price, reason)
     else:
         log.warning("Limit sell failed — marking hold-to-expiry%s", label)
         if pos_store.position:
@@ -516,14 +568,15 @@ async def _try_enter(clob, balance: float) -> None:
         current_price=btc_state.current_price,
         ret_30s=btc_state.ret_since(30),
         ret_60s=btc_state.ret_since(60),
-        bid_vol_top=btc_state.bid_vol_top,
-        ask_vol_top=btc_state.ask_vol_top,
+        bid_vol_top=0.0,
+        ask_vol_top=0.0,
         sigma_5m=btc_state.sigma_5m(),
         up_bid=pm_state.up_bid,
         up_ask=pm_state.up_ask,
         down_bid=pm_state.down_bid,
         down_ask=pm_state.down_ask,
     )
+    _log_signal_debug("try_enter", signal, cash_amount=balance, seconds_left=seconds_left)
 
     log.info("Signal: %s  p_up=%.3f  edge=%.4f  %s", signal.action, signal.p_up, signal.edge, signal.reason)
 
@@ -533,6 +586,8 @@ async def _try_enter(clob, balance: float) -> None:
         _entry_confirmation["count"] = 0
         _entry_confirmation["edge"] = 0.0
         return
+
+    direction = "UP" if signal.action == "BUY_UP" else "DOWN"
 
     if (
         _entry_confirmation["condition_id"] == pm_state.condition_id
@@ -556,7 +611,6 @@ async def _try_enter(clob, balance: float) -> None:
         )
         return
 
-    direction = "UP" if signal.action == "BUY_UP" else "DOWN"
     token_id = pm_state.token_id_up if direction == "UP" else pm_state.token_id_down
     spend = round(signal.size * signal.price, 2)
 
@@ -603,7 +657,6 @@ async def _try_enter(clob, balance: float) -> None:
             shares=signal.size,
             price=signal.price,
         )
-        _entry_confirmation["count"] = 0
         tg(
             f"📋 <b>BTC 5m Order placed</b>\n"
             f"Market: {pm_state.question[:80]}\n"
@@ -612,6 +665,7 @@ async def _try_enter(clob, balance: float) -> None:
             f"Shares: {signal.size}  Spend: ${spend:.2f}\n"
             f"Order: {order_id}"
         )
+        _entry_confirmation["count"] = 0
         _balance_cache[1] = 0.0
 
 

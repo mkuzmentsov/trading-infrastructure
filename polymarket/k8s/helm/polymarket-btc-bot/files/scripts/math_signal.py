@@ -4,14 +4,6 @@ Mathematical signal generation — no AI/ML.
 Models the remaining BTC move as a normal log-return:
 
   log(S_T) ~ Normal(log(S) + μ_rem, σ_rem²)
-
-So:
-
-  p_up = Φ((log(S) + μ_rem - log(O)) / σ_rem)
-
-Edge is computed conservatively: model probability minus current ask minus a
-round-trip trading cost estimate. The probability is shrunk back toward 50% to
-avoid overconfidence from noisy microstructure inputs.
 """
 from __future__ import annotations
 
@@ -22,6 +14,9 @@ from typing import Optional
 from config import (
     BET_SIZE_MAX,
     BET_SIZE_MIN,
+    CHEAP_TAIL_EDGE_BONUS,
+    CONTRARIAN_MOVE_FILTER,
+    CONTRARIAN_TAIL_MAX_PRICE,
     COST_BUFFER,
     DRIFT_A1,
     DRIFT_A2,
@@ -30,9 +25,11 @@ from config import (
     EARLY_BAR_MIN_CONFIDENCE,
     EARLY_BAR_RAMP_SECS,
     KELLY_SCALE,
+    LATE_BAR_EDGE_BONUS,
+    LATE_BAR_WINDOW_SECS,
     MAX_ABS_DRIFT,
-    MAX_ENTRY_SPREAD,
     MAX_ENTRY_PRICE,
+    MAX_ENTRY_SPREAD,
     MIN_EDGE,
     MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
@@ -113,8 +110,6 @@ def kelly_fraction(p: float, c: float) -> float:
 
 def _round_trip_cost(bid: float, ask: float) -> float:
     spread = max(0.0, ask - bid)
-    # Conservative all-in cost proxy: entry spread + some exit concession +
-    # an optional buffer for any residual source/latency mismatch.
     return max(COST_BUFFER, spread + max(0.01, spread / 2.0) + SOURCE_MISMATCH_BUFFER)
 
 
@@ -143,14 +138,15 @@ def generate_signal(
     up_ask: float,
     down_bid: float,
     down_ask: float,
+    require_budget: bool = True,
 ) -> Signal:
-    def _no_trade(reason: str, **kw) -> Signal:
+    def _no_trade(reason: str, p_up_value: float = 0.5, edge_value: float = 0.0, **kw) -> Signal:
         return Signal(
             action="NO_TRADE",
             price=None,
             size=0,
-            p_up=0.5,
-            edge=0.0,
+            p_up=round(p_up_value, 4),
+            edge=round(edge_value, 4),
             reason=reason,
             debug=kw,
         )
@@ -221,19 +217,82 @@ def generate_signal(
             reason = f"UP token not tradeable (ask={up_ask:.3f}, spread={spread_up:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
         elif net_down >= MIN_EDGE and not down_tradeable:
             reason = f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
-        return _no_trade(reason, **dbg)
+        return _no_trade(reason, p_up_value=p_up, edge_value=max(net_up, net_down), **dbg)
+
+    if (
+        action == "BUY_DOWN"
+        and price <= CONTRARIAN_TAIL_MAX_PRICE
+        and distance >= CONTRARIAN_MOVE_FILTER
+        and ret_30s > 0
+        and ret_60s > 0
+    ):
+        return _no_trade(
+            "Reject contrarian DOWN tail during active up-move",
+            p_up_value=p_up,
+            edge_value=edge,
+            selected_action=action,
+            selected_price=price,
+            **dbg,
+        )
+
+    if (
+        action == "BUY_UP"
+        and price <= CONTRARIAN_TAIL_MAX_PRICE
+        and distance <= -CONTRARIAN_MOVE_FILTER
+        and ret_30s < 0
+        and ret_60s < 0
+    ):
+        return _no_trade(
+            "Reject contrarian UP tail during active down-move",
+            p_up_value=p_up,
+            edge_value=edge,
+            selected_action=action,
+            selected_price=price,
+            **dbg,
+        )
+
+    required_edge = MIN_EDGE
+    if price <= CONTRARIAN_TAIL_MAX_PRICE:
+        required_edge += CHEAP_TAIL_EDGE_BONUS
+    if seconds_left <= LATE_BAR_WINDOW_SECS:
+        late_progress = 1.0 - max(seconds_left, 0) / max(LATE_BAR_WINDOW_SECS, 1)
+        required_edge += LATE_BAR_EDGE_BONUS * late_progress
+    dbg["required_edge"] = round(required_edge, 4)
+
+    if edge < required_edge:
+        return _no_trade(
+            f"Edge {edge:.4f} below dynamic threshold {required_edge:.4f}",
+            p_up_value=p_up,
+            edge_value=edge,
+            selected_action=action,
+            selected_price=price,
+            **dbg,
+        )
+
+    if not require_budget:
+        return Signal(
+            action=action,
+            price=round(price, 4),
+            size=0,
+            p_up=round(p_up, 4),
+            edge=round(edge, 4),
+            reason=f"fair={p:.3f}  mkt={price:.3f}  edge={edge:.4f}",
+            debug=dbg,
+        )
 
     kf = kelly_fraction(p, price)
     fraction = min(0.10, KELLY_SCALE * kf)
     budget = min(cash_amount * fraction, BET_SIZE_MAX)
 
     if budget < BET_SIZE_MIN:
-        return _no_trade("Budget below minimum", budget=round(budget, 4), **dbg)
+        return _no_trade("Budget below minimum", p_up_value=p_up, edge_value=edge, budget=round(budget, 4), **dbg)
 
     size = math.floor(budget / price)
     if size < MIN_POSITION_SHARES:
         return _no_trade(
             f"Fewer than {MIN_POSITION_SHARES} shares",
+            p_up_value=p_up,
+            edge_value=edge,
             size=size,
             budget=round(budget, 4),
             price=price,
@@ -242,7 +301,15 @@ def generate_signal(
 
     spend = size * price
     if spend < 1.0:
-        return _no_trade("Spend below $1 minimum", spend=round(spend, 4), size=size, price=price, **dbg)
+        return _no_trade(
+            "Spend below $1 minimum",
+            p_up_value=p_up,
+            edge_value=edge,
+            spend=round(spend, 4),
+            size=size,
+            price=price,
+            **dbg,
+        )
 
     return Signal(
         action=action,

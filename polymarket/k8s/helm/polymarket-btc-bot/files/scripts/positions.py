@@ -27,6 +27,7 @@ class Position:
     sell_order_id: Optional[str] = None
     sell_price: float = 0.0  # price we're offering
     hold_to_expiry: bool = False  # True when position is too small to sell via limit order
+    exit_reason: str = ""
 
 
 @dataclass
@@ -100,15 +101,17 @@ class PositionStore:
             self.held_positions.append(self.position)
             self.position = None
 
-    def attach_sell_order(self, order_id: str, price: float) -> None:
+    def attach_sell_order(self, order_id: str, price: float, reason: str = "") -> None:
         if self.position:
             self.position.sell_order_id = order_id
             self.position.sell_price = price
+            self.position.exit_reason = reason
 
     def clear_sell_order(self) -> None:
         if self.position:
             self.position.sell_order_id = None
             self.position.sell_price = 0.0
+            self.position.exit_reason = ""
 
 
 # Singleton shared across modules
