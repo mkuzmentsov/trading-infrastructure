@@ -34,3 +34,4 @@ ai/*.csv
 ai/inputs
 ai/outputs
 ai/hf-models
+/polymarket/k8s/helm/polymarket-btc-bot/update-log/
