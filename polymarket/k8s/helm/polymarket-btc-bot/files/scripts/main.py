@@ -34,15 +34,18 @@ from config import (
     BET_SIZE_MIN,
     DRY_RUN,
     ENTRY_CONFIRMATION_TICKS,
+    ENTRY_BOOK_MAX_TAKE_FRACTION,
     ENTRY_MIN_SECONDS_LEFT,
     ENTRY_ORDER_TIMEOUT_SECS,
     ENTRY_REPLACE_GAP,
     ENTRY_REPLACE_MIN_AGE_SECS,
+    EVAL_INTERVAL_MS,
     EVAL_INTERVAL_SECS,
     FEED_STALE_SECS,
     LOOP_INTERVAL,
     MIN_EDGE,
     MIN_EXIT_BID,
+    MIN_POSITION_SHARES,
     ORDER_REPLACE_GAP,
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
@@ -100,8 +103,12 @@ def _write_training_event(event_type: str, **payload) -> None:
         "bar_open": round(btc_state.bar_open, 4),
         "up_bid": round(pm_state.up_bid, 4),
         "up_ask": round(pm_state.up_ask, 4),
+        "up_bid_size": round(pm_state.up_bid_size, 4),
+        "up_ask_size": round(pm_state.up_ask_size, 4),
         "down_bid": round(pm_state.down_bid, 4),
         "down_ask": round(pm_state.down_ask, 4),
+        "down_bid_size": round(pm_state.down_bid_size, 4),
+        "down_ask_size": round(pm_state.down_ask_size, 4),
     }
     record.update(payload)
     _append_jsonl(TRAINING_EVENT_LOG_PATH, record, "Training event")
@@ -144,8 +151,12 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
             "ready": pm_state.ready,
             "up_bid": round(pm_state.up_bid, 4),
             "up_ask": round(pm_state.up_ask, 4),
+            "up_bid_size": round(pm_state.up_bid_size, 4),
+            "up_ask_size": round(pm_state.up_ask_size, 4),
             "down_bid": round(pm_state.down_bid, 4),
             "down_ask": round(pm_state.down_ask, 4),
+            "down_bid_size": round(pm_state.down_bid_size, 4),
+            "down_ask_size": round(pm_state.down_ask_size, 4),
             "last_up_book_ts": round(pm_state.last_up_book_ts, 3),
             "last_down_book_ts": round(pm_state.last_down_book_ts, 3),
             "book_events": pm_state.book_events,
@@ -266,6 +277,20 @@ def _current_bid_for_position() -> float:
     return pm_state.up_bid if pos.direction == "UP" else pm_state.down_bid
 
 
+def _entry_top_ask_size(direction: str) -> float:
+    return pm_state.up_ask_size if direction == "UP" else pm_state.down_ask_size
+
+
+def _depth_capped_entry_size(direction: str, requested_shares: int) -> int:
+    top_ask_size = _entry_top_ask_size(direction)
+    if top_ask_size <= 0 or requested_shares <= 0:
+        return requested_shares
+    max_by_top = int(math.floor(top_ask_size * ENTRY_BOOK_MAX_TAKE_FRACTION))
+    if max_by_top <= 0:
+        return 0
+    return min(requested_shares, max_by_top)
+
+
 def _feed_staleness() -> dict:
     now = time.time()
     price_age = now - btc_state.last_updated_at if btc_state.last_updated_at > 0 else float("inf")
@@ -303,7 +328,7 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
     held_count = len(pos_store.held_positions)
     prefix = f"{reason}  " if reason else ""
     log.info(
-        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s pm_ready=%s up=%.3f/%.3f age=%.1fs down=%.3f/%.3f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
+        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s pm_ready=%s up=%.3f/%.3f x %.1f age=%.1fs down=%.3f/%.3f x %.1f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
         prefix,
         _feeds_are_fresh(),
         btc_state.price_source,
@@ -314,9 +339,11 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         pm_state.ready,
         pm_state.up_bid,
         pm_state.up_ask,
+        pm_state.up_ask_size,
         ages["pm_up_age"],
         pm_state.down_bid,
         pm_state.down_ask,
+        pm_state.down_ask_size,
         ages["pm_down_age"],
         pos_desc,
         held_count,
@@ -616,8 +643,9 @@ async def _manage_position(clob) -> None:
         current_price=btc_state.current_price,
         ret_30s=btc_state.ret_since(30),
         ret_60s=btc_state.ret_since(60),
-        bid_vol_top=0.0,
-        ask_vol_top=0.0,
+        # Use one canonical outcome book for imbalance to avoid UP/DOWN cancellation.
+        bid_vol_top=pm_state.up_bid_size,
+        ask_vol_top=pm_state.up_ask_size,
         sigma_5m=btc_state.sigma_5m(),
         up_bid=pm_state.up_bid,
         up_ask=pm_state.up_ask,
@@ -673,6 +701,14 @@ async def _manage_position(clob) -> None:
                 return
         else:
             new_price = _exit_target_price(current_bid, pos.exit_reason or "")
+            if abs(new_price - pos.sell_price) < 1e-6:
+                log.debug(
+                    "Sell replace skipped  old=%.4f  bid=%.4f  computed=%.4f (no-op)",
+                    pos.sell_price,
+                    current_bid,
+                    new_price,
+                )
+                return
             log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
             if not DRY_RUN:
                 await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
@@ -801,8 +837,9 @@ async def _try_enter(clob, balance: float) -> None:
         current_price=btc_state.current_price,
         ret_30s=btc_state.ret_since(30),
         ret_60s=btc_state.ret_since(60),
-        bid_vol_top=0.0,
-        ask_vol_top=0.0,
+        # Use one canonical outcome book for imbalance to avoid UP/DOWN cancellation.
+        bid_vol_top=pm_state.up_bid_size,
+        ask_vol_top=pm_state.up_ask_size,
         sigma_5m=btc_state.sigma_5m(),
         up_bid=pm_state.up_bid,
         up_ask=pm_state.up_ask,
@@ -821,6 +858,33 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     direction = "UP" if signal.action == "BUY_UP" else "DOWN"
+    depth_capped_size = _depth_capped_entry_size(direction, signal.size)
+    if depth_capped_size < signal.size:
+        top_ask_size = _entry_top_ask_size(direction)
+        if depth_capped_size < MIN_POSITION_SHARES:
+            log.info(
+                "Entry blocked by top-book liquidity  dir=%s requested=%d top_ask=%.2f cap_fraction=%.2f capped=%d",
+                direction,
+                signal.size,
+                top_ask_size,
+                ENTRY_BOOK_MAX_TAKE_FRACTION,
+                depth_capped_size,
+            )
+            _entry_confirmation["condition_id"] = ""
+            _entry_confirmation["action"] = ""
+            _entry_confirmation["count"] = 0
+            _entry_confirmation["edge"] = 0.0
+            return
+        log.info(
+            "Entry size capped by top-book liquidity  dir=%s requested=%d top_ask=%.2f cap_fraction=%.2f capped=%d",
+            direction,
+            signal.size,
+            top_ask_size,
+            ENTRY_BOOK_MAX_TAKE_FRACTION,
+            depth_capped_size,
+        )
+        signal.size = depth_capped_size
+
     reentry_floor = _stop_loss_reentry_guard.get((pm_state.condition_id, direction))
     if reentry_floor is not None and signal.edge < reentry_floor + REENTRY_EDGE_PENALTY:
         log.info(
@@ -987,7 +1051,7 @@ async def _tick(clob) -> None:
 async def main() -> None:
     log.info("=" * 60)
     log.info("Polymarket BTC Bot (patched) starting")
-    log.info("  DRY_RUN=%s  MIN_EDGE=%.3f  EVAL_INTERVAL=%ds", DRY_RUN, MIN_EDGE, EVAL_INTERVAL_SECS)
+    log.info("  DRY_RUN=%s  MIN_EDGE=%.3f  EVAL_INTERVAL=%dms", DRY_RUN, MIN_EDGE, EVAL_INTERVAL_MS)
     log.info("  TP=%.3f  SL=%.3f  SIGNAL_EXIT=%.3f  REPLACE_GAP=%.3f", TAKE_PROFIT, STOP_LOSS, SIGNAL_EXIT_EDGE, ORDER_REPLACE_GAP)
     log.info("=" * 60)
 

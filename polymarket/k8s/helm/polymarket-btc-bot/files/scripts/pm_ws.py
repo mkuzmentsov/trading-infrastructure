@@ -35,6 +35,10 @@ class PMState:
         self.up_ask: float = 0.5
         self.down_bid: float = 0.5
         self.down_ask: float = 0.5
+        self.up_bid_size: float = 0.0
+        self.up_ask_size: float = 0.0
+        self.down_bid_size: float = 0.0
+        self.down_ask_size: float = 0.0
         self.taker_fee: int = 0
         self.market_start_ts: int = 0
         self.market_end_ts: int = 0
@@ -50,11 +54,16 @@ class PMState:
         self.last_ws_connect_at: float = 0.0
         self.last_ws_message_at: float = 0.0
         self.last_ws_message_kind: str = "never"
+        self.last_tick_size_change_at: float = 0.0
 
     def reset_live_state(self) -> None:
         self.ready = False
         self.up_live = False
         self.down_live = False
+        self.up_bid_size = 0.0
+        self.up_ask_size = 0.0
+        self.down_bid_size = 0.0
+        self.down_ask_size = 0.0
         self.last_up_book_ts = 0.0
         self.last_down_book_ts = 0.0
         self.book_events = 0
@@ -100,17 +109,59 @@ def _apply_market(market: dict) -> list[str] | None:
     # Seed prices from REST, but do not mark the book as live until WS updates arrive.
     pm_state.up_bid = pm_state.up_ask = float(up.get("price", 0.5))
     pm_state.down_bid = pm_state.down_ask = float(down.get("price", 0.5))
+    pm_state.up_bid_size = 0.0
+    pm_state.up_ask_size = 0.0
+    pm_state.down_bid_size = 0.0
+    pm_state.down_ask_size = 0.0
     return [pm_state.token_id_up, pm_state.token_id_down]
 
 
-def _handle_book(msg: dict) -> None:
-    asset_id = msg.get("asset_id", "")
-    bids = msg.get("bids", [])
-    asks = msg.get("asks", [])
-    now = time.time()
+def _coerce_float(x: object, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
 
-    best_bid = max((float(b["price"]) for b in bids), default=0.0)
-    best_ask = min((float(a["price"]) for a in asks), default=1.0)
+
+def _compute_book_top(
+    bids: list[dict],
+    asks: list[dict],
+) -> tuple[float, float, float, float]:
+    best_bid = 0.0
+    best_bid_size = 0.0
+    best_ask = 1.0
+    best_ask_size = 0.0
+
+    for b in bids:
+        price = _coerce_float(b.get("price"), 0.0)
+        size = max(0.0, _coerce_float(b.get("size"), 0.0))
+        if price > best_bid:
+            best_bid = price
+            best_bid_size = size
+        elif price == best_bid and best_bid > 0:
+            best_bid_size += size
+
+    for a in asks:
+        price = _coerce_float(a.get("price"), 1.0)
+        size = max(0.0, _coerce_float(a.get("size"), 0.0))
+        if 0 < price < best_ask:
+            best_ask = price
+            best_ask_size = size
+        elif price == best_ask and 0 < best_ask < 1:
+            best_ask_size += size
+
+    return best_bid, best_bid_size, best_ask, best_ask_size
+
+
+def _apply_top_of_book(
+    asset_id: str,
+    best_bid: float,
+    best_bid_size: float,
+    best_ask: float,
+    best_ask_size: float,
+    event_type: str,
+) -> None:
+    now = time.time()
     has_bid = best_bid > 0
     has_ask = 0 < best_ask <= 1
     if has_bid and has_ask and best_bid > best_ask:
@@ -132,17 +183,24 @@ def _handle_book(msg: dict) -> None:
     if asset_id == pm_state.token_id_up:
         pm_state.up_bid = best_bid if has_bid else 0.0
         pm_state.up_ask = best_ask if has_ask else 1.0
+        pm_state.up_bid_size = best_bid_size if has_bid else 0.0
+        pm_state.up_ask_size = best_ask_size if has_ask else 0.0
         pm_state.up_live = book_live
         if quote_seen:
             pm_state.last_up_book_ts = now
     elif asset_id == pm_state.token_id_down:
         pm_state.down_bid = best_bid if has_bid else 0.0
         pm_state.down_ask = best_ask if has_ask else 1.0
+        pm_state.down_bid_size = best_bid_size if has_bid else 0.0
+        pm_state.down_ask_size = best_ask_size if has_ask else 0.0
         pm_state.down_live = book_live
         if quote_seen:
             pm_state.last_down_book_ts = now
+    else:
+        return
 
     pm_state.book_events += 1
+    pm_state.last_ws_message_kind = f"{event_type}:{asset_id[:12]}"
 
     pm_state.ready = (
         pm_state.up_live
@@ -152,6 +210,57 @@ def _handle_book(msg: dict) -> None:
         and 0 < pm_state.up_ask < 1
         and 0 < pm_state.down_ask < 1
     )
+
+
+def _current_sizes_for_asset(asset_id: str) -> tuple[float, float]:
+    if asset_id == pm_state.token_id_up:
+        return pm_state.up_bid_size, pm_state.up_ask_size
+    if asset_id == pm_state.token_id_down:
+        return pm_state.down_bid_size, pm_state.down_ask_size
+    return 0.0, 0.0
+
+
+def _handle_book(msg: dict) -> None:
+    asset_id = msg.get("asset_id", "")
+    bids = msg.get("bids", [])
+    asks = msg.get("asks", [])
+    best_bid, best_bid_size, best_ask, best_ask_size = _compute_book_top(bids, asks)
+    _apply_top_of_book(asset_id, best_bid, best_bid_size, best_ask, best_ask_size, "book")
+
+
+def _handle_best_bid_ask(msg: dict) -> None:
+    asset_id = msg.get("asset_id", "")
+    best_bid = _coerce_float(msg.get("best_bid"), 0.0)
+    best_ask = _coerce_float(msg.get("best_ask"), 1.0)
+    # best_bid_ask does not include top-level size: keep last known sizes.
+    cur_bid_size, cur_ask_size = _current_sizes_for_asset(asset_id)
+    _apply_top_of_book(asset_id, best_bid, cur_bid_size, best_ask, cur_ask_size, "best_bid_ask")
+
+
+def _handle_price_change(msg: dict) -> None:
+    changes = msg.get("price_changes", [])
+    if not isinstance(changes, list):
+        return
+    for ch in changes:
+        if not isinstance(ch, dict):
+            continue
+        asset_id = ch.get("asset_id", "")
+        best_bid = _coerce_float(ch.get("best_bid"), 0.0)
+        best_ask = _coerce_float(ch.get("best_ask"), 1.0)
+        size = max(0.0, _coerce_float(ch.get("size"), 0.0))
+        side = (ch.get("side") or "").upper()
+        cur_bid_size, cur_ask_size = _current_sizes_for_asset(asset_id)
+        bid_size = cur_bid_size
+        ask_size = cur_ask_size
+        if side == "BUY" and best_bid > 0:
+            bid_size = size
+        elif side == "SELL" and 0 < best_ask <= 1:
+            ask_size = size
+        _apply_top_of_book(asset_id, best_bid, bid_size, best_ask, ask_size, "price_change")
+
+
+async def _ws_send_ping(ws) -> None:
+    await ws.send("PING")
 
 
 def refresh_pm_quotes_from_rest(reason: str = "") -> bool:
@@ -199,16 +308,18 @@ def _log_book_heartbeat(force: bool = False) -> None:
     up_age = now - pm_state.last_up_book_ts if pm_state.last_up_book_ts > 0 else -1
     down_age = now - pm_state.last_down_book_ts if pm_state.last_down_book_ts > 0 else -1
     log.info(
-        "PM WS heartbeat  session=%d market=%s  ready=%s  events=%d  up=%.3f/%.3f age=%.1fs  down=%.3f/%.3f age=%.1fs msg_age=%.1fs",
+        "PM WS heartbeat  session=%d market=%s  ready=%s  events=%d  up=%.3f/%.3f x %.1f age=%.1fs  down=%.3f/%.3f x %.1f age=%.1fs msg_age=%.1fs",
         pm_state.ws_session_id,
         pm_state.question[:50],
         pm_state.ready,
         pm_state.book_events,
         pm_state.up_bid,
         pm_state.up_ask,
+        pm_state.up_ask_size,
         up_age,
         pm_state.down_bid,
         pm_state.down_ask,
+        pm_state.down_ask_size,
         down_age,
         now - pm_state.last_ws_message_at if pm_state.last_ws_message_at > 0 else -1,
     )
@@ -241,41 +352,65 @@ async def run_pm_ws() -> None:
                     pm_state.ws_session_id,
                     token_ids,
                 )
-                await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
+                await ws.send(json.dumps({"type": "market", "assets_ids": token_ids, "custom_feature_enabled": True}))
                 log.info("Polymarket WS connected  session=%d", pm_state.ws_session_id)
                 backoff = 1
 
                 last_refresh = asyncio.get_event_loop().time()
+                last_ping = asyncio.get_event_loop().time()
 
-                async for raw in ws:
-                    pm_state.last_ws_message_at = time.time()
+                while True:
+                    now = asyncio.get_event_loop().time()
+                    if now - last_ping >= 10:
+                        await _ws_send_ping(ws)
+                        last_ping = now
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        raw = ""
+                    pm_state.last_ws_message_at = time.time() if raw else pm_state.last_ws_message_at
                     if not raw or not raw.strip():
                         pm_state.last_ws_message_kind = "empty"
                         _log_book_heartbeat()
-                        continue
-                    stripped = raw.strip()
-                    if stripped == "INVALID OPERATION":
-                        pm_state.last_ws_message_kind = "invalid_operation"
-                        log.warning("PM WS reported INVALID OPERATION — reconnecting  session=%d", pm_state.ws_session_id)
-                        break
-                    if stripped[0] not in "[{":
-                        pm_state.last_ws_message_kind = "control"
-                        log.debug("PM WS control message: %s", stripped)
-                        _log_book_heartbeat()
-                        continue
-                    log.debug("PM WS RAW  %s", raw.replace("\n", "\\n"))
-                    try:
-                        msgs = json.loads(raw)
-                        if not isinstance(msgs, list):
-                            msgs = [msgs]
-                        for msg in msgs:
-                            if msg.get("event_type") == "book":
-                                _handle_book(msg)
-                                pm_state.last_ws_message_kind = f"book:{msg.get('asset_id', '')[:12]}"
-                        _log_book_heartbeat()
-                    except Exception as exc:
-                        snippet = raw[:200].replace("\n", "\\n")
-                        log.error("PM WS processing error: %s  raw=%s", exc, snippet)
+                    else:
+                        stripped = raw.strip()
+                        if stripped == "PONG":
+                            pm_state.last_ws_message_kind = "pong"
+                            _log_book_heartbeat()
+                        elif stripped == "INVALID OPERATION":
+                            pm_state.last_ws_message_kind = "invalid_operation"
+                            log.warning("PM WS reported INVALID OPERATION — reconnecting  session=%d", pm_state.ws_session_id)
+                            break
+                        elif stripped[0] not in "[{":
+                            pm_state.last_ws_message_kind = "control"
+                            log.debug("PM WS control message: %s", stripped)
+                            _log_book_heartbeat()
+                        else:
+                            log.debug("PM WS RAW  %s", raw.replace("\n", "\\n"))
+                            try:
+                                msgs = json.loads(raw)
+                                if not isinstance(msgs, list):
+                                    msgs = [msgs]
+                                for msg in msgs:
+                                    event_type = msg.get("event_type")
+                                    if event_type == "book":
+                                        _handle_book(msg)
+                                    elif event_type == "price_change":
+                                        _handle_price_change(msg)
+                                    elif event_type == "best_bid_ask":
+                                        _handle_best_bid_ask(msg)
+                                    elif event_type == "tick_size_change":
+                                        pm_state.last_tick_size_change_at = time.time()
+                                        log.info(
+                                            "PM WS tick_size_change  asset=%s old=%s new=%s",
+                                            msg.get("asset_id", "")[:16],
+                                            msg.get("old_tick_size"),
+                                            msg.get("new_tick_size"),
+                                        )
+                                _log_book_heartbeat()
+                            except Exception as exc:
+                                snippet = raw[:200].replace("\n", "\\n")
+                                log.error("PM WS processing error: %s  raw=%s", exc, snippet)
 
                     now = asyncio.get_event_loop().time()
                     if now - last_refresh >= MARKET_REFRESH_SECS:
@@ -286,10 +421,23 @@ async def run_pm_ws() -> None:
                                 new_ids = _apply_market(fresh)
                                 await btc_state.set_market_window(pm_state.market_start_ts, pm_state.market_end_ts)
                                 if new_ids and set(new_ids) != set(token_ids):
-                                    await ws.send(json.dumps({"type": "market", "assets_ids": new_ids}))
+                                    to_unsubscribe = [asset for asset in token_ids if asset not in new_ids]
+                                    to_subscribe = [asset for asset in new_ids if asset not in token_ids]
+                                    if to_unsubscribe:
+                                        await ws.send(json.dumps({"assets_ids": to_unsubscribe, "operation": "unsubscribe"}))
+                                    if to_subscribe:
+                                        await ws.send(
+                                            json.dumps(
+                                                {
+                                                    "assets_ids": to_subscribe,
+                                                    "operation": "subscribe",
+                                                    "custom_feature_enabled": True,
+                                                }
+                                            )
+                                        )
                                     token_ids = new_ids
                                     log.info(
-                                        "PM WS: subscribed to new market  session=%d market=%s token_ids=%s",
+                                        "PM WS: switched market  session=%d market=%s token_ids=%s",
                                         pm_state.ws_session_id,
                                         pm_state.question[:70],
                                         token_ids,

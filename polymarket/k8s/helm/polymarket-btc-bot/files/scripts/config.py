@@ -54,6 +54,7 @@ EARLY_BAR_RAMP_SECS = int(os.getenv("EARLY_BAR_RAMP_SECS", "90"))
 ENTRY_ORDER_TIMEOUT_SECS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECS", "18"))
 ENTRY_REPLACE_MIN_AGE_SECS = int(os.getenv("ENTRY_REPLACE_MIN_AGE_SECS", "6"))
 ENTRY_REPLACE_GAP = float(os.getenv("ENTRY_REPLACE_GAP", "0.02"))
+ENTRY_BOOK_MAX_TAKE_FRACTION = float(os.getenv("ENTRY_BOOK_MAX_TAKE_FRACTION", "0.35"))
 MAX_ABS_DRIFT = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
 ENTRY_CONFIRMATION_TICKS = int(os.getenv("ENTRY_CONFIRMATION_TICKS", "2"))
 CONTRARIAN_TAIL_MAX_PRICE = float(os.getenv("CONTRARIAN_TAIL_MAX_PRICE", "0.25"))
@@ -67,7 +68,8 @@ ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT = int(os.getenv("ULTRA_CHEAP_TAIL_MIN_SECONDS_
 REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 
 # ── Position management ───────────────────────────────────────────────────────
-EVAL_INTERVAL_SECS = int(os.getenv("EVAL_INTERVAL_SECS", "5"))
+EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
+EVAL_INTERVAL_SECS = EVAL_INTERVAL_MS / 1000.0
 TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.15"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.08"))
 SIGNAL_EXIT_EDGE = float(os.getenv("SIGNAL_EXIT_EDGE", "0.05"))

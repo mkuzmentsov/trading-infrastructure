@@ -1,0 +1,11 @@
+# Keep deployment package small; logs/artifacts must not be shipped in chart.
+update-log/
+
+# Local artifacts
+__pycache__/
+files/scripts/__pycache__/
+*.pyc
+.DS_Store
+
+# Optional local notes
+ANALYSIS_WORKFLOW.md

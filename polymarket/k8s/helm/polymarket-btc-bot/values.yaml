@@ -36,7 +36,7 @@ bot:
   driftA3: "0.003"       # book imbalance weight
   driftA4: "0.8"         # distance-from-open weight
   # Position management
-  evalIntervalSecs: "1"      # signal re-evaluation frequency
+  evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
