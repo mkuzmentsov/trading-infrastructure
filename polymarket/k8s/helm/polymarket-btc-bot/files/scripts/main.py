@@ -81,6 +81,7 @@ _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
 _stop_loss_reentry_guard: dict[tuple[str, str], float] = {}
 _market_stop_loss_count: dict[str, int] = {}
+_sell_cancel_cooldown_until: float = 0.0
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -589,6 +590,9 @@ async def _manage_position(clob) -> None:
         return
 
     if pos.sell_order_id:
+        if time.time() < _sell_cancel_cooldown_until:
+            log.debug("Sell fill check in cooldown — skipping  order=%s", pos.sell_order_id)
+            return
         if not DRY_RUN:
             status, sold_shares, avg_price = await asyncio.to_thread(
                 get_order_fill_info, clob, pos.sell_order_id, pos.sell_price, pos.shares
@@ -795,6 +799,8 @@ async def _exit_position(clob, pos, current_bid: float, reason: str) -> None:
                 old_order_id,
                 pos.exit_reason or reason,
             )
+            global _sell_cancel_cooldown_until
+            _sell_cancel_cooldown_until = time.time() + 3.0
             return
     sell_price = _exit_target_price(current_bid, reason)
     await _post_sell_order(clob, pos, sell_price, reason=reason)
@@ -838,10 +844,32 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
     except Exception as exc:
         import re
 
-        m = re.search(r"balance[:\s]+(\d+)", str(exc))
+        exc_str = str(exc)
+
+        # If the error includes "sum of matched orders", those shares are already committed
+        # to an existing GTC order (prior partial-fill retry that succeeded but left a residual).
+        # Retrying would double-commit and always fail. Mark hold-to-expiry immediately.
+        if "sum of matched orders" in exc_str:
+            log.warning(
+                "Sell failed — shares already committed to matched order — hold-to-expiry%s", label
+            )
+            if pos_store.position:
+                pos_store.position.hold_to_expiry = True
+            return
+
+        m = re.search(r"balance[:\s]+(\d+)", exc_str)
         if m:
             actual = int(m.group(1)) // 1_000_000
             min_sell = 5
+            # Guard: if actual >= shares, no shares were freed by the partial fill — don't retry.
+            if actual >= shares:
+                log.warning(
+                    "Partial fill: actual (%d) >= expected (%d) — no shares freed, hold-to-expiry%s",
+                    actual, shares, label,
+                )
+                if pos_store.position:
+                    pos_store.position.hold_to_expiry = True
+                return
             if actual >= min_sell:
                 log.warning(
                     "Partial fill detected (expected=%d actual=%d) — retrying sell%s",
