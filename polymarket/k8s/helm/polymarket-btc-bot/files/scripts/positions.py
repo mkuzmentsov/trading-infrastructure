@@ -32,6 +32,7 @@ class Position:
     sell_price: float = 0.0  # price we're offering
     hold_to_expiry: bool = False  # True when position is too small to sell via limit order
     exit_reason: str = ""
+    sell_cancel_cooldown_until: float = 0.0  # don't re-check fill until after this timestamp
 
 
 @dataclass

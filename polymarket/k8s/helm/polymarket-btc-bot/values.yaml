@@ -15,7 +15,7 @@ bot:
   kellyScale: "0.5"      # half-Kelly sizing
   betSizeMin: "0.50"
   betSizeMax: "5.00"
-  entryMinSecondsLeft: "45"
+  entryMinSecondsLeft: "90"
   maxEntrySpread: "0.03"
   maxEntryPrice: "0.40"
   sourceMismatchBuffer: "0.00"
@@ -26,7 +26,7 @@ bot:
   minPositionShares: "6"
   entryConfirmationTicks: "2"
   contrarianTailMaxPrice: "0.25"
-  contrarianMoveFilter: "0.0006"
+  contrarianMoveFilter: "0.0015"
   cheapTailEdgeBonus: "0.05"
   lateBarEdgeBonus: "0.04"
   lateBarWindowSecs: "75"
@@ -39,10 +39,12 @@ bot:
   evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
-  stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking re-entry
+  stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
+  slArmDelaySecs: "45"       # seconds after entry before stop-loss arms (mid-price entries)
+  ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
-  orderReplaceGap: "0.02"    # cancel+replace sell if bid drifts by more than this
+  orderReplaceGap: "0.05"    # cancel+replace sell if bid drifts by more than this
   aggressiveExitSlippage: "0.02"
   # Misc
   polygonRpcUrl: "https://rpc.ankr.com/polygon"

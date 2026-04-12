@@ -50,7 +50,10 @@ from config import (
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
     REENTRY_EDGE_PENALTY,
+    SL_ARM_DELAY_SECS,
     STOP_LOSS_MARKET_LIMIT,
+    ULTRA_CHEAP_SL_DELAY_SECS,
+    ULTRA_CHEAP_TAIL_PRICE,
     TRAINING_EVENT_LOG_PATH,
     TRAINING_LOG_PATH,
     THESIS_EDGE_FRACTION,
@@ -651,10 +654,9 @@ async def _manage_position(clob) -> None:
     unrealized = current_bid - pos.entry_price
     seconds_left = _seconds_left_in_bar()
 
+    # Trailing stop: skip if ANY sell order is active — prevents cross-override with stop_loss.
     trailing_armed = pos.peak_bid >= pos.entry_price + TRAILING_ARM_GAIN
-    if trailing_armed and current_bid <= pos.peak_bid - TRAILING_STOP_GAP and not (
-        pos.sell_order_id and pos.exit_reason == "trailing_stop"
-    ):
+    if trailing_armed and current_bid <= pos.peak_bid - TRAILING_STOP_GAP and not pos.sell_order_id:
         log.info(
             "TRAILING_STOP  bid=%.4f  peak=%.4f  entry=%.4f  drawdown=%.4f",
             current_bid,
@@ -670,15 +672,30 @@ async def _manage_position(clob) -> None:
         stop_loss_gap *= 1.25
     elif seconds_left <= 90:
         stop_loss_gap *= 0.75
-    if current_bid <= pos.entry_price - stop_loss_gap and not (
-        pos.sell_order_id and pos.exit_reason == "stop_loss"
-    ):
-        log.info(
-            "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f",
-            current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap,
-        )
-        await _exit_position(clob, pos, current_bid, reason="stop_loss")
-        return
+
+    # Stop-loss arm delay: don't trigger SL for the first N seconds after entry.
+    # Ultra-cheap tail entries (low entry price) get a longer delay.
+    time_held = time.time() - pos.entry_time
+    is_ultra_cheap = pos.entry_price <= ULTRA_CHEAP_TAIL_PRICE
+    sl_delay = ULTRA_CHEAP_SL_DELAY_SECS if is_ultra_cheap else SL_ARM_DELAY_SECS
+    sl_armed = time_held >= sl_delay
+
+    # Stop-loss only overrides soft exits (take_profit, thesis_decay, signal_flip).
+    # It never overrides an already-active stop_loss or trailing_stop sell order.
+    _hard_exit_active = pos.sell_order_id and pos.exit_reason in {"stop_loss", "trailing_stop"}
+    if current_bid <= pos.entry_price - stop_loss_gap and not _hard_exit_active:
+        if not sl_armed:
+            log.debug(
+                "STOP_LOSS suppressed — hold time %.0fs < delay %ds  bid=%.4f  entry=%.4f",
+                time_held, sl_delay, current_bid, pos.entry_price,
+            )
+        else:
+            log.info(
+                "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f  held=%.0fs",
+                current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap, time_held,
+            )
+            await _exit_position(clob, pos, current_bid, reason="stop_loss")
+            return
 
     signal = generate_signal(
         cash_amount=0,
@@ -808,6 +825,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
         )
         if reason == "stop_loss":
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
+            _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
         pos_store.close()
         _balance_cache[1] = 0.0
         return
