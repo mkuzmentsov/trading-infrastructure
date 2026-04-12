@@ -50,6 +50,7 @@ from config import (
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
     REENTRY_EDGE_PENALTY,
+    STOP_LOSS_MARKET_LIMIT,
     TRAINING_EVENT_LOG_PATH,
     TRAINING_LOG_PATH,
     THESIS_EDGE_FRACTION,
@@ -76,6 +77,7 @@ _BALANCE_TTL = 30.0
 _last_feed_diag_at = 0.0
 _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge": 0.0}
 _stop_loss_reentry_guard: dict[tuple[str, str], float] = {}
+_market_stop_loss_count: dict[str, int] = {}
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -519,10 +521,30 @@ async def _manage_position(clob) -> None:
             )
             if status == "filled":
                 exit_price = avg_price or pos.sell_price
-                realized_shares = sold_shares or pos.shares
+                realized_shares = float(sold_shares or pos.shares)
+                remaining_balance = await asyncio.to_thread(fetch_token_balance, clob, pos.token_id)
+                if remaining_balance > 0:
+                    realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
+                    residual_whole = int(math.floor(remaining_balance))
+                    if residual_whole >= 5:
+                        log.warning(
+                            "Old-market sell marked filled but residual position remains  "
+                            "residual=%.6f (whole=%d) — keeping residual open",
+                            remaining_balance,
+                            residual_whole,
+                        )
+                        pos_store.position.shares = residual_whole
+                        pos_store.clear_sell_order()
+                        return
+                    if remaining_balance >= 0.01:
+                        log.info(
+                            "Old-market residual dust after sell fill  residual=%.6f — "
+                            "cannot place new sell below min size",
+                            remaining_balance,
+                        )
                 pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
                 log.info(
-                    "Old-market sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%d  pnl=$%.2f  order=%s",
+                    "Old-market sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%.4f  pnl=$%.2f  order=%s",
                     pos.direction, pos.entry_price, exit_price, realized_shares, pnl, pos.sell_order_id,
                 )
                 _write_training_event(
@@ -538,6 +560,7 @@ async def _manage_position(clob) -> None:
                 )
                 if pos.exit_reason == "stop_loss":
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
+                    _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -569,17 +592,37 @@ async def _manage_position(clob) -> None:
             )
             if status == "filled":
                 exit_price = avg_price or pos.sell_price
-                realized_shares = sold_shares or pos.shares
+                realized_shares = float(sold_shares or pos.shares)
+                remaining_balance = await asyncio.to_thread(fetch_token_balance, clob, pos.token_id)
+                if remaining_balance > 0:
+                    realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
+                    residual_whole = int(math.floor(remaining_balance))
+                    if residual_whole >= 5:
+                        log.warning(
+                            "Sell marked filled but residual position remains  "
+                            "residual=%.6f (whole=%d) — keeping residual open",
+                            remaining_balance,
+                            residual_whole,
+                        )
+                        pos_store.position.shares = residual_whole
+                        pos_store.clear_sell_order()
+                        return
+                    if remaining_balance >= 0.01:
+                        log.info(
+                            "Residual dust after sell fill  residual=%.6f — "
+                            "cannot place new sell below min size",
+                            remaining_balance,
+                        )
                 pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
                 log.info(
-                    "Sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%d  pnl=$%.2f  order=%s",
+                    "Sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%.4f  pnl=$%.2f  order=%s",
                     pos.direction, pos.entry_price, exit_price, realized_shares, pnl, pos.sell_order_id,
                 )
                 tg(
                     f"✅ <b>Position closed</b>\n"
                     f"Direction: {pos.direction}\n"
                     f"Entry: {pos.entry_price:.4f}  Exit: {exit_price:.4f}\n"
-                    f"Shares: {realized_shares}\n"
+                    f"Shares: {realized_shares:.4f}\n"
                     f"PnL: ${pnl:+.2f}"
                 )
                 _write_training_event(
@@ -595,6 +638,7 @@ async def _manage_position(clob) -> None:
                 )
                 if pos.exit_reason == "stop_loss":
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
+                    _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -724,8 +768,17 @@ async def _manage_position(clob) -> None:
 
 async def _exit_position(clob, pos, current_bid: float, reason: str) -> None:
     if pos.sell_order_id and not DRY_RUN:
-        await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-        pos_store.clear_sell_order()
+        old_order_id = pos.sell_order_id
+        canceled = await asyncio.to_thread(cancel_order, clob, old_order_id)
+        if canceled:
+            pos_store.clear_sell_order()
+        else:
+            log.info(
+                "Exit skip repost — existing sell remains active  order=%s  reason=%s",
+                old_order_id,
+                pos.exit_reason or reason,
+            )
+            return
     sell_price = _exit_target_price(current_bid, reason)
     await _post_sell_order(clob, pos, sell_price, reason=reason)
 
@@ -892,6 +945,20 @@ async def _try_enter(clob, balance: float) -> None:
             direction,
             signal.edge,
             reentry_floor + REENTRY_EDGE_PENALTY,
+        )
+        _entry_confirmation["condition_id"] = ""
+        _entry_confirmation["action"] = ""
+        _entry_confirmation["count"] = 0
+        _entry_confirmation["edge"] = 0.0
+        return
+
+    market_stop_losses = _market_stop_loss_count.get(pm_state.condition_id, 0)
+    if market_stop_losses >= STOP_LOSS_MARKET_LIMIT:
+        log.info(
+            "Signal blocked by market stop-loss cap  market=%s  count=%d  limit=%d",
+            pm_state.condition_id[:16],
+            market_stop_losses,
+            STOP_LOSS_MARKET_LIMIT,
         )
         _entry_confirmation["condition_id"] = ""
         _entry_confirmation["action"] = ""

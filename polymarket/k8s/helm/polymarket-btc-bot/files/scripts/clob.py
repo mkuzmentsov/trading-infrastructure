@@ -223,6 +223,15 @@ def cancel_order(clob, order_id: str) -> bool:
         log.info("CLOB cancel_order REQUEST  order_id=%s", order_id)
         resp = clob.cancel(order_id)
         log.info("CLOB cancel_order RESPONSE  %s", resp)
+        if isinstance(resp, dict):
+            canceled = resp.get("canceled") or []
+            not_canceled = resp.get("not_canceled") or {}
+            if order_id in canceled:
+                return True
+            if order_id in not_canceled:
+                return False
+            if canceled or not_canceled:
+                return False
         return True
     except Exception as exc:
         log.warning("Cancel order %s failed: %s", order_id, exc)

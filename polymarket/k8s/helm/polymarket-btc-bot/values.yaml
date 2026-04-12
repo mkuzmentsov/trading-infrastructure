@@ -39,6 +39,7 @@ bot:
   evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
+  stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking re-entry
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
   orderReplaceGap: "0.02"    # cancel+replace sell if bid drifts by more than this

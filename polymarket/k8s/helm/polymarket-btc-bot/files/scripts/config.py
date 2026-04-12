@@ -66,6 +66,7 @@ ULTRA_CHEAP_TAIL_PRICE = float(os.getenv("ULTRA_CHEAP_TAIL_PRICE", "0.10"))
 ULTRA_CHEAP_TAIL_EDGE = float(os.getenv("ULTRA_CHEAP_TAIL_EDGE", "0.20"))
 ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT = int(os.getenv("ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT", "90"))
 REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
+STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
 
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
