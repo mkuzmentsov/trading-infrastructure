@@ -33,10 +33,11 @@ bot:
   # Drift estimation coefficients (hand-tuned; backtest to refine)
   driftA1: "1.8"         # 30s momentum weight
   driftA2: "1.2"         # 60s momentum weight
-  driftA3: "0.003"       # book imbalance weight
+  driftA3: "0.0003"      # book imbalance weight (reduced 10x to prevent imbalance dominating signal)
   driftA4: "0.8"         # distance-from-open weight
   # Position management
   evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
+  entryMakerOffset: "0.02"  # post buy this far below ask (0 = taker-style, crosses spread immediately)
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
   stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry

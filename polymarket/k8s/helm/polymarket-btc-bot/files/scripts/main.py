@@ -31,10 +31,13 @@ from clob import (
 )
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
+    BET_SIZE_MAX,
     BET_SIZE_MIN,
+    DRIFT_A3,
     DRY_RUN,
     ENTRY_CONFIRMATION_TICKS,
     ENTRY_BOOK_MAX_TAKE_FRACTION,
+    ENTRY_MAKER_OFFSET,
     ENTRY_MIN_SECONDS_LEFT,
     ENTRY_ORDER_TIMEOUT_SECS,
     ENTRY_REPLACE_GAP,
@@ -82,6 +85,9 @@ _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge
 _stop_loss_reentry_guard: dict[tuple[str, str], float] = {}
 _market_stop_loss_count: dict[str, int] = {}
 _sell_cancel_cooldown_until: float = 0.0
+# Tracks how many times we've seen a "filled but residual" result for a given sell order.
+# On the first occurrence we wait for on-chain settlement; on the second we treat it as real.
+_sell_residual_retries: dict[str, int] = {}
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -462,7 +468,7 @@ async def _check_pending_buy(clob) -> None:
         if (
             current_ask > 0
             and age >= ENTRY_REPLACE_MIN_AGE_SECS
-            and abs(current_ask - pb.price) >= ENTRY_REPLACE_GAP
+            and abs((current_ask - ENTRY_MAKER_OFFSET) - pb.price) >= ENTRY_REPLACE_GAP
         ):
             log.info(
                 "Pending buy stale vs market — cancelling  order=%s dir=%s old=%.4f ask=%.4f age=%.0fs",
@@ -514,6 +520,7 @@ def _exit_target_price(current_bid: float, reason: str) -> float:
 
 
 async def _manage_position(clob) -> None:
+    global _sell_cancel_cooldown_until
     pos = pos_store.position
     if pos is None:
         return
@@ -531,12 +538,24 @@ async def _manage_position(clob) -> None:
                     realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
                     residual_whole = int(math.floor(remaining_balance))
                     if residual_whole >= 5:
+                        retry_key = pos.sell_order_id or ""
+                        retry_count = _sell_residual_retries.get(retry_key, 0)
+                        if retry_count < 1:
+                            _sell_residual_retries[retry_key] = retry_count + 1
+                            _sell_cancel_cooldown_until = time.time() + 12.0
+                            log.warning(
+                                "Old-market sell marked filled but residual may be settlement lag — "
+                                "cooldown 12s  residual=%.6f (whole=%d) order=%s",
+                                remaining_balance, residual_whole, retry_key,
+                            )
+                            return
                         log.warning(
-                            "Old-market sell marked filled but residual position remains  "
+                            "Old-market sell marked filled — confirmed residual after settlement wait  "
                             "residual=%.6f (whole=%d) — keeping residual open",
                             remaining_balance,
                             residual_whole,
                         )
+                        _sell_residual_retries.pop(retry_key, None)
                         pos_store.position.shares = residual_whole
                         pos_store.clear_sell_order()
                         return
@@ -605,12 +624,29 @@ async def _manage_position(clob) -> None:
                     realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
                     residual_whole = int(math.floor(remaining_balance))
                     if residual_whole >= 5:
+                        # May be settlement lag: the sell matched off-chain but the on-chain
+                        # balance hasn't updated yet. On the first occurrence, wait 12s and
+                        # re-check before treating it as a genuine residual.
+                        retry_key = pos.sell_order_id or ""
+                        retry_count = _sell_residual_retries.get(retry_key, 0)
+                        if retry_count < 1:
+                            _sell_residual_retries[retry_key] = retry_count + 1
+                            _sell_cancel_cooldown_until = time.time() + 12.0
+                            log.warning(
+                                "Sell marked filled but residual may be settlement lag — "
+                                "cooldown 12s before treating as genuine  "
+                                "residual=%.6f (whole=%d) order=%s",
+                                remaining_balance, residual_whole, retry_key,
+                            )
+                            return  # sell_order_id stays active; re-check after cooldown
+                        # Second check: residual is real — keep it open.
                         log.warning(
-                            "Sell marked filled but residual position remains  "
+                            "Sell marked filled — confirmed residual after settlement wait  "
                             "residual=%.6f (whole=%d) — keeping residual open",
                             remaining_balance,
                             residual_whole,
                         )
+                        _sell_residual_retries.pop(retry_key, None)
                         pos_store.position.shares = residual_whole
                         pos_store.clear_sell_order()
                         return
@@ -620,6 +656,7 @@ async def _manage_position(clob) -> None:
                             "cannot place new sell below min size",
                             remaining_balance,
                         )
+                _sell_residual_retries.pop(pos.sell_order_id or "", None)
                 pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
                 log.info(
                     "Sell FILLED  dir=%s  entry=%.4f  exit=%.4f  shares=%.4f  pnl=$%.2f  order=%s",
@@ -838,7 +875,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
 
     shares = pos.shares
     try:
-        order_id = await asyncio.to_thread(
+        order_id, is_matched = await asyncio.to_thread(
             place_limit_sell, clob, pos.token_id, shares, price, pos.condition_id, pm_state.taker_fee
         )
     except Exception as exc:
@@ -877,7 +914,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
                 )
                 if pos_store.position:
                     pos_store.position.shares = actual
-                order_id = await asyncio.to_thread(
+                order_id, is_matched = await asyncio.to_thread(
                     place_limit_sell, clob, pos.token_id, actual, price, pos.condition_id, pm_state.taker_fee
                 )
             else:
@@ -894,6 +931,43 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             if pos_store.position:
                 pos_store.position.hold_to_expiry = True
             return
+
+    if order_id and is_matched:
+        # Sell was immediately matched off-chain. Close the position right now without
+        # calling fetch_token_balance, which lags on-chain settlement by several seconds
+        # and would otherwise produce a false residual reading.
+        exit_price = price
+        realized_shares = float(pos.shares)
+        pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
+        log.info(
+            "Sell IMMEDIATELY MATCHED — closing position  dir=%s  entry=%.4f  exit=%.4f  "
+            "shares=%.0f  pnl=$%.2f  order=%s%s",
+            pos.direction, pos.entry_price, exit_price, realized_shares, pnl, order_id, label,
+        )
+        tg(
+            f"✅ <b>Position closed</b>\n"
+            f"Direction: {pos.direction}\n"
+            f"Entry: {pos.entry_price:.4f}  Exit: {exit_price:.4f}\n"
+            f"Shares: {realized_shares:.0f}\n"
+            f"PnL: ${pnl:+.2f}"
+        )
+        _write_training_event(
+            "position_closed",
+            direction=pos.direction,
+            shares=realized_shares,
+            entry_price=round(pos.entry_price, 4),
+            exit_price=round(exit_price, 4),
+            pnl=round(pnl, 2),
+            reason=reason or "sell_immediately_matched",
+            order_id=order_id,
+            dry_run=False,
+        )
+        if reason == "stop_loss":
+            _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
+            _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
+        pos_store.close()
+        _balance_cache[1] = 0.0
+        return
 
     if order_id:
         log.info("Limit sell posted  order=%s  price=%.4f%s", order_id, price, label)
@@ -1035,19 +1109,44 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     token_id = pm_state.token_id_up if direction == "UP" else pm_state.token_id_down
-    spend = round(signal.size * signal.price, 2)
+
+    # Maker entry: post below the ask to avoid crossing the spread immediately.
+    # Re-derive size from the same dollar budget at the new (lower) price.
+    if ENTRY_MAKER_OFFSET > 0:
+        maker_price = round(max(0.01, signal.price - ENTRY_MAKER_OFFSET), 2)
+        maker_budget = min(signal.size * signal.price, BET_SIZE_MAX)
+        maker_size = math.floor(maker_budget / maker_price)
+        if maker_size < MIN_POSITION_SHARES:
+            log.info(
+                "Maker entry size below minimum after offset  dir=%s  ask=%.4f  maker=%.4f  size=%d",
+                direction, signal.price, maker_price, maker_size,
+            )
+            _entry_confirmation["count"] = 0
+            return
+        if maker_price != signal.price or maker_size != signal.size:
+            log.info(
+                "Maker entry  dir=%s  ask=%.4f → maker=%.4f  shares=%d → %d  offset=%.3f",
+                direction, signal.price, maker_price, signal.size, maker_size, ENTRY_MAKER_OFFSET,
+            )
+        entry_price = maker_price
+        entry_size = maker_size
+    else:
+        entry_price = signal.price
+        entry_size = signal.size
+
+    spend = round(entry_size * entry_price, 2)
 
     if DRY_RUN:
         log.info(
             "DRY_RUN — would buy %s  price=%.4f  shares=%d  spend=$%.2f  market=%s",
-            signal.action, signal.price, signal.size, spend, pm_state.question[:60],
+            signal.action, entry_price, entry_size, spend, pm_state.question[:60],
         )
         pos_store.open(
             condition_id=pm_state.condition_id,
             token_id=token_id,
             direction=direction,
-            shares=signal.size,
-            entry_price=signal.price,
+            shares=entry_size,
+            entry_price=entry_price,
             entry_time=time.time(),
             entry_edge=signal.edge,
             entry_p_up=signal.p_up,
@@ -1057,8 +1156,8 @@ async def _try_enter(clob, balance: float) -> None:
             "position_opened",
             direction=direction,
             token_id=token_id,
-            shares=signal.size,
-            entry_price=round(signal.price, 4),
+            shares=entry_size,
+            entry_price=round(entry_price, 4),
             entry_edge=round(signal.edge, 4),
             entry_p_up=round(signal.p_up, 4),
             entry_seconds_left=seconds_left,
@@ -1073,7 +1172,7 @@ async def _try_enter(clob, balance: float) -> None:
 
     try:
         order_id = await asyncio.to_thread(
-            place_bet, clob, token_id, signal.size, signal.price, pm_state.condition_id, pm_state.taker_fee
+            place_bet, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
         )
     except Exception as exc:
         if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
@@ -1086,14 +1185,14 @@ async def _try_enter(clob, balance: float) -> None:
     if order_id:
         log.info(
             "GTC buy placed  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
-            order_id, direction, signal.price, signal.size, spend,
+            order_id, direction, entry_price, entry_size, spend,
         )
         _write_training_event(
             "buy_order_posted",
             direction=direction,
             token_id=token_id,
-            shares=signal.size,
-            entry_price=round(signal.price, 4),
+            shares=entry_size,
+            entry_price=round(entry_price, 4),
             spend=round(spend, 2),
             order_id=order_id,
             dry_run=False,
@@ -1103,8 +1202,8 @@ async def _try_enter(clob, balance: float) -> None:
             condition_id=pm_state.condition_id,
             token_id=token_id,
             direction=direction,
-            shares=signal.size,
-            price=signal.price,
+            shares=entry_size,
+            price=entry_price,
             edge=signal.edge,
             p_up=signal.p_up,
             seconds_left=seconds_left,
@@ -1113,8 +1212,8 @@ async def _try_enter(clob, balance: float) -> None:
             f"📋 <b>BTC 5m Order placed</b>\n"
             f"Market: {pm_state.question[:80]}\n"
             f"Direction: {direction}\n"
-            f"P(UP)={signal.p_up:.2%}  price={signal.price:.3f}  edge={signal.edge:.3f}\n"
-            f"Shares: {signal.size}  Spend: ${spend:.2f}\n"
+            f"P(UP)={signal.p_up:.2%}  price={entry_price:.3f}  edge={signal.edge:.3f}\n"
+            f"Shares: {entry_size}  Spend: ${spend:.2f}\n"
             f"Order: {order_id}"
         )
         _entry_confirmation["count"] = 0
@@ -1166,6 +1265,7 @@ async def main() -> None:
     log.info("Polymarket BTC Bot (patched) starting")
     log.info("  DRY_RUN=%s  MIN_EDGE=%.3f  EVAL_INTERVAL=%dms", DRY_RUN, MIN_EDGE, EVAL_INTERVAL_MS)
     log.info("  TP=%.3f  SL=%.3f  SIGNAL_EXIT=%.3f  REPLACE_GAP=%.3f", TAKE_PROFIT, STOP_LOSS, SIGNAL_EXIT_EDGE, ORDER_REPLACE_GAP)
+    log.info("  ENTRY_MAKER_OFFSET=%.3f  DRIFT_A3=%.4f", ENTRY_MAKER_OFFSET, DRIFT_A3)
     log.info("=" * 60)
 
     if not POLYMARKET_PK and not DRY_RUN:

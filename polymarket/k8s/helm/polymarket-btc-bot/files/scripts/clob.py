@@ -194,7 +194,14 @@ def place_limit_sell(
     price: float,
     condition_id: str = "",
     fee_rate_bps: int = 0,
-) -> Optional[str]:
+) -> tuple[Optional[str], bool]:
+    """Return (order_id, is_immediately_matched).
+
+    is_immediately_matched=True when Polymarket's response shows status='matched',
+    meaning the sell was fully committed off-chain and settlement is in progress.
+    In that case the caller should close the position immediately without re-querying
+    token balance, which lags behind off-chain state during settlement.
+    """
     from py_clob_client.clob_types import OrderArgs, OrderType
 
     try:
@@ -210,12 +217,14 @@ def place_limit_sell(
         log.info("CLOB create_order SELL RESPONSE  %s", signed)
         resp = clob.post_order(signed, OrderType.GTC)
         log.info("CLOB post_order SELL GTC RESPONSE  %s", resp)
-        return resp.get("orderID") or resp.get("order_id") or None
+        order_id = resp.get("orderID") or resp.get("order_id") or None
+        is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
+        return order_id, is_matched
     except Exception as exc:
         if "not enough balance" in str(exc).lower() or "balance is not enough" in str(exc).lower():
             raise
         log.error("Limit sell failed: %s", exc)
-        return None
+        return None, False
 
 
 def cancel_order(clob, order_id: str) -> bool:

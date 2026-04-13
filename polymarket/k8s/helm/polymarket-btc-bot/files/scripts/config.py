@@ -52,6 +52,7 @@ MODEL_PROB_CEIL = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
 EARLY_BAR_MIN_CONFIDENCE = float(os.getenv("EARLY_BAR_MIN_CONFIDENCE", "0.35"))
 EARLY_BAR_RAMP_SECS = int(os.getenv("EARLY_BAR_RAMP_SECS", "90"))
 ENTRY_ORDER_TIMEOUT_SECS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECS", "18"))
+ENTRY_MAKER_OFFSET = float(os.getenv("ENTRY_MAKER_OFFSET", "0.0"))  # 0 = taker (current); >0 = post below ask
 ENTRY_REPLACE_MIN_AGE_SECS = int(os.getenv("ENTRY_REPLACE_MIN_AGE_SECS", "6"))
 ENTRY_REPLACE_GAP = float(os.getenv("ENTRY_REPLACE_GAP", "0.02"))
 ENTRY_BOOK_MAX_TAKE_FRACTION = float(os.getenv("ENTRY_BOOK_MAX_TAKE_FRACTION", "0.35"))
