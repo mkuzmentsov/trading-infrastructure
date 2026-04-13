@@ -43,6 +43,9 @@ bot:
   stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
   slArmDelaySecs: "20"       # seconds after entry before stop-loss arms (mid-price entries)
   ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
+  averagingMinSecondsLeft: "150"  # only average down if this many seconds remain in bar
+  averagingMaxBtcMove: "0.003"    # max adverse BTC log-return (≈0.3%) to allow averaging; sharper = stop out
+  thesisMinBtcDistance: "0.002"   # suppress thesis_decay when BTC is ≥0.2% in our favor (bar clearly winning)
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
   orderReplaceGap: "0.05"    # cancel+replace sell if bid drifts by more than this

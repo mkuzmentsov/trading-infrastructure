@@ -53,6 +53,8 @@ from config import (
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
     REENTRY_EDGE_PENALTY,
+    AVERAGING_MAX_BTC_MOVE,
+    AVERAGING_MIN_SECONDS_LEFT,
     SL_ARM_DELAY_SECS,
     STOP_LOSS_MARKET_LIMIT,
     ULTRA_CHEAP_SL_DELAY_SECS,
@@ -61,6 +63,7 @@ from config import (
     TRAINING_LOG_PATH,
     THESIS_EDGE_FRACTION,
     THESIS_MIN_EDGE,
+    THESIS_MIN_BTC_DISTANCE,
     THESIS_PROFIT_LOCK,
     SIGNAL_EXIT_EDGE,
     STOP_LOSS,
@@ -88,6 +91,7 @@ _sell_cancel_cooldown_until: float = 0.0
 # Tracks how many times we've seen a "filled but residual" result for a given sell order.
 # On the first occurrence we wait for on-chain settlement; on the second we treat it as real.
 _sell_residual_retries: dict[str, int] = {}
+_pos_heartbeat_ts: float = 0.0  # last time we logged a position status line
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -519,6 +523,83 @@ def _exit_target_price(current_bid: float, reason: str) -> float:
     return max(current_bid, MIN_EXIT_BID)
 
 
+async def _average_down(clob, pos, seconds_left: int) -> bool:
+    """
+    Buy more shares of the same token to lower the average entry price.
+    Updates pos.entry_price, pos.shares, and sets pos.averaged = True.
+    Returns True if the buy was placed successfully, False otherwise.
+    """
+    avg_ask = pm_state.up_ask if pos.direction == "UP" else pm_state.down_ask
+
+    balance = await _get_balance(clob)
+    budget = min(balance, BET_SIZE_MAX)
+    new_shares = math.floor(budget / avg_ask) if avg_ask > 0 else 0
+
+    if new_shares < MIN_POSITION_SHARES:
+        log.warning(
+            "AVERAGE_DOWN blocked — insufficient budget  dir=%s  ask=%.4f  budget=%.2f  shares=%d  min=%d",
+            pos.direction, avg_ask, budget, new_shares, MIN_POSITION_SHARES,
+        )
+        return False
+
+    spend = round(new_shares * avg_ask, 2)
+    log.info(
+        "AVERAGE_DOWN  dir=%s  old_entry=%.4f  old_shares=%d  add_price=%.4f  add_shares=%d  spend=$%.2f  secs_left=%d",
+        pos.direction, pos.entry_price, pos.shares, avg_ask, new_shares, spend, seconds_left,
+    )
+
+    if DRY_RUN:
+        order_id = "dry_run_avg"
+    else:
+        try:
+            order_id = await asyncio.to_thread(
+                place_bet, clob, pos.token_id, new_shares, avg_ask, pos.condition_id,
+            )
+        except Exception as exc:
+            log.error("AVERAGE_DOWN order failed: %s", exc)
+            return False
+
+    if not order_id:
+        log.warning("AVERAGE_DOWN order returned no order_id — skipping")
+        return False
+
+    total_shares = pos.shares + new_shares
+    new_avg_price = round((pos.shares * pos.entry_price + new_shares * avg_ask) / total_shares, 4)
+
+    log.info(
+        "AVERAGE_DOWN filled  new_avg_entry=%.4f  total_shares=%d  order=%s",
+        new_avg_price, total_shares, order_id,
+    )
+    tg(
+        f"📉 <b>Averaged down</b>  {pos.direction}  "
+        f"entry {pos.entry_price:.3f}→{new_avg_price:.3f}  "
+        f"shares {pos.shares}→{total_shares}  +${spend:.2f}"
+    )
+    _write_training_event(
+        "averaged_down",
+        direction=pos.direction,
+        token_id=pos.token_id,
+        old_entry=pos.entry_price,
+        old_shares=pos.shares,
+        add_price=avg_ask,
+        add_shares=new_shares,
+        new_avg_entry=new_avg_price,
+        total_shares=total_shares,
+        seconds_left=seconds_left,
+        order_id=order_id,
+        dry_run=DRY_RUN,
+    )
+
+    pos.entry_price = new_avg_price
+    pos.shares = total_shares
+    pos.averaged = True
+    # Clear any resting soft-exit sell order — size has changed
+    pos_store.clear_sell_order()
+    _balance_cache[1] = 0.0  # invalidate balance cache
+
+    return True
+
+
 async def _manage_position(clob) -> None:
     global _sell_cancel_cooldown_until
     pos = pos_store.position
@@ -695,6 +776,22 @@ async def _manage_position(clob) -> None:
     unrealized = current_bid - pos.entry_price
     seconds_left = _seconds_left_in_bar()
 
+    # Periodic position status heartbeat (every 10s)
+    global _pos_heartbeat_ts
+    now = time.time()
+    if now - _pos_heartbeat_ts >= 10.0:
+        _pos_heartbeat_ts = now
+        _btc_dist = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
+        _bar_side = "winning" if (
+            (pos.direction == "DOWN" and _btc_dist < -THESIS_MIN_BTC_DISTANCE)
+            or (pos.direction == "UP"  and _btc_dist >  THESIS_MIN_BTC_DISTANCE)
+        ) else "neutral" if abs(_btc_dist) < THESIS_MIN_BTC_DISTANCE else "losing"
+        log.info(
+            "Position  dir=%s  entry=%.4f  bid=%.4f  pnl=%.4f  peak=%.4f  shares=%d  secs_left=%d  btc_dist=%+.4f  bar=%s  averaged=%s",
+            pos.direction, pos.entry_price, current_bid, unrealized,
+            pos.peak_bid, pos.shares, seconds_left, _btc_dist, _bar_side, pos.averaged,
+        )
+
     # Trailing stop: skip if ANY sell order is active — prevents cross-override with stop_loss.
     trailing_armed = pos.peak_bid >= pos.entry_price + TRAILING_ARM_GAIN
     if trailing_armed and current_bid <= pos.peak_bid - TRAILING_STOP_GAP and not pos.sell_order_id:
@@ -729,9 +826,29 @@ async def _manage_position(clob) -> None:
                 time_held, sl_delay, current_bid, pos.entry_price,
             )
         else:
+            # Check whether to average down instead of stopping out.
+            # Average when: enough time left, BTC hasn't moved too sharply against us,
+            # and we haven't already averaged this position.
+            btc_distance = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
+            # adverse_move > 0 means BTC has moved against our position
+            adverse_move = btc_distance if pos.direction == "DOWN" else -btc_distance
+            can_average = (
+                not pos.averaged
+                and seconds_left >= AVERAGING_MIN_SECONDS_LEFT
+                and adverse_move <= AVERAGING_MAX_BTC_MOVE
+            )
+            if can_average:
+                log.info(
+                    "AVERAGE_DOWN candidate  dir=%s  bid=%.4f  entry=%.4f  adverse_btc=%.4f  secs_left=%d",
+                    pos.direction, current_bid, pos.entry_price, adverse_move, seconds_left,
+                )
+                averaged = await _average_down(clob, pos, seconds_left)
+                if averaged:
+                    return
+                # averaging failed (no budget, order error) — fall through to stop loss
             log.info(
-                "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f  held=%.0fs",
-                current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap, time_held,
+                "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f  held=%.0fs  adverse_btc=%.4f",
+                current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap, time_held, adverse_move,
             )
             await _exit_position(clob, pos, current_bid, reason="stop_loss")
             return
@@ -767,22 +884,37 @@ async def _manage_position(clob) -> None:
         current_side_edge = float(signal.debug.get("net_down", signal.edge if signal.action == "BUY_DOWN" else 0.0))
 
     thesis_floor = max(THESIS_MIN_EDGE, pos.entry_edge * THESIS_EDGE_FRACTION)
+    # Suppress thesis_decay if the bar has already moved decisively in our favor.
+    # A large btc_distance means the bar is very likely to resolve for us — don't
+    # exit on a noisy signal tick when we're clearly winning.
+    btc_distance = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
+    bar_winning = (
+        (pos.direction == "DOWN" and btc_distance < -THESIS_MIN_BTC_DISTANCE)
+        or (pos.direction == "UP"  and btc_distance >  THESIS_MIN_BTC_DISTANCE)
+    )
     if (
         unrealized >= THESIS_PROFIT_LOCK
         and current_side_edge < thesis_floor
+        and not bar_winning
         and not (pos.sell_order_id and pos.exit_reason == "thesis_decay")
     ):
         log.info(
-            "THESIS_DECAY  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  edge_now=%.4f  edge_floor=%.4f",
+            "THESIS_DECAY  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  edge_now=%.4f  edge_floor=%.4f  btc_dist=%.4f",
             pos.direction,
             current_bid,
             pos.entry_price,
             unrealized,
             current_side_edge,
             thesis_floor,
+            btc_distance,
         )
         await _exit_position(clob, pos, current_bid, reason="thesis_decay")
         return
+    if bar_winning and unrealized >= THESIS_PROFIT_LOCK and current_side_edge < thesis_floor:
+        log.info(
+            "THESIS_DECAY suppressed — bar winning  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  btc_dist=%.4f  threshold=%.4f  edge_now=%.4f",
+            pos.direction, current_bid, pos.entry_price, unrealized, btc_distance, THESIS_MIN_BTC_DISTANCE, current_side_edge,
+        )
 
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
         if pos.exit_reason in {"take_profit", "trailing_stop", "thesis_decay"}:
@@ -1263,6 +1395,8 @@ async def main() -> None:
     log.info("Polymarket BTC Bot (patched) starting")
     log.info("  DRY_RUN=%s  MIN_EDGE=%.3f  EVAL_INTERVAL=%dms", DRY_RUN, MIN_EDGE, EVAL_INTERVAL_MS)
     log.info("  TP=%.3f  SL=%.3f  SIGNAL_EXIT=%.3f  REPLACE_GAP=%.3f", TAKE_PROFIT, STOP_LOSS, SIGNAL_EXIT_EDGE, ORDER_REPLACE_GAP)
+    log.info("  SL_ARM_DELAY=%ds  AVERAGING_MIN_SECS=%d  AVERAGING_MAX_BTC=%.4f", SL_ARM_DELAY_SECS, AVERAGING_MIN_SECONDS_LEFT, AVERAGING_MAX_BTC_MOVE)
+    log.info("  THESIS_PROFIT_LOCK=%.3f  THESIS_MIN_BTC_DIST=%.4f", THESIS_PROFIT_LOCK, THESIS_MIN_BTC_DISTANCE)
     log.info("  ENTRY_MAKER_OFFSET=%.3f  DRIFT_A3=%.4f", ENTRY_MAKER_OFFSET, DRIFT_A3)
     log.info("=" * 60)
 

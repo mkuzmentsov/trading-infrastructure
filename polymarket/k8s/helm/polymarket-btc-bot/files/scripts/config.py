@@ -70,6 +70,8 @@ REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "45"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
+AVERAGING_MIN_SECONDS_LEFT = int(os.getenv("AVERAGING_MIN_SECONDS_LEFT", "150"))   # only average if this many secs remain
+AVERAGING_MAX_BTC_MOVE = float(os.getenv("AVERAGING_MAX_BTC_MOVE", "0.003"))       # max adverse BTC log-return to allow averaging
 
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
@@ -85,6 +87,7 @@ TRAILING_STOP_GAP = float(os.getenv("TRAILING_STOP_GAP", "0.05"))
 THESIS_EDGE_FRACTION = float(os.getenv("THESIS_EDGE_FRACTION", "0.55"))
 THESIS_MIN_EDGE = float(os.getenv("THESIS_MIN_EDGE", "0.02"))
 THESIS_PROFIT_LOCK = float(os.getenv("THESIS_PROFIT_LOCK", "0.03"))
+THESIS_MIN_BTC_DISTANCE = float(os.getenv("THESIS_MIN_BTC_DISTANCE", "0.002"))  # suppress thesis_decay when bar is already this far in our favor
 
 # ── Polymarket credentials ────────────────────────────────────────────────────
 POLYMARKET_PK               = os.getenv("POLYMARKET_PK",               "")
