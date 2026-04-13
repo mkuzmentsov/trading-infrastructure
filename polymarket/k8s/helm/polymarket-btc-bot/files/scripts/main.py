@@ -709,9 +709,7 @@ async def _manage_position(clob) -> None:
         return
 
     stop_loss_gap = STOP_LOSS
-    if seconds_left > 180:
-        stop_loss_gap *= 1.25
-    elif seconds_left <= 90:
+    if seconds_left <= 90:
         stop_loss_gap *= 0.75
 
     # Stop-loss arm delay: don't trigger SL for the first N seconds after entry.

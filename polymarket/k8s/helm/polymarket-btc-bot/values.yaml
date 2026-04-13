@@ -41,7 +41,7 @@ bot:
   takeProfit: "0.15"         # exit if bid rises entry + this
   stopLoss: "0.08"           # exit if bid falls entry - this
   stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
-  slArmDelaySecs: "45"       # seconds after entry before stop-loss arms (mid-price entries)
+  slArmDelaySecs: "20"       # seconds after entry before stop-loss arms (mid-price entries)
   ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
@@ -51,6 +51,8 @@ bot:
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
   polymarketRtdsWs: "wss://ws-live-data.polymarket.com"
   polymarketRtdsSymbol: "btc/usd"
+  trainingLogPath: "/app/logs/logs-training.jsonl"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   marketRefreshSecs: "60"
   wsHeartbeatSecs: "30"
   feedStaleSecs: "20"

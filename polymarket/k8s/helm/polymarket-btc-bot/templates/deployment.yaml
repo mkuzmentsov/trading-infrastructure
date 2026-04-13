@@ -37,9 +37,13 @@ spec:
           volumeMounts:
             - name: script
               mountPath: /app/scripts
+            - name: logs
+              mountPath: /app/logs
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: script
           configMap:
             name: {{ include "polymarket-btc-bot.name" . }}-script
+        - name: logs
+          emptyDir: {}
