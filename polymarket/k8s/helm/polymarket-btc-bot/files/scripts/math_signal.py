@@ -30,6 +30,7 @@ from config import (
     MAX_ABS_DRIFT,
     MAX_ENTRY_PRICE,
     MAX_ENTRY_SPREAD,
+    MIN_ENTRY_PRICE,
     MIN_EDGE,
     MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
@@ -204,8 +205,8 @@ def generate_signal(
         ultra_cheap_tail_override=False,
     )
 
-    up_tradeable = 0.05 <= up_ask <= 0.95 and spread_up <= MAX_ENTRY_SPREAD
-    down_tradeable = 0.05 <= down_ask <= 0.95 and spread_down <= MAX_ENTRY_SPREAD
+    up_tradeable = MIN_ENTRY_PRICE <= up_ask <= 0.95 and spread_up <= MAX_ENTRY_SPREAD
+    down_tradeable = MIN_ENTRY_PRICE <= down_ask <= 0.95 and spread_down <= MAX_ENTRY_SPREAD
     if up_tradeable and up_ask > MAX_ENTRY_PRICE:
         up_tradeable = False
     if down_tradeable and down_ask > MAX_ENTRY_PRICE:
@@ -218,9 +219,15 @@ def generate_signal(
     else:
         reason = "No edge above threshold"
         if net_up >= MIN_EDGE and not up_tradeable:
-            reason = f"UP token not tradeable (ask={up_ask:.3f}, spread={spread_up:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
+            reason = (
+                f"UP token not tradeable (ask={up_ask:.3f}, spread={spread_up:.3f}, "
+                f"band={MIN_ENTRY_PRICE:.3f}-{MAX_ENTRY_PRICE:.3f})"
+            )
         elif net_down >= MIN_EDGE and not down_tradeable:
-            reason = f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f}, cap={MAX_ENTRY_PRICE:.3f})"
+            reason = (
+                f"DOWN token not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f}, "
+                f"band={MIN_ENTRY_PRICE:.3f}-{MAX_ENTRY_PRICE:.3f})"
+            )
         return _no_trade(reason, p_up_value=p_up, edge_value=max(net_up, net_down), **dbg)
 
     ultra_cheap_tail = price <= ULTRA_CHEAP_TAIL_PRICE and edge >= ULTRA_CHEAP_TAIL_EDGE

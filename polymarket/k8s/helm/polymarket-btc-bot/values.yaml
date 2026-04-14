@@ -10,14 +10,15 @@ bot:
   dryRun: "true"
   loopIntervalSecs: "300"
   # Signal parameters
-  minEdge: "0.03"        # net edge required after cost buffer
+  minEdge: "0.05"        # net edge required after cost buffer
   costBuffer: "0.02"     # fee + slippage allowance deducted from edge
   kellyScale: "0.5"      # half-Kelly sizing
   betSizeMin: "0.50"
   betSizeMax: "5.00"
   entryMinSecondsLeft: "90"
   maxEntrySpread: "0.03"
-  maxEntryPrice: "0.40"
+  minEntryPrice: "0.20"
+  maxEntryPrice: "0.30"
   sourceMismatchBuffer: "0.00"
   modelProbShrink: "0.65"
   modelProbFloor: "0.12"
@@ -43,13 +44,13 @@ bot:
   stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
   slArmDelaySecs: "20"       # seconds after entry before stop-loss arms (mid-price entries)
   ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
-  averagingMinSecondsLeft: "150"  # only average down if this many seconds remain in bar
-  averagingMaxBtcMove: "0.003"    # max adverse BTC log-return (≈0.3%) to allow averaging; sharper = stop out
   thesisMinBtcDistance: "0.002"   # suppress thesis_decay when BTC is ≥0.2% in our favor (bar clearly winning)
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
   orderReplaceGap: "0.05"    # cancel+replace sell if bid drifts by more than this
   aggressiveExitSlippage: "0.02"
+  trailingArmGain: "0.20"    # arm trailing only after a substantial profit cushion
+  trailingStopGap: "0.03"    # once armed, exit on a modest pullback while still profitable
   # Misc
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
   polymarketRtdsWs: "wss://ws-live-data.polymarket.com"

@@ -44,6 +44,7 @@ DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))
 
 ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "90"))
 MAX_ENTRY_SPREAD = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
+MIN_ENTRY_PRICE = float(os.getenv("MIN_ENTRY_PRICE", "0.05"))
 MAX_ENTRY_PRICE = float(os.getenv("MAX_ENTRY_PRICE", "0.40"))
 SOURCE_MISMATCH_BUFFER = float(os.getenv("SOURCE_MISMATCH_BUFFER", "0.01"))
 MODEL_PROB_SHRINK = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
@@ -70,9 +71,6 @@ REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "45"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
-AVERAGING_MIN_SECONDS_LEFT = int(os.getenv("AVERAGING_MIN_SECONDS_LEFT", "150"))   # only average if this many secs remain
-AVERAGING_MAX_BTC_MOVE = float(os.getenv("AVERAGING_MAX_BTC_MOVE", "0.003"))       # max adverse BTC log-return to allow averaging
-
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
 EVAL_INTERVAL_SECS = EVAL_INTERVAL_MS / 1000.0
@@ -82,8 +80,8 @@ SIGNAL_EXIT_EDGE = float(os.getenv("SIGNAL_EXIT_EDGE", "0.05"))
 MIN_EXIT_BID = float(os.getenv("MIN_EXIT_BID", "0.03"))
 ORDER_REPLACE_GAP = float(os.getenv("ORDER_REPLACE_GAP", "0.05"))
 AGGRESSIVE_EXIT_SLIPPAGE = float(os.getenv("AGGRESSIVE_EXIT_SLIPPAGE", "0.02"))
-TRAILING_ARM_GAIN = float(os.getenv("TRAILING_ARM_GAIN", "0.12"))
-TRAILING_STOP_GAP = float(os.getenv("TRAILING_STOP_GAP", "0.05"))
+TRAILING_ARM_GAIN = float(os.getenv("TRAILING_ARM_GAIN", "0.20"))
+TRAILING_STOP_GAP = float(os.getenv("TRAILING_STOP_GAP", "0.03"))
 THESIS_EDGE_FRACTION = float(os.getenv("THESIS_EDGE_FRACTION", "0.55"))
 THESIS_MIN_EDGE = float(os.getenv("THESIS_MIN_EDGE", "0.02"))
 THESIS_PROFIT_LOCK = float(os.getenv("THESIS_PROFIT_LOCK", "0.03"))
