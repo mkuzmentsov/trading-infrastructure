@@ -5,6 +5,7 @@ Supports both EOA (SIGNATURE_TYPE=0) and Gnosis Safe (SIGNATURE_TYPE=2) wallets.
 from __future__ import annotations
 
 import time
+from typing import Callable, Optional
 
 import eth_abi
 import requests
@@ -14,6 +15,7 @@ from config import (
     POLYMARKET_ADDRESS, POLYMARKET_FUNDER, POLYMARKET_PK,
     SIGNATURE_TYPE, USDC_ADDRESS, log,
 )
+from positions import Position, pos_store
 from telegram import tg
 
 
@@ -217,7 +219,58 @@ def _claim_to_funder() -> None:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def redeem_resolved_positions() -> None:
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _emit_redemption_event(
+    on_event: Optional[Callable[..., None]],
+    payload: dict,
+    tracked_pos: Optional[Position],
+    tx_hash: str,
+) -> None:
+    if on_event is None:
+        return
+
+    size = _safe_float(payload.get("size"))
+    current_value = _safe_float(payload.get("currentValue"))
+    avg_price = _safe_float(payload.get("avgPrice"))
+    entry_price = tracked_pos.entry_price if tracked_pos else avg_price
+    shares = size if size > 0 else float(tracked_pos.shares if tracked_pos else 0)
+    exit_price = (current_value / shares) if shares > 0 else 0.0
+    pnl = round(current_value - (shares * entry_price), 2)
+    won = exit_price >= 0.99
+
+    on_event(
+        "position_closed",
+        condition_id=payload.get("conditionId", ""),
+        question=payload.get("title", ""),
+        market_start_ts=None,
+        market_end_ts=None,
+        seconds_left=0,
+        direction=(tracked_pos.direction if tracked_pos else str(payload.get("outcome", "")).upper()),
+        token_id=payload.get("asset", ""),
+        shares=round(shares, 6),
+        entry_price=round(entry_price, 4),
+        exit_price=round(exit_price, 4),
+        pnl=pnl,
+        reason="redemption_win" if won else "redemption_loss",
+        dry_run=False,
+        order_id=tx_hash,
+        resolution_source="redemption",
+        tracked_position=tracked_pos is not None,
+        redeemable_size=round(size, 6),
+        redeemable_avg_price=round(avg_price, 4),
+        redeemable_current_value=round(current_value, 4),
+        redeemable_cash_pnl=round(_safe_float(payload.get("cashPnl")), 4),
+        redeemable_realized_pnl=round(_safe_float(payload.get("realizedPnl")), 4),
+    )
+
+
+def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) -> None:
     """
     Check redeemable positions via the Data API.
     For each position with an on-chain token balance, call redeemPositions.
@@ -251,7 +304,7 @@ def redeem_resolved_positions() -> None:
             log.info("No on-chain token balance for %s — skipping", condition_id[:16])
             continue
 
-        to_redeem.append((condition_id, question))
+        to_redeem.append((condition_id, question, token_id, pos))
 
     if not to_redeem:
         return
@@ -260,7 +313,7 @@ def redeem_resolved_positions() -> None:
     nonce     = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
     gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
 
-    for condition_id, question in to_redeem:
+    for condition_id, question, token_id, payload in to_redeem:
         log.info("Market resolved, redeeming: %s", question[:60])
         try:
             calldata = _build_redeem_calldata(condition_id)
@@ -270,11 +323,15 @@ def redeem_resolved_positions() -> None:
                 tx_hash = _send_tx(calldata, nonce, gas_price)
             log.info("Redeemed %s  tx=%s", question[:40], tx_hash)
             tg(f"💰 <b>Redeemed</b>\n{question[:80]}\ntx: {tx_hash}")
+            tracked_pos = pos_store.pop_matching_position(condition_id, token_id)
+            _emit_redemption_event(on_event, payload, tracked_pos, tx_hash)
             nonce += 1
         except Exception as exc:
             err = str(exc)
             if "nonce too low" in err or "already known" in err:
                 log.info("Position already redeemed externally: %s", question[:40])
+                tracked_pos = pos_store.pop_matching_position(condition_id, token_id)
+                _emit_redemption_event(on_event, payload, tracked_pos, "")
                 nonce += 1
             else:
                 log.error("Redeem failed for %s: %s", question[:40], exc)

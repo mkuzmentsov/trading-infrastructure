@@ -130,6 +130,21 @@ def _write_training_event(event_type: str, **payload) -> None:
     _append_jsonl(TRAINING_EVENT_LOG_PATH, record, "Training event")
 
 
+def _write_position_parked_event(pos, reason: str) -> None:
+    _write_training_event(
+        "position_parked",
+        condition_id=pos.condition_id,
+        question=pm_state.question if pos.condition_id == pm_state.condition_id else "",
+        direction=pos.direction,
+        token_id=pos.token_id,
+        shares=pos.shares,
+        entry_price=round(pos.entry_price, 4),
+        hold_to_expiry=pos.hold_to_expiry,
+        reason=reason,
+        dry_run=DRY_RUN,
+    )
+
+
 async def _refresh_pm_quotes_if_stale(reason: str) -> bool:
     ages = _feed_staleness()
     if ages["pm_up_age"] <= FEED_STALE_SECS and ages["pm_down_age"] <= FEED_STALE_SECS:
@@ -385,6 +400,22 @@ async def _get_balance(clob) -> float:
     return bal
 
 
+async def _write_balance_snapshot(clob, reason: str) -> None:
+    if DRY_RUN or clob is None:
+        return
+    _balance_cache[1] = 0.0
+    balance = await _get_balance(clob)
+    _write_training_event(
+        "balance_snapshot",
+        reason=reason,
+        usdc_balance=round(balance, 4),
+        active_position=pos_store.position is not None,
+        held_positions=len(pos_store.held_positions),
+        pending_buy=pos_store.pending_buy is not None,
+        dry_run=False,
+    )
+
+
 async def _ensure_ctf_approval_for_token(clob, token_id: str) -> None:
     if DRY_RUN or not clob or not token_id or token_id in _approved_ctf_tokens:
         return
@@ -444,6 +475,7 @@ async def _check_pending_buy(clob) -> None:
                 "Filled position below minimum sell size — hold-to-expiry  shares=%d",
                 actual_shares,
             )
+            _write_position_parked_event(pos_store.position, reason="below_min_position_size")
         tg(
             f"🎯 <b>BTC 5m Entry</b>\n"
             f"Market: {pm_state.question[:80]}\n"
@@ -605,6 +637,7 @@ async def _manage_position(clob) -> None:
             pos.entry_price,
             pos.condition_id[:16],
         )
+        _write_position_parked_event(pos, reason="market_rotated_hold")
         pos_store.park_current_position()
         return
 
@@ -998,6 +1031,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             )
             if pos_store.position:
                 pos_store.position.hold_to_expiry = True
+                _write_position_parked_event(pos_store.position, reason=f"matched_order_committed:{reason or 'sell'}")
             return
 
         m = re.search(r"balance[:\s]+(\d+)", exc_str)
@@ -1012,6 +1046,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
                 )
                 if pos_store.position:
                     pos_store.position.hold_to_expiry = True
+                    _write_position_parked_event(pos_store.position, reason=f"partial_fill_no_shares_freed:{reason or 'sell'}")
                 return
             if actual >= min_sell:
                 log.warning(
@@ -1031,11 +1066,13 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
                 if pos_store.position:
                     pos_store.position.shares = max(0, actual)
                     pos_store.position.hold_to_expiry = True
+                    _write_position_parked_event(pos_store.position, reason=f"partial_fill_below_min:{reason or 'sell'}")
                 return
         else:
             log.warning("Limit sell failed — marking hold-to-expiry%s", label)
             if pos_store.position:
                 pos_store.position.hold_to_expiry = True
+                _write_position_parked_event(pos_store.position, reason=f"limit_sell_failed:{reason or 'sell'}")
             return
 
     if order_id and is_matched:
@@ -1092,6 +1129,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
         log.warning("Limit sell failed — marking hold-to-expiry%s", label)
         if pos_store.position:
             pos_store.position.hold_to_expiry = True
+            _write_position_parked_event(pos_store.position, reason=f"limit_sell_no_order_id:{reason or 'sell'}")
 
 
 async def _try_enter(clob, balance: float) -> None:
@@ -1404,6 +1442,7 @@ async def main() -> None:
     if not DRY_RUN and ready:
         try:
             clob = await _init_clob()
+            await _write_balance_snapshot(clob, reason="startup")
         except Exception as exc:
             log.error("CLOB client init failed: %s", exc)
             raise
@@ -1429,7 +1468,8 @@ async def main() -> None:
                 _stop_loss_reentry_guard.pop(key, None)
             if not DRY_RUN:
                 try:
-                    await asyncio.to_thread(redeem_resolved_positions)
+                    await asyncio.to_thread(redeem_resolved_positions, _write_training_event)
+                    await _write_balance_snapshot(clob, reason="post_redemption_boundary")
                 except Exception as exc:
                     log.error("Redemption sweep failed: %s", exc)
 
@@ -1445,6 +1485,7 @@ async def main() -> None:
                     pos.entry_price,
                     pos.condition_id[:16],
                 )
+                _write_position_parked_event(pos, reason="bar_boundary_old_market_hold")
                 pos_store.park_current_position()
             pb = pos_store.pending_buy
             if pb and pb.condition_id != pm_state.condition_id:

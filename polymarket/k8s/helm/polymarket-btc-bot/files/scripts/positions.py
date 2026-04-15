@@ -137,6 +137,20 @@ class PositionStore:
             self.position.sell_price = 0.0
             self.position.exit_reason = ""
 
+    def pop_matching_position(self, condition_id: str, token_id: str = "") -> Optional[Position]:
+        if self.position and self.position.condition_id == condition_id:
+            if not token_id or self.position.token_id == token_id:
+                pos = self.position
+                self.position = None
+                return pos
+        for idx, held in enumerate(self.held_positions):
+            if held.condition_id != condition_id:
+                continue
+            if token_id and held.token_id != token_id:
+                continue
+            return self.held_positions.pop(idx)
+        return None
+
 
 # Singleton shared across modules
 pos_store = PositionStore()
