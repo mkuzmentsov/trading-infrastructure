@@ -27,6 +27,10 @@ class Position:
     entry_seconds_left: int = 0
     peak_bid: float = 0.0
 
+    # Take-profit profit-lock state
+    take_profit_armed: bool = False   # True once TP has triggered at least once
+    take_profit_floor: float = 0.0    # minimum allowed exit price after TP arms (never below break-even)
+
     # Sell-order state (filled in after we post a GTC limit sell)
     sell_order_id: Optional[str] = None
     sell_price: float = 0.0  # price we're offering

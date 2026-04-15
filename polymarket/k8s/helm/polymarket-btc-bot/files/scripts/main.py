@@ -736,12 +736,21 @@ async def _manage_position(clob) -> None:
         return
 
     if unrealized >= TAKE_PROFIT and not (pos.sell_order_id and pos.exit_reason == "take_profit"):
+        if not pos.take_profit_armed:
+            pos.take_profit_armed = True
+            pos.take_profit_floor = pos.entry_price + 0.01
+            log.info(
+                "TAKE_PROFIT_ARMED  entry=%.4f  floor=%.4f",
+                pos.entry_price,
+                pos.take_profit_floor,
+            )
         log.info(
-            "TAKE_PROFIT  bid=%.4f  entry=%.4f  pnl=%.4f  threshold=%.4f",
+            "TAKE_PROFIT  bid=%.4f  entry=%.4f  pnl=%.4f  threshold=%.4f  floor=%.4f",
             current_bid,
             pos.entry_price,
             unrealized,
             TAKE_PROFIT,
+            pos.take_profit_floor,
         )
         await _exit_position(clob, pos, current_bid, reason="take_profit")
         return
@@ -759,7 +768,7 @@ async def _manage_position(clob) -> None:
 
     # Stop-loss only overrides soft exits (take_profit, thesis_decay, signal_flip).
     # It never overrides an already-active stop_loss or trailing_stop sell order.
-    _hard_exit_active = pos.sell_order_id and pos.exit_reason in {"stop_loss", "trailing_stop"}
+    _hard_exit_active = pos.sell_order_id and pos.exit_reason in {"stop_loss", "trailing_stop", "take_profit"}
     if current_bid <= pos.entry_price - stop_loss_gap and not _hard_exit_active:
         if not sl_armed:
             log.debug(
@@ -841,25 +850,48 @@ async def _manage_position(clob) -> None:
 
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
         if pos.exit_reason == "take_profit":
-            new_price = _exit_target_price(current_bid, "take_profit")
-            if abs(new_price - pos.sell_price) < 1e-6:
-                log.debug(
-                    "Take-profit replace skipped  old=%.4f  bid=%.4f  computed=%.4f (no-op)",
+            if current_bid >= pos.take_profit_floor:
+                # Case A: bid above floor — normal reprice downward, clamped at floor
+                new_price = max(_exit_target_price(current_bid, "take_profit"), pos.take_profit_floor)
+                if abs(new_price - pos.sell_price) < 1e-6:
+                    log.debug(
+                        "Take-profit replace skipped  old=%.4f  bid=%.4f  computed=%.4f (no-op)",
+                        pos.sell_price,
+                        current_bid,
+                        new_price,
+                    )
+                    return
+                log.info(
+                    "TAKE_PROFIT_REPRICE  old=%.4f  bid=%.4f  new=%.4f  floor=%.4f",
                     pos.sell_price,
                     current_bid,
                     new_price,
+                    pos.take_profit_floor,
                 )
-                return
-            log.info(
-                "Take-profit stale  old=%.4f  bid=%.4f — replace at %.4f",
-                pos.sell_price,
-                current_bid,
-                new_price,
-            )
-            if not DRY_RUN:
-                await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-            pos_store.clear_sell_order()
-            await _post_sell_order(clob, pos, new_price, reason="take_profit")
+                if not DRY_RUN:
+                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+                pos_store.clear_sell_order()
+                await _post_sell_order(clob, pos, new_price, reason="take_profit")
+            elif pos.sell_price > pos.take_profit_floor + ORDER_REPLACE_GAP:
+                # Case B: bid below floor, stale high order — cancel and repost at floor
+                log.info(
+                    "TAKE_PROFIT_REPOST_AT_FLOOR  old=%.4f  bid=%.4f  floor=%.4f",
+                    pos.sell_price,
+                    current_bid,
+                    pos.take_profit_floor,
+                )
+                if not DRY_RUN:
+                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+                pos_store.clear_sell_order()
+                await _post_sell_order(clob, pos, pos.take_profit_floor, reason="take_profit")
+            else:
+                # Case C: bid below floor, order already near floor — leave resting
+                log.info(
+                    "TAKE_PROFIT_FLOOR_RESTING  floor=%.4f  bid=%.4f  resting=%.4f",
+                    pos.take_profit_floor,
+                    current_bid,
+                    pos.sell_price,
+                )
             return
         if pos.exit_reason in {"trailing_stop", "thesis_decay"}:
             if current_bid > pos.sell_price:
