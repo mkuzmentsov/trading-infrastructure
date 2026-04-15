@@ -1,4 +1,6 @@
 .idea
+.DS_Store
+__pycache__/
 
 .venv
 
@@ -35,3 +37,5 @@ ai/inputs
 ai/outputs
 ai/hf-models
 /polymarket/k8s/helm/polymarket-btc-bot/update-log/
+/polymarket/k8s/helm/polymarket-btc-bot/pm-btc-logs_*
+/polymarket/k8s/helm/polymarket-portfolio-bot/pm-portfolio-logs_*
