@@ -9,3 +9,5 @@ files/scripts/__pycache__/
 
 # Optional local notes
 ANALYSIS_WORKFLOW.md
+
+pm-btc-logs_*

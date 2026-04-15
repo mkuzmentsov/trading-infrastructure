@@ -1,0 +1,62 @@
+botName: polymarket-portfolio-bot
+
+image:
+  repository: mkuzmentsov/pm-bot
+  tag: "0.4"
+  pullPolicy: IfNotPresent
+
+bot:
+  dryRun: "true"
+  claudeEnabled: "true"
+  claudeModel: "claude-opus-4-6"
+  # Loop cadence — 3 hours
+  loopIntervalSecs: "10800"
+  # Min 24h volume (USD) to consider a market a candidate
+  minMarketVolume: "10000"
+  # Candidate markets sent to Claude each cycle (minimum guideline)
+  maxCandidates: "50"
+  # Per-cycle deploy cap as fraction of free balance (0.20 = 20%)
+  maxDeployFraction: "0.20"
+  # Min probability edge for Claude to call out as candidate (0.05 = 5%)
+  minEdge: "0.05"
+  # Absolute dust floor per bet (USDC) — sizes below this are rejected.
+  # Claude decides actual sizes based on balance and conviction.
+  betSizeMin: "1.0"
+  # Hard entry price ceiling (skip outcomes priced above this)
+  maxEntryPrice: "0.60"
+  # Only consider markets resolving at least this many days away
+  minDaysToClose: "30"
+  # Hard cap on total open positions
+  maxOpenPositions: "30"
+  # Polygon RPC endpoint used for on-chain redemption of resolved positions
+  polygonRpcUrl: "https://rpc.ankr.com/polygon"
+
+credentials:
+  anthropicApiKey: ""
+  polymarketPrivateKey: ""
+  polymarketAddress: ""
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  polymarketSignatureType: "0"   # 0 = EOA, 2 = Gnosis Safe
+  polymarketFunder: ""
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 256Mi
+    cpu: 200m

@@ -56,6 +56,7 @@ from config import (
     POLYMARKET_PK,
     REENTRY_EDGE_PENALTY,
     SL_ARM_DELAY_SECS,
+    SL_MIN_ADVERSE_BTC,
     STOP_LOSS_MARKET_LIMIT,
     ULTRA_CHEAP_SL_DELAY_SECS,
     ULTRA_CHEAP_TAIL_PRICE,
@@ -792,6 +793,54 @@ async def _manage_position(clob) -> None:
     if seconds_left <= 90:
         stop_loss_gap *= 0.75
 
+    # TP abandonment: if a take_profit is resting but bid has collapsed back to
+    # SL territory, cancel it so the SL / late-bar-cut branches below can fire.
+    # Without this, an armed TP stays "sticky" at floor forever while bid decays,
+    # and the position bleeds to redemption.
+    if (
+        pos.sell_order_id
+        and pos.exit_reason == "take_profit"
+        and current_bid <= pos.entry_price - stop_loss_gap
+    ):
+        log.info(
+            "TAKE_PROFIT abandoned — bid=%.4f fell to SL line  entry=%.4f  gap=%.4f  order=%s",
+            current_bid, pos.entry_price, stop_loss_gap, pos.sell_order_id,
+        )
+        if not DRY_RUN:
+            canceled = await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+            if canceled:
+                pos_store.clear_sell_order()
+            else:
+                log.info("TP abandon cancel failed — leaving resting order in place")
+                return
+        else:
+            pos_store.clear_sell_order()
+
+    # Late-bar panic exit: within the final 45s, if we're meaningfully underwater,
+    # cancel any resting exit (typically an unreachable take_profit at entry+0.08)
+    # and sell at the current bid. Without this, losing positions get parked at the
+    # bar boundary (hold_to_expiry) and redeem to 0.
+    if seconds_left <= 45 and unrealized <= -0.05:
+        stale_tp_resting = pos.sell_order_id and pos.exit_reason in {"take_profit", "thesis_decay", "trailing_stop"}
+        if not pos.sell_order_id or stale_tp_resting:
+            if stale_tp_resting and not DRY_RUN:
+                log.info(
+                    "LATE_BAR_CUT cancelling resting %s order=%s price=%.4f",
+                    pos.exit_reason, pos.sell_order_id, pos.sell_price,
+                )
+                canceled = await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+                if canceled:
+                    pos_store.clear_sell_order()
+                else:
+                    log.info("LATE_BAR_CUT cancel failed — leaving resting order in place")
+                    return
+            log.info(
+                "LATE_BAR_CUT  secs_left=%d  bid=%.4f  entry=%.4f  pnl=%.4f",
+                seconds_left, current_bid, pos.entry_price, unrealized,
+            )
+            await _exit_position(clob, pos, current_bid, reason="late_bar_cut")
+            return
+
     # Stop-loss arm delay: don't trigger SL for the first N seconds after entry.
     # Ultra-cheap tail entries (low entry price) get a longer delay.
     time_held = time.time() - pos.entry_time
@@ -811,12 +860,31 @@ async def _manage_position(clob) -> None:
         else:
             btc_distance = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
             adverse_move = btc_distance if pos.direction == "DOWN" else -btc_distance
-            log.info(
-                "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f  held=%.0fs  adverse_btc=%.4f",
-                current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap, time_held, adverse_move,
+            # The BTC-adverse gate filters Polymarket book noise while the bar is
+            # still young. Two escape hatches always let SL fire:
+            #   * bid_collapse: bid has dropped ≥ 2× the stop-loss gap — a real
+            #     move, not jitter.
+            #   * late_bar: within the final 60s, book is authoritative and we
+            #     can't afford to wait for BTC confirmation.
+            bid_collapse = current_bid <= pos.entry_price - 2 * stop_loss_gap
+            gate_active = (
+                adverse_move < SL_MIN_ADVERSE_BTC
+                and seconds_left > 60
+                and not bid_collapse
             )
-            await _exit_position(clob, pos, current_bid, reason="stop_loss")
-            return
+            if gate_active:
+                log.info(
+                    "STOP_LOSS suppressed — BTC not adverse enough  bid=%.4f  entry=%.4f  adverse_btc=%.4f  required=%.4f  secs_left=%d",
+                    current_bid, pos.entry_price, adverse_move, SL_MIN_ADVERSE_BTC, seconds_left,
+                )
+            else:
+                log.info(
+                    "STOP_LOSS  bid=%.4f  entry=%.4f  loss=%.4f  threshold=%.4f  held=%.0fs  adverse_btc=%.4f  late_bar=%s  bid_collapse=%s",
+                    current_bid, pos.entry_price, pos.entry_price - current_bid, stop_loss_gap, time_held, adverse_move,
+                    seconds_left <= 60, bid_collapse,
+                )
+                await _exit_position(clob, pos, current_bid, reason="stop_loss")
+                return
 
     signal = generate_signal(
         cash_amount=0,

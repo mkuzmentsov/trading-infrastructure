@@ -69,8 +69,11 @@ ULTRA_CHEAP_TAIL_EDGE = float(os.getenv("ULTRA_CHEAP_TAIL_EDGE", "0.20"))
 ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT = int(os.getenv("ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT", "90"))
 REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
-SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "45"))
+SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "60"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
+# Adverse BTC drift (log-return, against position direction) required to fire stop-loss.
+# Without this gate, SL triggers on Polymarket bid noise even when BTC hasn't moved against us.
+SL_MIN_ADVERSE_BTC = float(os.getenv("SL_MIN_ADVERSE_BTC", "0.0015"))
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
 EVAL_INTERVAL_SECS = EVAL_INTERVAL_MS / 1000.0

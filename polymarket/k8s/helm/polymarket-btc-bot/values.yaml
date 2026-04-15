@@ -10,22 +10,22 @@ bot:
   dryRun: "true"
   loopIntervalSecs: "300"
   # Signal parameters
-  minEdge: "0.05"        # net edge required after cost buffer
+  minEdge: "0.08"        # net edge required after cost buffer (raised from 0.05 — prior losers had edges 0.09-0.16)
   costBuffer: "0.02"     # fee + slippage allowance deducted from edge
   kellyScale: "0.5"      # half-Kelly sizing
   betSizeMin: "0.50"
   betSizeMax: "5.00"
   entryMinSecondsLeft: "90"
   maxEntrySpread: "0.03"
-  minEntryPrice: "0.20"
-  maxEntryPrice: "0.30"
-  sourceMismatchBuffer: "0.00"
+  minEntryPrice: "0.15"  # widened from 0.20 — narrow band rejected 11k+ viable asks last run
+  maxEntryPrice: "0.40"  # widened from 0.30
+  sourceMismatchBuffer: "0.015"  # raised from 0.00 — accounts for RTDS vs Chainlink quote drift
   modelProbShrink: "0.65"
   modelProbFloor: "0.12"
   modelProbCeil: "0.88"
   maxAbsDrift: "0.004"
   minPositionShares: "6"
-  entryConfirmationTicks: "2"
+  entryConfirmationTicks: "4"  # raised from 2 — filters short-lived edge spikes that get stopped out
   contrarianTailMaxPrice: "0.25"
   contrarianMoveFilter: "0.0015"
   cheapTailEdgeBonus: "0.05"
@@ -39,11 +39,12 @@ bot:
   # Position management
   evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
   entryMakerOffset: "0.02"  # post buy this far below ask (0 = taker-style, crosses spread immediately)
-  takeProfit: "0.15"         # exit if bid rises entry + this
+  takeProfit: "0.08"         # exit if bid rises entry + this (was 0.15; only 2/26 hit it last run)
   stopLoss: "0.08"           # exit if bid falls entry - this
   stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
-  slArmDelaySecs: "20"       # seconds after entry before stop-loss arms (mid-price entries)
+  slArmDelaySecs: "60"       # seconds after entry before stop-loss arms (was 20; SLs fired at arming)
   ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
+  slMinAdverseBtc: "0.0015"  # require BTC to drift 15 bps against us before firing SL (book-noise filter)
   thesisMinBtcDistance: "0.002"   # suppress thesis_decay when BTC is ≥0.2% in our favor (bar clearly winning)
   signalExitEdge: "0.05"     # exit if opposite signal edge >= this
   minExitBid: "0.03"         # don't sell below this price
