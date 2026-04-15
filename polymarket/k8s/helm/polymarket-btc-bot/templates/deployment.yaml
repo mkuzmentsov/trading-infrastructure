@@ -18,6 +18,9 @@ spec:
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
+        {{- if .Files.Glob "files/model/*" }}
+        checksum/model: {{ include (print $.Template.BasePath "/configmap-model.yaml") . | sha256sum }}
+        {{- end }}
     spec:
       {{- if .Values.nodeSelector }}
       nodeSelector:
@@ -39,6 +42,11 @@ spec:
               mountPath: /app/scripts
             - name: logs
               mountPath: /app/logs
+            {{- if .Files.Glob "files/model/*" }}
+            - name: model
+              mountPath: /app/model
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -47,3 +55,8 @@ spec:
             name: {{ include "polymarket-btc-bot.name" . }}-script
         - name: logs
           emptyDir: {}
+        {{- if .Files.Glob "files/model/*" }}
+        - name: model
+          configMap:
+            name: {{ include "polymarket-btc-bot.name" . }}-model
+        {{- end }}

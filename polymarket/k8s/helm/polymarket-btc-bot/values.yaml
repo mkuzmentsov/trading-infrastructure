@@ -2,7 +2,7 @@ botName: polymarket-btc-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot
-  tag: "0.4"
+  tag: "0.5"
   pullPolicy: IfNotPresent
 
 bot:
@@ -15,6 +15,7 @@ bot:
   kellyScale: "0.5"      # half-Kelly sizing
   betSizeMin: "0.50"
   betSizeMax: "5.00"
+  maxBudgetFraction: "0.10"
   entryMinSecondsLeft: "90"
   maxEntrySpread: "0.03"
   minEntryPrice: "0.15"  # widened from 0.20 — narrow band rejected 11k+ viable asks last run
@@ -23,6 +24,8 @@ bot:
   modelProbShrink: "0.65"
   modelProbFloor: "0.12"
   modelProbCeil: "0.88"
+  signalModel: "math"    # one of: math, ml, blend
+  mlBlendWeight: "0.50"  # only used when signalModel=blend
   maxAbsDrift: "0.004"
   minPositionShares: "6"
   entryConfirmationTicks: "4"  # raised from 2 — filters short-lived edge spikes that get stopped out
@@ -76,14 +79,14 @@ telegram:
   chatId: ""
 
 persistence:
-  enabled: false   # no model file needed anymore
+  enabled: false
 
 nodeSelector:
   topology.kubernetes.io/region: hel1
 
 resources:
   requests:
-    memory: 128Mi   # much lighter without LightGBM/pandas
+    memory: 128Mi
     cpu: 50m
   limits:
     memory: 256Mi

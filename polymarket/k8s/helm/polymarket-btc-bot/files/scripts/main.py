@@ -75,6 +75,7 @@ from config import (
     log,
 )
 from math_signal import generate_signal
+from ml_signal import predict_p_up as ml_predict_p_up
 from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
 from positions import pos_store
 from redemptions import redeem_resolved_positions
@@ -156,7 +157,37 @@ async def _refresh_pm_quotes_if_stale(reason: str) -> bool:
     return refreshed
 
 
-def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int) -> None:
+def _build_ml_snapshot(seconds_left: int) -> dict:
+    """Minimal snapshot shape consumed by ml_signal.predict_p_up. Keep keys
+    aligned with ai/pm_btc/features.py so training and inference use identical
+    inputs."""
+    return {
+        "seconds_left": seconds_left,
+        "btc": {
+            "bar_open": btc_state.bar_open,
+            "current_price": btc_state.current_price,
+            "ret_30s": btc_state.ret_since(30),
+            "ret_60s": btc_state.ret_since(60),
+            "sigma_5m": btc_state.sigma_5m(),
+        },
+        "pm": {
+            "up_bid": pm_state.up_bid,
+            "up_ask": pm_state.up_ask,
+            "up_bid_size": pm_state.up_bid_size,
+            "up_ask_size": pm_state.up_ask_size,
+            "down_bid": pm_state.down_bid,
+            "down_ask": pm_state.down_ask,
+            "down_bid_size": pm_state.down_bid_size,
+            "down_ask_size": pm_state.down_ask_size,
+            "book_events": pm_state.book_events,
+        },
+        "feeds": {
+            "staleness": _feed_staleness(),
+        },
+    }
+
+
+def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int, ml_p_up: float | None) -> None:
     if not TRAINING_LOG_PATH:
         return
 
@@ -206,6 +237,7 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
             "edge": signal.edge,
             "reason": signal.reason,
             "debug": signal.debug,
+            "ml_p_up": ml_p_up,
         },
         "position": {
             "direction": pos.direction if pos else None,
@@ -247,18 +279,20 @@ def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: in
         pm_state.down_bid,
         pm_state.down_ask,
     )
+    p_up_ml = signal.debug.get("p_up_model")
     log.info(
-        "Signal eval [%s] result: action=%s price=%s size=%d p_up=%.4f edge=%.4f reason=%s debug=%s",
+        "Signal eval [%s] result: action=%s price=%s size=%d p_up=%.4f p_up_ml=%s edge=%.4f reason=%s debug=%s",
         context,
         signal.action,
         f"{signal.price:.4f}" if signal.price is not None else "-",
         signal.size,
         signal.p_up,
+        f"{p_up_ml:.4f}" if p_up_ml is not None else "n/a",
         signal.edge,
         signal.reason,
         signal.debug,
     )
-    _write_training_snapshot(context, signal, cash_amount, seconds_left)
+    _write_training_snapshot(context, signal, cash_amount, seconds_left, p_up_ml)
 
 
 async def _init_clob() -> object:
@@ -886,6 +920,7 @@ async def _manage_position(clob) -> None:
                 await _exit_position(clob, pos, current_bid, reason="stop_loss")
                 return
 
+    ml_snapshot = _build_ml_snapshot(seconds_left)
     signal = generate_signal(
         cash_amount=0,
         seconds_left=seconds_left,
@@ -901,6 +936,7 @@ async def _manage_position(clob) -> None:
         up_ask=pm_state.up_ask,
         down_bid=pm_state.down_bid,
         down_ask=pm_state.down_ask,
+        model_p_up=ml_predict_p_up(ml_snapshot),
         require_budget=False,
     )
     _log_signal_debug("manage_position", signal, cash_amount=0, seconds_left=seconds_left)
@@ -1215,6 +1251,7 @@ async def _try_enter(clob, balance: float) -> None:
     if seconds_left < ENTRY_MIN_SECONDS_LEFT:
         return
 
+    ml_snapshot = _build_ml_snapshot(seconds_left)
     signal = generate_signal(
         cash_amount=balance,
         seconds_left=seconds_left,
@@ -1230,6 +1267,7 @@ async def _try_enter(clob, balance: float) -> None:
         up_ask=pm_state.up_ask,
         down_bid=pm_state.down_bid,
         down_ask=pm_state.down_ask,
+        model_p_up=ml_predict_p_up(ml_snapshot),
     )
     _log_signal_debug("try_enter", signal, cash_amount=balance, seconds_left=seconds_left)
 

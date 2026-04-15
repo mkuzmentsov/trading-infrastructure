@@ -30,7 +30,10 @@ LOOP_INTERVAL = int(os.getenv("LOOP_INTERVAL_SECS", "300"))
 
 BET_SIZE_MIN = float(os.getenv("BET_SIZE_MIN", "0.50"))
 BET_SIZE_MAX = float(os.getenv("BET_SIZE_MAX", "5.00"))
+MAX_BUDGET_FRACTION = float(os.getenv("MAX_BUDGET_FRACTION", "0.10"))
 MIN_POSITION_SHARES = int(os.getenv("MIN_POSITION_SHARES", "6"))
+SIGNAL_MODEL = os.getenv("SIGNAL_MODEL", "math").strip().lower()
+ML_BLEND_WEIGHT = float(os.getenv("ML_BLEND_WEIGHT", "0.50"))
 
 # ── Signal parameters ─────────────────────────────────────────────────────────
 MIN_EDGE = float(os.getenv("MIN_EDGE", "0.03"))

@@ -28,14 +28,17 @@ from config import (
     LATE_BAR_EDGE_BONUS,
     LATE_BAR_WINDOW_SECS,
     MAX_ABS_DRIFT,
+    MAX_BUDGET_FRACTION,
     MAX_ENTRY_PRICE,
     MAX_ENTRY_SPREAD,
+    ML_BLEND_WEIGHT,
     MIN_ENTRY_PRICE,
     MIN_EDGE,
     MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
     MODEL_PROB_FLOOR,
     MODEL_PROB_SHRINK,
+    SIGNAL_MODEL,
     SOURCE_MISMATCH_BUFFER,
     ULTRA_CHEAP_TAIL_EDGE,
     ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT,
@@ -142,6 +145,7 @@ def generate_signal(
     up_ask: float,
     down_bid: float,
     down_ask: float,
+    model_p_up: Optional[float] = None,
     require_budget: bool = True,
 ) -> Signal:
     def _no_trade(reason: str, p_up_value: float = 0.5, edge_value: float = 0.0, **kw) -> Signal:
@@ -179,7 +183,25 @@ def generate_signal(
     mu_rem = estimate_remaining_drift(seconds_left, ret_30s, ret_60s, distance, imbalance)
     sigma_rem = estimate_remaining_sigma(seconds_left, sigma_5m)
     confidence_scale = early_bar_confidence_scale(seconds_left)
-    p_up = fair_probability_up(bar_open, current_price, mu_rem, sigma_rem, confidence_scale)
+    p_up_math = fair_probability_up(bar_open, current_price, mu_rem, sigma_rem, confidence_scale)
+    p_up_model = None
+    if model_p_up is not None and math.isfinite(model_p_up):
+        p_up_model = _clip(float(model_p_up), MODEL_PROB_FLOOR, MODEL_PROB_CEIL)
+
+    if SIGNAL_MODEL == "ml" and p_up_model is not None:
+        p_up = p_up_model
+        model_source = "ml"
+    elif SIGNAL_MODEL == "blend" and p_up_model is not None:
+        blend_weight = _clip(ML_BLEND_WEIGHT, 0.0, 1.0)
+        p_up = _clip(
+            (1.0 - blend_weight) * p_up_math + blend_weight * p_up_model,
+            MODEL_PROB_FLOOR,
+            MODEL_PROB_CEIL,
+        )
+        model_source = "blend"
+    else:
+        p_up = p_up_math
+        model_source = "math"
     p_down = 1.0 - p_up
 
     cost_up = _round_trip_cost(up_bid, up_ask)
@@ -198,6 +220,10 @@ def generate_signal(
         distance=round(distance, 6),
         seconds_left=seconds_left,
         confidence_scale=round(confidence_scale, 4),
+        signal_model=SIGNAL_MODEL,
+        model_source=model_source,
+        p_up_math=round(p_up_math, 4),
+        p_up_model=round(p_up_model, 4) if p_up_model is not None else None,
         spread_up=round(spread_up, 4),
         spread_down=round(spread_down, 4),
         cost_up=round(cost_up, 4),
@@ -297,9 +323,7 @@ def generate_signal(
             debug=dbg,
         )
 
-    kf = kelly_fraction(p, price)
-    fraction = min(0.10, KELLY_SCALE * kf)
-    budget = min(cash_amount * fraction, BET_SIZE_MAX)
+    budget = min(cash_amount * MAX_BUDGET_FRACTION, BET_SIZE_MAX)
 
     if budget < BET_SIZE_MIN:
         return _no_trade("Budget below minimum", p_up_value=p_up, edge_value=edge, budget=round(budget, 4), **dbg)
@@ -312,18 +336,6 @@ def generate_signal(
             edge_value=edge,
             size=size,
             budget=round(budget, 4),
-            price=price,
-            **dbg,
-        )
-
-    spend = size * price
-    if spend < 1.0:
-        return _no_trade(
-            "Spend below $1 minimum",
-            p_up_value=p_up,
-            edge_value=edge,
-            spend=round(spend, 4),
-            size=size,
             price=price,
             **dbg,
         )
