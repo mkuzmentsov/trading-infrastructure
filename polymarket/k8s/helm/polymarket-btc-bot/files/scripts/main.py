@@ -1,12 +1,14 @@
 """
-Polymarket BTC direction bot — active trading edition.
+Polymarket BTC 5m direction bot — latency arb + hold-to-expiry.
 
-This patched version fixes the major execution bugs:
-- waits for both Polymarket books to be live before trading
-- reconciles actual filled size / balance before opening a position
-- avoids immediate passive exits after entry
-- ensures CTF approval is refreshed for the actual traded token
-- applies more conservative entry filters through generate_signal()
+Strategy:
+- Uses Binance BTC/USDT feed (1-3s ahead of Chainlink oracle) to detect
+  BTC moves before the Polymarket book reprices.
+- When the PM book is stale relative to the true BTC price, buys the
+  cheap side (UP or DOWN token).
+- Holds to expiry — the edge comes from information advantage at entry,
+  not from active exit management. Payout is binary: 1.00 or 0.00.
+- Falls back to Chainlink-only if Binance is unavailable.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import math
 import os
 import time
 
+from binance_ws import binance_state, run_binance_ws
 from btc_ws import btc_state, run_btc_ws
 from clob import (
     build_clob_client,
@@ -31,6 +34,10 @@ from clob import (
 )
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
+    AVERAGING_MAX_BTC_MOVE,
+    AVERAGING_MIN_SECONDS_LEFT,
+    BINANCE_STALE_SECS,
+    BINANCE_WS_URL,
     BET_SIZE_MAX,
     BET_SIZE_MIN,
     DRIFT_A3,
@@ -45,6 +52,7 @@ from config import (
     EVAL_INTERVAL_MS,
     EVAL_INTERVAL_SECS,
     FEED_STALE_SECS,
+    HOLD_TO_EXPIRY_DEFAULT,
     LOOP_INTERVAL,
     MAX_ENTRY_PRICE,
     MIN_ENTRY_PRICE,
@@ -58,6 +66,7 @@ from config import (
     SL_ARM_DELAY_SECS,
     SL_MIN_ADVERSE_BTC,
     STOP_LOSS_MARKET_LIMIT,
+    STRATEGY_NAME,
     ULTRA_CHEAP_SL_DELAY_SECS,
     ULTRA_CHEAP_TAIL_PRICE,
     TRAINING_EVENT_LOG_PATH,
@@ -74,11 +83,11 @@ from config import (
     WS_HEARTBEAT_SECS,
     log,
 )
-from math_signal import generate_signal
 from ml_signal import predict_p_up as ml_predict_p_up
 from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
 from positions import pos_store
 from redemptions import redeem_resolved_positions
+from strategy import StrategyContext, build_strategy
 from telegram import tg
 
 _approved_ctf_tokens: set[str] = set()
@@ -94,6 +103,7 @@ _sell_cancel_cooldown_until: float = 0.0
 # On the first occurrence we wait for on-chain settlement; on the second we treat it as real.
 _sell_residual_retries: dict[str, int] = {}
 _pos_heartbeat_ts: float = 0.0  # last time we logged a position status line
+_strategy = build_strategy(STRATEGY_NAME)
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -157,6 +167,13 @@ async def _refresh_pm_quotes_if_stale(reason: str) -> bool:
     return refreshed
 
 
+def _binance_price_if_fresh() -> float:
+    """Return Binance BTC price if available and fresh, else 0.0."""
+    if binance_state.ready and binance_state.age() <= BINANCE_STALE_SECS:
+        return binance_state.current_price
+    return 0.0
+
+
 def _build_ml_snapshot(seconds_left: int) -> dict:
     """Minimal snapshot shape consumed by ml_signal.predict_p_up. Keep keys
     aligned with ai/pm_btc/features.py so training and inference use identical
@@ -192,6 +209,7 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
         return
 
     pos = pos_store.position
+    bp = _binance_price_if_fresh()
     record = {
         "ts": round(time.time(), 3),
         "context": context,
@@ -204,6 +222,8 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
         "btc": {
             "bar_open": round(btc_state.bar_open, 4),
             "current_price": round(btc_state.current_price, 4),
+            "binance_price": round(bp, 4) if bp > 0 else None,
+            "binance_age": round(binance_state.age(), 2) if binance_state.ready else None,
             "ret_30s": round(btc_state.ret_since(30), 6),
             "ret_60s": round(btc_state.ret_since(60), 6),
             "sigma_5m": round(btc_state.sigma_5m(), 6),
@@ -263,14 +283,38 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
     _append_jsonl(TRAINING_LOG_PATH, record, "Training snapshot")
 
 
+def _build_strategy_context(cash_amount: float, seconds_left: int, ml_p_up: float | None) -> StrategyContext:
+    return StrategyContext(
+        cash_amount=cash_amount,
+        seconds_left=seconds_left,
+        bar_open=btc_state.bar_open,
+        current_price=btc_state.current_price,
+        ret_30s=btc_state.ret_since(30),
+        ret_60s=btc_state.ret_since(60),
+        sigma_5m=btc_state.sigma_5m(),
+        up_bid=pm_state.up_bid,
+        up_ask=pm_state.up_ask,
+        up_bid_size=pm_state.up_bid_size,
+        up_ask_size=pm_state.up_ask_size,
+        down_bid=pm_state.down_bid,
+        down_ask=pm_state.down_ask,
+        down_bid_size=pm_state.down_bid_size,
+        down_ask_size=pm_state.down_ask_size,
+        binance_price=_binance_price_if_fresh(),
+        ml_p_up=ml_p_up,
+    )
+
+
 def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: int) -> None:
+    bp = _binance_price_if_fresh()
     log.info(
-        "Signal eval [%s] inputs: cash=%.2f secs_left=%d open=%.2f current=%.2f ret30=%.6f ret60=%.6f sigma5m=%.6f up_bid=%.3f up_ask=%.3f down_bid=%.3f down_ask=%.3f",
+        "Signal eval [%s] inputs: cash=%.2f secs_left=%d open=%.2f chainlink=%.2f binance=%.2f ret30=%.6f ret60=%.6f sigma5m=%.6f up_bid=%.3f up_ask=%.3f down_bid=%.3f down_ask=%.3f",
         context,
         cash_amount,
         seconds_left,
         btc_state.bar_open,
         btc_state.current_price,
+        bp if bp > 0 else 0.0,
         btc_state.ret_since(30),
         btc_state.ret_since(60),
         btc_state.sigma_5m(),
@@ -280,17 +324,19 @@ def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: in
         pm_state.down_ask,
     )
     p_up_ml = signal.debug.get("p_up_model")
+    price_src = signal.debug.get("price_source", "?")
+    divergence = signal.debug.get("divergence")
     log.info(
-        "Signal eval [%s] result: action=%s price=%s size=%d p_up=%.4f p_up_ml=%s edge=%.4f reason=%s debug=%s",
+        "Signal eval [%s] result: action=%s price=%s size=%d p_up=%.4f edge=%.4f src=%s div=%s reason=%s",
         context,
         signal.action,
         f"{signal.price:.4f}" if signal.price is not None else "-",
         signal.size,
         signal.p_up,
-        f"{p_up_ml:.4f}" if p_up_ml is not None else "n/a",
         signal.edge,
+        price_src,
+        f"{divergence:.6f}" if divergence is not None else "n/a",
         signal.reason,
-        signal.debug,
     )
     _write_training_snapshot(context, signal, cash_amount, seconds_left, p_up_ml)
 
@@ -316,6 +362,10 @@ async def _wait_for_ready(timeout: float = 60.0) -> bool:
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         if btc_state.ready and pm_state.ready:
+            if binance_state.ready:
+                log.info("All feeds ready (including Binance)")
+            else:
+                log.info("Core feeds ready (Binance still connecting — will use Chainlink fallback)")
             return True
         await asyncio.sleep(1)
     return False
@@ -394,11 +444,12 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
     held_count = len(pos_store.held_positions)
     prefix = f"{reason}  " if reason else ""
     log.info(
-        "%sFeed diag  fresh=%s  source=%s price=%.2f open=%.2f age=%.1fs tick=%s pm_ready=%s up=%.3f/%.3f x %.1f age=%.1fs down=%.3f/%.3f x %.1f age=%.1fs pos=%s held=%d pending=%s rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
+        "%sFeed diag  fresh=%s  source=%s price=%.2f binance=%.2f open=%.2f age=%.1fs tick=%s pm_ready=%s up=%.3f/%.3f x %.1f age=%.1fs down=%.3f/%.3f x %.1f age=%.1fs pos=%s held=%d pending=%s binance_ok=%s binance_age=%.1fs rtds_session=%d rtds_msg_age=%.1fs rtds_msg=%s rtds_err=%s price_updates=%d pm_session=%d pm_events=%d pm_msg_age=%.1fs",
         prefix,
         _feeds_are_fresh(),
         btc_state.price_source,
         btc_state.current_price,
+        binance_state.current_price if binance_state.ready else 0.0,
         btc_state.bar_open,
         ages["price_age"],
         btc_state.last_round_id,
@@ -414,6 +465,8 @@ def _log_feed_diag(force: bool = False, reason: str = "") -> None:
         pos_desc,
         held_count,
         "yes" if pos_store.pending_buy else "no",
+        binance_state.ready,
+        binance_state.age() if binance_state.ready else -1,
         btc_state.rtds_session_id,
         now - btc_state.last_rtds_message_at if btc_state.last_rtds_message_at > 0 else -1,
         btc_state.last_rtds_message_kind,
@@ -570,6 +623,14 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         entry_p_up=pb.p_up,
         entry_seconds_left=pb.seconds_left,
     )
+    # Latency arb strategy: hold to expiry. The edge is at entry time,
+    # not from active exit management. Let the binary resolve.
+    if _strategy.entry_hold_to_expiry() and pos_store.position:
+        pos_store.position.hold_to_expiry = True
+        log.info(
+            "Hold-to-expiry set on fill  dir=%s  shares=%d  price=%.4f  edge=%.4f",
+            pb.direction, shares, entry_price, pb.edge,
+        )
     pos_store.clear_pending_buy()
     _write_training_event(
         "position_opened",
@@ -580,6 +641,7 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         entry_edge=round(pb.edge, 4),
         entry_p_up=round(pb.p_up, 4),
         entry_seconds_left=pb.seconds_left,
+        hold_to_expiry=_strategy.entry_hold_to_expiry(),
         dry_run=DRY_RUN,
     )
 
@@ -588,6 +650,77 @@ def _exit_target_price(current_bid: float, reason: str) -> float:
     if reason in {"stop_loss", "signal_flip", "take_profit"}:
         return max(MIN_EXIT_BID, current_bid - AGGRESSIVE_EXIT_SLIPPAGE)
     return max(current_bid, MIN_EXIT_BID)
+
+
+async def _average_down(clob, pos, seconds_left: int) -> bool:
+    avg_ask = pm_state.up_ask if pos.direction == "UP" else pm_state.down_ask
+
+    balance = float(os.getenv("DRY_RUN_BALANCE", "100.0")) if DRY_RUN else await _get_balance(clob)
+    budget = min(balance, BET_SIZE_MAX)
+    new_shares = math.floor(budget / avg_ask) if avg_ask > 0 else 0
+
+    if new_shares < MIN_POSITION_SHARES:
+        log.warning(
+            "AVERAGE_DOWN blocked — insufficient budget  dir=%s  ask=%.4f  budget=%.2f  shares=%d  min=%d",
+            pos.direction, avg_ask, budget, new_shares, MIN_POSITION_SHARES,
+        )
+        return False
+
+    spend = round(new_shares * avg_ask, 2)
+    log.info(
+        "AVERAGE_DOWN  dir=%s  old_entry=%.4f  old_shares=%d  add_price=%.4f  add_shares=%d  spend=$%.2f  secs_left=%d",
+        pos.direction, pos.entry_price, pos.shares, avg_ask, new_shares, spend, seconds_left,
+    )
+
+    if DRY_RUN:
+        order_id = "dry_run_avg"
+    else:
+        try:
+            order_id = await asyncio.to_thread(
+                place_bet, clob, pos.token_id, new_shares, avg_ask, pos.condition_id, pm_state.taker_fee
+            )
+        except Exception as exc:
+            log.error("AVERAGE_DOWN order failed: %s", exc)
+            return False
+
+    if not order_id:
+        log.warning("AVERAGE_DOWN order returned no order_id — skipping")
+        return False
+
+    total_shares = pos.shares + new_shares
+    new_avg_price = round((pos.shares * pos.entry_price + new_shares * avg_ask) / total_shares, 4)
+
+    log.info(
+        "AVERAGE_DOWN filled  new_avg_entry=%.4f  total_shares=%d  order=%s",
+        new_avg_price, total_shares, order_id,
+    )
+    tg(
+        f"📉 <b>Averaged down</b>  {pos.direction}  "
+        f"entry {pos.entry_price:.3f}→{new_avg_price:.3f}  "
+        f"shares {pos.shares}→{total_shares}  +${spend:.2f}"
+    )
+    _write_training_event(
+        "averaged_down",
+        direction=pos.direction,
+        token_id=pos.token_id,
+        old_entry=pos.entry_price,
+        old_shares=pos.shares,
+        add_price=avg_ask,
+        add_shares=new_shares,
+        new_avg_entry=new_avg_price,
+        total_shares=total_shares,
+        seconds_left=seconds_left,
+        order_id=order_id,
+        dry_run=DRY_RUN,
+    )
+
+    pos.entry_price = new_avg_price
+    pos.shares = total_shares
+    pos.averaged = True
+    pos_store.clear_sell_order()
+    _balance_cache[1] = 0.0
+
+    return True
 
 
 async def _manage_position(clob) -> None:
@@ -921,69 +1054,23 @@ async def _manage_position(clob) -> None:
                 return
 
     ml_snapshot = _build_ml_snapshot(seconds_left)
-    signal = generate_signal(
-        cash_amount=0,
-        seconds_left=seconds_left,
-        bar_open=btc_state.bar_open,
-        current_price=btc_state.current_price,
-        ret_30s=btc_state.ret_since(30),
-        ret_60s=btc_state.ret_since(60),
-        # Use one canonical outcome book for imbalance to avoid UP/DOWN cancellation.
-        bid_vol_top=pm_state.up_bid_size,
-        ask_vol_top=pm_state.up_ask_size,
-        sigma_5m=btc_state.sigma_5m(),
-        up_bid=pm_state.up_bid,
-        up_ask=pm_state.up_ask,
-        down_bid=pm_state.down_bid,
-        down_ask=pm_state.down_ask,
-        model_p_up=ml_predict_p_up(ml_snapshot),
-        require_budget=False,
+    ml_p_up = ml_predict_p_up(ml_snapshot)
+    strategy_decision = _strategy.evaluate_position(
+        _build_strategy_context(0.0, seconds_left, ml_p_up),
+        pos,
+        current_bid,
+        now,
     )
-    _log_signal_debug("manage_position", signal, cash_amount=0, seconds_left=seconds_left)
-    opposite_action = "BUY_DOWN" if pos.direction == "UP" else "BUY_UP"
-    if signal.action == opposite_action and signal.edge >= SIGNAL_EXIT_EDGE:
-        log.info("SIGNAL_FLIP  holding=%s  new=%s  edge=%.4f", pos.direction, signal.action, signal.edge)
-        await _exit_position(clob, pos, current_bid, reason="signal_flip")
+    if strategy_decision.signal is not None:
+        _log_signal_debug("manage_position", strategy_decision.signal, cash_amount=0, seconds_left=seconds_left)
+    if strategy_decision.action == "average_down":
+        averaged = await _average_down(clob, pos, seconds_left)
+        if averaged:
+            return
+    if strategy_decision.exit_reason:
+        await _exit_position(clob, pos, current_bid, reason=strategy_decision.exit_reason)
         return
-
-    current_side_edge = 0.0
-    if pos.direction == "UP":
-        current_side_edge = float(signal.debug.get("net_up", signal.edge if signal.action == "BUY_UP" else 0.0))
-    else:
-        current_side_edge = float(signal.debug.get("net_down", signal.edge if signal.action == "BUY_DOWN" else 0.0))
-
-    thesis_floor = max(THESIS_MIN_EDGE, pos.entry_edge * THESIS_EDGE_FRACTION)
-    # Suppress thesis_decay if the bar has already moved decisively in our favor.
-    # A large btc_distance means the bar is very likely to resolve for us — don't
-    # exit on a noisy signal tick when we're clearly winning.
-    btc_distance = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
-    bar_winning = (
-        (pos.direction == "DOWN" and btc_distance < -THESIS_MIN_BTC_DISTANCE)
-        or (pos.direction == "UP"  and btc_distance >  THESIS_MIN_BTC_DISTANCE)
-    )
-    if (
-        unrealized >= THESIS_PROFIT_LOCK
-        and current_side_edge < thesis_floor
-        and not bar_winning
-        and not (pos.sell_order_id and pos.exit_reason == "thesis_decay")
-    ):
-        log.info(
-            "THESIS_DECAY  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  edge_now=%.4f  edge_floor=%.4f  btc_dist=%.4f",
-            pos.direction,
-            current_bid,
-            pos.entry_price,
-            unrealized,
-            current_side_edge,
-            thesis_floor,
-            btc_distance,
-        )
-        await _exit_position(clob, pos, current_bid, reason="thesis_decay")
-        return
-    if bar_winning and unrealized >= THESIS_PROFIT_LOCK and current_side_edge < thesis_floor:
-        log.info(
-            "THESIS_DECAY suppressed — bar winning  dir=%s  bid=%.4f  entry=%.4f  pnl=%.4f  btc_dist=%.4f  threshold=%.4f  edge_now=%.4f",
-            pos.direction, current_bid, pos.entry_price, unrealized, btc_distance, THESIS_MIN_BTC_DISTANCE, current_side_edge,
-        )
+    current_side_edge = strategy_decision.current_side_edge
 
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
         if pos.exit_reason == "take_profit":
@@ -1252,23 +1339,8 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     ml_snapshot = _build_ml_snapshot(seconds_left)
-    signal = generate_signal(
-        cash_amount=balance,
-        seconds_left=seconds_left,
-        bar_open=btc_state.bar_open,
-        current_price=btc_state.current_price,
-        ret_30s=btc_state.ret_since(30),
-        ret_60s=btc_state.ret_since(60),
-        # Use one canonical outcome book for imbalance to avoid UP/DOWN cancellation.
-        bid_vol_top=pm_state.up_bid_size,
-        ask_vol_top=pm_state.up_ask_size,
-        sigma_5m=btc_state.sigma_5m(),
-        up_bid=pm_state.up_bid,
-        up_ask=pm_state.up_ask,
-        down_bid=pm_state.down_bid,
-        down_ask=pm_state.down_ask,
-        model_p_up=ml_predict_p_up(ml_snapshot),
-    )
+    ml_p_up = ml_predict_p_up(ml_snapshot)
+    signal = _strategy.evaluate_entry(_build_strategy_context(balance, seconds_left, ml_p_up))
     _log_signal_debug("try_enter", signal, cash_amount=balance, seconds_left=seconds_left)
 
     log.info("Signal: %s  p_up=%.3f  edge=%.4f  %s", signal.action, signal.p_up, signal.edge, signal.reason)
@@ -1399,8 +1471,8 @@ async def _try_enter(clob, balance: float) -> None:
 
     if DRY_RUN:
         log.info(
-            "DRY_RUN — would buy %s  price=%.4f  shares=%d  spend=$%.2f  market=%s",
-            signal.action, entry_price, entry_size, spend, pm_state.question[:60],
+            "DRY_RUN — would buy %s  price=%.4f  shares=%d  spend=$%.2f  market=%s  hold=%s",
+            signal.action, entry_price, entry_size, spend, pm_state.question[:60], _strategy.entry_hold_to_expiry(),
         )
         pos_store.open(
             condition_id=pm_state.condition_id,
@@ -1413,6 +1485,8 @@ async def _try_enter(clob, balance: float) -> None:
             entry_p_up=signal.p_up,
             entry_seconds_left=seconds_left,
         )
+        if _strategy.entry_hold_to_expiry() and pos_store.position:
+            pos_store.position.hold_to_expiry = True
         _write_training_event(
             "position_opened",
             direction=direction,
@@ -1423,6 +1497,7 @@ async def _try_enter(clob, balance: float) -> None:
             entry_p_up=round(signal.p_up, 4),
             entry_seconds_left=seconds_left,
             spend=round(spend, 2),
+            hold_to_expiry=_strategy.entry_hold_to_expiry(),
             source="dry_run_entry",
             dry_run=True,
         )
@@ -1523,17 +1598,19 @@ async def _tick(clob) -> None:
 
 async def main() -> None:
     log.info("=" * 60)
-    log.info("Polymarket BTC Bot (patched) starting")
+    log.info("Polymarket BTC Bot")
     log.info("  DRY_RUN=%s  MIN_EDGE=%.3f  EVAL_INTERVAL=%dms", DRY_RUN, MIN_EDGE, EVAL_INTERVAL_MS)
-    log.info("  TP=%.3f  SL=%.3f  SIGNAL_EXIT=%.3f  REPLACE_GAP=%.3f", TAKE_PROFIT, STOP_LOSS, SIGNAL_EXIT_EDGE, ORDER_REPLACE_GAP)
-    log.info("  SL_ARM_DELAY=%ds  TRAILING_ARM_GAIN=%.3f  TRAILING_STOP_GAP=%.3f", SL_ARM_DELAY_SECS, TRAILING_ARM_GAIN, TRAILING_STOP_GAP)
-    log.info("  THESIS_PROFIT_LOCK=%.3f  THESIS_MIN_BTC_DIST=%.4f", THESIS_PROFIT_LOCK, THESIS_MIN_BTC_DISTANCE)
-    log.info("  ENTRY_MAKER_OFFSET=%.3f  DRIFT_A3=%.4f", ENTRY_MAKER_OFFSET, DRIFT_A3)
+    log.info("  ENTRY_HOLD_TO_EXPIRY=%s  MAX_ENTRY_PRICE=%.2f  ENTRY_MIN_SECS=%d", _strategy.entry_hold_to_expiry(), MAX_ENTRY_PRICE, ENTRY_MIN_SECONDS_LEFT)
+    log.info("  BINANCE_WS=%s  BINANCE_STALE=%.1fs", bool(BINANCE_WS_URL), BINANCE_STALE_SECS)
+    log.info("  CONFIRMATION_TICKS=%d  ENTRY_MAKER_OFFSET=%.3f", ENTRY_CONFIRMATION_TICKS, ENTRY_MAKER_OFFSET)
+    for detail in _strategy.startup_details():
+        log.info("  %s", detail)
     log.info("=" * 60)
 
     if not POLYMARKET_PK and not DRY_RUN:
         raise RuntimeError("POLYMARKET_PK not set and DRY_RUN=false — refusing to start")
 
+    asyncio.create_task(run_binance_ws(), name="binance_ws")
     asyncio.create_task(run_btc_ws(), name="btc_ws")
     asyncio.create_task(run_pm_ws(), name="pm_ws")
 

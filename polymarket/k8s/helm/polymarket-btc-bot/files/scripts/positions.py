@@ -36,6 +36,7 @@ class Position:
     sell_price: float = 0.0  # price we're offering
     hold_to_expiry: bool = False  # True when position is too small to sell via limit order
     exit_reason: str = ""
+    averaged: bool = False
 
 
 @dataclass

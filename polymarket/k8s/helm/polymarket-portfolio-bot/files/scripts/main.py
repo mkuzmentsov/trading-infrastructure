@@ -262,8 +262,11 @@ def run_cycle() -> None:
                     logger.info(f"  OPEN skipped — price {outcome.price:.1%} > ceiling {MAX_ENTRY_PRICE:.0%}  '{market.question[:55]}'")
                     cycle_actions.append({"kind": "OPEN", "cid": market.condition_id, "outcome": outcome.label, "price": outcome.price, "size": size, "why": why, "executed": False, "error": "price_over_ceiling"})
                     continue
-                if len(positions) + opened_count >= MAX_OPEN_POSITIONS:
-                    logger.info(f"  OPEN skipped — portfolio cap {MAX_OPEN_POSITIONS} reached")
+                if live_count + opened_count >= MAX_OPEN_POSITIONS:
+                    logger.info(
+                        f"  OPEN skipped — live portfolio cap {MAX_OPEN_POSITIONS} reached "
+                        f"(live={live_count} redeemable={redeemable_count})"
+                    )
                     cycle_actions.append({"kind": "OPEN", "cid": market.condition_id, "outcome": outcome.label, "size": size, "why": why, "executed": False, "error": "portfolio_cap"})
                     continue
                 if size < BET_SIZE_MIN:

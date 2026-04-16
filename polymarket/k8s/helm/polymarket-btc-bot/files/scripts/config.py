@@ -34,25 +34,27 @@ MAX_BUDGET_FRACTION = float(os.getenv("MAX_BUDGET_FRACTION", "0.10"))
 MIN_POSITION_SHARES = int(os.getenv("MIN_POSITION_SHARES", "6"))
 SIGNAL_MODEL = os.getenv("SIGNAL_MODEL", "math").strip().lower()
 ML_BLEND_WEIGHT = float(os.getenv("ML_BLEND_WEIGHT", "0.50"))
+STRATEGY_NAME = os.getenv("STRATEGY_NAME", "latency_arb_hold").strip().lower()
 
 # ── Signal parameters ─────────────────────────────────────────────────────────
-MIN_EDGE = float(os.getenv("MIN_EDGE", "0.03"))
+MIN_EDGE = float(os.getenv("MIN_EDGE", "0.04"))
 COST_BUFFER = float(os.getenv("COST_BUFFER", "0.02"))
 KELLY_SCALE = float(os.getenv("KELLY_SCALE", "0.5"))
+TAKER_FEE_BPS = float(os.getenv("TAKER_FEE_BPS", "0"))  # Polymarket taker fee in basis points
 
 DRIFT_A1 = float(os.getenv("DRIFT_A1", "1.8"))
 DRIFT_A2 = float(os.getenv("DRIFT_A2", "1.2"))
 DRIFT_A3 = float(os.getenv("DRIFT_A3", "0.003"))
 DRIFT_A4 = float(os.getenv("DRIFT_A4", "0.8"))
 
-ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "90"))
-MAX_ENTRY_SPREAD = float(os.getenv("MAX_ENTRY_SPREAD", "0.03"))
+ENTRY_MIN_SECONDS_LEFT = int(os.getenv("ENTRY_MIN_SECONDS_LEFT", "60"))
+MAX_ENTRY_SPREAD = float(os.getenv("MAX_ENTRY_SPREAD", "0.04"))
 MIN_ENTRY_PRICE = float(os.getenv("MIN_ENTRY_PRICE", "0.05"))
-MAX_ENTRY_PRICE = float(os.getenv("MAX_ENTRY_PRICE", "0.40"))
+MAX_ENTRY_PRICE = float(os.getenv("MAX_ENTRY_PRICE", "0.60"))
 SOURCE_MISMATCH_BUFFER = float(os.getenv("SOURCE_MISMATCH_BUFFER", "0.01"))
 MODEL_PROB_SHRINK = float(os.getenv("MODEL_PROB_SHRINK", "0.65"))
-MODEL_PROB_FLOOR = float(os.getenv("MODEL_PROB_FLOOR", "0.12"))
-MODEL_PROB_CEIL = float(os.getenv("MODEL_PROB_CEIL", "0.88"))
+MODEL_PROB_FLOOR = float(os.getenv("MODEL_PROB_FLOOR", "0.05"))
+MODEL_PROB_CEIL = float(os.getenv("MODEL_PROB_CEIL", "0.95"))
 EARLY_BAR_MIN_CONFIDENCE = float(os.getenv("EARLY_BAR_MIN_CONFIDENCE", "0.35"))
 EARLY_BAR_RAMP_SECS = int(os.getenv("EARLY_BAR_RAMP_SECS", "90"))
 ENTRY_ORDER_TIMEOUT_SECS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECS", "18"))
@@ -61,7 +63,7 @@ ENTRY_REPLACE_MIN_AGE_SECS = int(os.getenv("ENTRY_REPLACE_MIN_AGE_SECS", "6"))
 ENTRY_REPLACE_GAP = float(os.getenv("ENTRY_REPLACE_GAP", "0.02"))
 ENTRY_BOOK_MAX_TAKE_FRACTION = float(os.getenv("ENTRY_BOOK_MAX_TAKE_FRACTION", "0.35"))
 MAX_ABS_DRIFT = float(os.getenv("MAX_ABS_DRIFT", "0.004"))
-ENTRY_CONFIRMATION_TICKS = int(os.getenv("ENTRY_CONFIRMATION_TICKS", "2"))
+ENTRY_CONFIRMATION_TICKS = int(os.getenv("ENTRY_CONFIRMATION_TICKS", "1"))
 CONTRARIAN_TAIL_MAX_PRICE = float(os.getenv("CONTRARIAN_TAIL_MAX_PRICE", "0.25"))
 CONTRARIAN_MOVE_FILTER = float(os.getenv("CONTRARIAN_MOVE_FILTER", "0.0015"))
 CHEAP_TAIL_EDGE_BONUS = float(os.getenv("CHEAP_TAIL_EDGE_BONUS", "0.05"))
@@ -74,9 +76,22 @@ REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "60"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
-# Adverse BTC drift (log-return, against position direction) required to fire stop-loss.
-# Without this gate, SL triggers on Polymarket bid noise even when BTC hasn't moved against us.
 SL_MIN_ADVERSE_BTC = float(os.getenv("SL_MIN_ADVERSE_BTC", "0.0015"))
+AVERAGING_MIN_SECONDS_LEFT = int(os.getenv("AVERAGING_MIN_SECONDS_LEFT", "150"))
+AVERAGING_MAX_BTC_MOVE = float(os.getenv("AVERAGING_MAX_BTC_MOVE", "0.003"))
+
+# ── Smart entry filters ──────────────────────────────────────────────────────
+MIN_BTC_DISTANCE = float(os.getenv("MIN_BTC_DISTANCE", "0.0004"))
+MIN_BOOK_DIVERGENCE = float(os.getenv("MIN_BOOK_DIVERGENCE", "0.04"))
+LATE_ENTRY_SECS = int(os.getenv("LATE_ENTRY_SECS", "90"))
+LATE_ENTRY_EDGE_DISCOUNT = float(os.getenv("LATE_ENTRY_EDGE_DISCOUNT", "0.30"))
+
+# ── Binance feed ─────────────────────────────────────────────────────────────
+BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@aggTrade")
+BINANCE_STALE_SECS = float(os.getenv("BINANCE_STALE_SECS", "5.0"))
+
+# ── Hold-to-expiry strategy ─────────────────────────────────────────────────
+HOLD_TO_EXPIRY_DEFAULT = os.getenv("HOLD_TO_EXPIRY_DEFAULT", "true").lower() == "true"
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
 EVAL_INTERVAL_SECS = EVAL_INTERVAL_MS / 1000.0

@@ -25,6 +25,7 @@ from config import (
 from telegram import send_telegram
 
 logger = logging.getLogger(__name__)
+_warned_neg_risk_conditions: set[str] = set()
 
 
 # ── Polygon RPC ───────────────────────────────────────────────────────────────
@@ -241,9 +242,28 @@ def redeem_resolved_positions() -> None:
         condition_id = pos.get("conditionId", "")
         token_id     = pos.get("asset", "")
         question     = pos.get("title", condition_id[:16])
+        negative_risk = bool(pos.get("negativeRisk") or pos.get("negRisk") or False)
 
         if not condition_id or not token_id:
             logger.warning(f"  redeem: missing conditionId/asset on {pos}")
+            continue
+
+        # Negative-risk markets settle through a different path than the plain
+        # CTF redeemPositions(..., [1, 2]) flow used by the BTC bot. Replaying
+        # this calldata on neg-risk positions burns gas but does not clear the
+        # ERC-1155 balance, so skip and alert once instead of retrying forever.
+        if negative_risk:
+            logger.warning(
+                "  redeem: skipping neg-risk position  cid=%s  question='%s'",
+                condition_id[:16], question[:60],
+            )
+            if condition_id not in _warned_neg_risk_conditions:
+                _warned_neg_risk_conditions.add(condition_id)
+                send_telegram(
+                    f"⚠️ <b>Redeem skipped</b>\n"
+                    f"Negative-risk market requires a different redemption path.\n"
+                    f"{question[:120]}"
+                )
             continue
 
         try:

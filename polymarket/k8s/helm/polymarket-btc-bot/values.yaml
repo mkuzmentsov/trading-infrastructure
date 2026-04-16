@@ -9,53 +9,64 @@ bot:
   appLogLevel: "INFO"
   dryRun: "true"
   loopIntervalSecs: "300"
-  # Signal parameters
-  minEdge: "0.08"        # net edge required after cost buffer (raised from 0.05 — prior losers had edges 0.09-0.16)
-  costBuffer: "0.02"     # fee + slippage allowance deducted from edge
-  kellyScale: "0.5"      # half-Kelly sizing
+  # ── Latency arb signal ──────────────────────────────────────────────────────
+  minEdge: "0.04"          # edge = fair_p - ask_price - fee (no round-trip cost with hold-to-expiry)
+  costBuffer: "0.02"
+  kellyScale: "0.5"
   betSizeMin: "0.50"
   betSizeMax: "5.00"
   maxBudgetFraction: "0.10"
-  entryMinSecondsLeft: "90"
-  maxEntrySpread: "0.03"
-  minEntryPrice: "0.15"  # widened from 0.20 — narrow band rejected 11k+ viable asks last run
-  maxEntryPrice: "0.40"  # widened from 0.30
-  sourceMismatchBuffer: "0.015"  # raised from 0.00 — accounts for RTDS vs Chainlink quote drift
+  takerFeeBps: "0"         # Polymarket taker fee in basis points
+  entryMinSecondsLeft: "30"   # enter late — higher certainty, real latency arb
+  maxEntrySpread: "0.04"      # slightly wider tolerance
+  minEntryPrice: "0.05"
+  maxEntryPrice: "0.60"       # wider band — hold-to-expiry captures full 1.00 payout
+  sourceMismatchBuffer: "0.015"
+  strategyName: "latency_arb_hold"
   modelProbShrink: "0.65"
-  modelProbFloor: "0.12"
-  modelProbCeil: "0.88"
-  signalModel: "math"    # one of: math, ml, blend
-  mlBlendWeight: "0.50"  # only used when signalModel=blend
+  modelProbFloor: "0.05"      # wider probability range (was 0.12)
+  modelProbCeil: "0.95"       # wider probability range (was 0.88)
+  signalModel: "math"
+  mlBlendWeight: "0.50"
   maxAbsDrift: "0.004"
   minPositionShares: "6"
-  entryConfirmationTicks: "4"  # raised from 2 — filters short-lived edge spikes that get stopped out
+  entryConfirmationTicks: "1"  # react fast — latency is the edge
   contrarianTailMaxPrice: "0.25"
   contrarianMoveFilter: "0.0015"
   cheapTailEdgeBonus: "0.05"
   lateBarEdgeBonus: "0.04"
   lateBarWindowSecs: "75"
-  # Drift estimation coefficients (hand-tuned; backtest to refine)
-  driftA1: "1.8"         # 30s momentum weight
-  driftA2: "1.2"         # 60s momentum weight
-  driftA3: "0.0003"      # book imbalance weight (reduced 10x to prevent imbalance dominating signal)
-  driftA4: "0.8"         # distance-from-open weight
-  # Position management
-  evalIntervalMs: "1000"     # signal re-evaluation frequency (milliseconds)
-  entryMakerOffset: "0.02"  # post buy this far below ask (0 = taker-style, crosses spread immediately)
-  takeProfit: "0.08"         # exit if bid rises entry + this (was 0.15; only 2/26 hit it last run)
-  stopLoss: "0.08"           # exit if bid falls entry - this
-  stopLossMarketLimit: "1"   # max stop-loss exits per 5m market before blocking all re-entry
-  slArmDelaySecs: "60"       # seconds after entry before stop-loss arms (was 20; SLs fired at arming)
-  ultraCheapSlDelaySecs: "120"  # seconds after entry before stop-loss arms (ultra-cheap tails)
-  slMinAdverseBtc: "0.0015"  # require BTC to drift 15 bps against us before firing SL (book-noise filter)
-  thesisMinBtcDistance: "0.002"   # suppress thesis_decay when BTC is ≥0.2% in our favor (bar clearly winning)
-  signalExitEdge: "0.05"     # exit if opposite signal edge >= this
-  minExitBid: "0.03"         # don't sell below this price
-  orderReplaceGap: "0.05"    # cancel+replace sell if bid drifts by more than this
+  minBtcDistance: "0.0004"
+  minBookDivergence: "0.04"
+  lateEntrySecs: "90"
+  lateEntryEdgeDiscount: "0.30"
+  driftA1: "1.8"
+  driftA2: "1.2"
+  driftA3: "0.0003"
+  driftA4: "0.8"
+  # ── Binance feed + hold-to-expiry ──────────────────────────────────────────
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  binanceStaleSecs: "5.0"
+  holdToExpiryDefault: "true"  # hold positions until bar resolves (1.00 or 0.00)
+  # ── Position management (mostly bypassed with hold-to-expiry) ──────────────
+  evalIntervalMs: "1000"
+  entryMakerOffset: "0.0"     # taker entry — speed matters for latency arb
+  takeProfit: "0.15"
+  stopLoss: "0.08"
+  stopLossMarketLimit: "1"
+  slArmDelaySecs: "60"
+  ultraCheapSlDelaySecs: "120"
+  slMinAdverseBtc: "0.0015"
+  averagingMinSecondsLeft: "150"
+  averagingMaxBtcMove: "0.003"
+  thesisMinBtcDistance: "0.002"
+  signalExitEdge: "0.05"
+  minExitBid: "0.03"
+  orderReplaceGap: "0.05"
   aggressiveExitSlippage: "0.02"
-  trailingArmGain: "0.20"    # arm trailing only after a substantial profit cushion
-  trailingStopGap: "0.03"    # once armed, exit on a modest pullback while still profitable
-  # Misc
+  trailingArmGain: "0.20"
+  trailingStopGap: "0.03"
+  # ── Misc ───────────────────────────────────────────────────────────────────
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
   polymarketRtdsWs: "wss://ws-live-data.polymarket.com"
   polymarketRtdsSymbol: "btc/usd"

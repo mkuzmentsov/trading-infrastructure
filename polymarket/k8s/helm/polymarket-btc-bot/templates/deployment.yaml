@@ -53,6 +53,15 @@ spec:
         - name: script
           configMap:
             name: {{ include "polymarket-btc-bot.name" . }}-script
+            items:
+              {{- range $path, $_ := .Files.Glob "files/scripts/*.py" }}
+              - key: {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}
+                path: {{ $path | trimPrefix "files/scripts/" }}
+              {{- end }}
+              {{- range $path, $_ := .Files.Glob "files/scripts/**/*.py" }}
+              - key: {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}
+                path: {{ $path | trimPrefix "files/scripts/" }}
+              {{- end }}
         - name: logs
           emptyDir: {}
         {{- if .Files.Glob "files/model/*" }}
