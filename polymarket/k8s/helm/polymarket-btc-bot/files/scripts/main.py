@@ -511,6 +511,30 @@ async def _ensure_ctf_approval_for_token(clob, token_id: str) -> None:
     _approved_ctf_tokens.add(token_id)
 
 
+async def _prewarm_ctf_approvals(clob) -> None:
+    if DRY_RUN or not clob or not pm_state.ready:
+        return
+    for token_id in (pm_state.token_id_up, pm_state.token_id_down):
+        if token_id and token_id not in _approved_ctf_tokens:
+            await _ensure_ctf_approval_for_token(clob, token_id)
+
+
+def _current_entry_ask(direction: str) -> float:
+    return pm_state.up_ask if direction == "UP" else pm_state.down_ask
+
+
+def _entry_price_still_valid(direction: str, entry_price: float) -> tuple[bool, str]:
+    if not pm_state.ready:
+        return False, "pm_not_ready"
+    current_ask = _current_entry_ask(direction)
+    if not (0 < current_ask < 1):
+        return False, f"invalid_current_ask:{current_ask:.4f}"
+    expected_price = round(max(0.01, current_ask - ENTRY_MAKER_OFFSET), 2) if ENTRY_MAKER_OFFSET > 0 else current_ask
+    if abs(expected_price - entry_price) >= ENTRY_REPLACE_GAP:
+        return False, f"ask_moved:{expected_price:.4f}"
+    return True, ""
+
+
 async def _check_pending_buy(clob) -> None:
     pb = pos_store.pending_buy
     if pb is None:
@@ -1467,6 +1491,7 @@ async def _try_enter(clob, balance: float) -> None:
         entry_price = signal.price
         entry_size = signal.size
 
+    cid = pm_state.condition_id
     spend = round(entry_size * entry_price, 2)
 
     if DRY_RUN:
@@ -1504,7 +1529,57 @@ async def _try_enter(clob, balance: float) -> None:
         _entry_confirmation["count"] = 0
         return
 
+    if not _feeds_are_fresh():
+        await _refresh_pm_quotes_if_stale("pre_order_revalidate")
+    if not _feeds_are_fresh():
+        log.info("Entry aborted before order submit — feeds went stale")
+        _entry_confirmation["count"] = 0
+        return
+    if pm_state.condition_id != cid:
+        log.info("Entry aborted before order submit — market changed  old=%s new=%s", cid[:16], pm_state.condition_id[:16])
+        _entry_confirmation["count"] = 0
+        return
+    still_valid, reason = _entry_price_still_valid(direction, entry_price)
+    if not still_valid:
+        log.info(
+            "Entry aborted before order submit — live book changed  dir=%s  price=%.4f  reason=%s  up=%.3f/%.3f  down=%.3f/%.3f",
+            direction,
+            entry_price,
+            reason,
+            pm_state.up_bid,
+            pm_state.up_ask,
+            pm_state.down_bid,
+            pm_state.down_ask,
+        )
+        _entry_confirmation["count"] = 0
+        return
+
     await _ensure_ctf_approval_for_token(clob, token_id)
+
+    if not _feeds_are_fresh():
+        await _refresh_pm_quotes_if_stale("post_approval_revalidate")
+    if not _feeds_are_fresh():
+        log.info("Entry aborted after approval — feeds went stale")
+        _entry_confirmation["count"] = 0
+        return
+    if pm_state.condition_id != cid:
+        log.info("Entry aborted after approval — market changed  old=%s new=%s", cid[:16], pm_state.condition_id[:16])
+        _entry_confirmation["count"] = 0
+        return
+    still_valid, reason = _entry_price_still_valid(direction, entry_price)
+    if not still_valid:
+        log.info(
+            "Entry aborted after approval — live book changed  dir=%s  price=%.4f  reason=%s  up=%.3f/%.3f  down=%.3f/%.3f",
+            direction,
+            entry_price,
+            reason,
+            pm_state.up_bid,
+            pm_state.up_ask,
+            pm_state.down_bid,
+            pm_state.down_ask,
+        )
+        _entry_confirmation["count"] = 0
+        return
 
     try:
         order_id = await asyncio.to_thread(
@@ -1574,6 +1649,9 @@ async def _tick(clob) -> None:
     if pos_store.has_pending_buy():
         await _check_pending_buy(clob)
         return
+
+    if not DRY_RUN and clob is not None and _feeds_are_fresh():
+        await _prewarm_ctf_approvals(clob)
 
     cid = pm_state.condition_id
 

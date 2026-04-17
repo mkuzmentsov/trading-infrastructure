@@ -39,3 +39,6 @@ ai/hf-models
 /polymarket/k8s/helm/polymarket-btc-bot/update-log/
 /polymarket/k8s/helm/polymarket-btc-bot/pm-btc-logs_*
 /polymarket/k8s/helm/polymarket-portfolio-bot/pm-portfolio-logs_*
+/.codex-skill-staging/pm-btc-log-analysis/scripts/analyze_pm_btc_logs.py
+/.codex-skill-staging/pm-btc-log-analysis/agents/openai.yaml
+/.codex-skill-staging/pm-btc-log-analysis/SKILL.md

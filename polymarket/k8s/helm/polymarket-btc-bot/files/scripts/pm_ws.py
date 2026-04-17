@@ -60,6 +60,10 @@ class PMState:
         self.ready = False
         self.up_live = False
         self.down_live = False
+        self.up_bid = 0.0
+        self.up_ask = 1.0
+        self.down_bid = 0.0
+        self.down_ask = 1.0
         self.up_bid_size = 0.0
         self.up_ask_size = 0.0
         self.down_bid_size = 0.0
@@ -106,13 +110,6 @@ def _apply_market(market: dict) -> list[str] | None:
     pm_state.market_start_ts = market_start_ts
     pm_state.market_end_ts = market_end_ts
 
-    # Seed prices from REST, but do not mark the book as live until WS updates arrive.
-    pm_state.up_bid = pm_state.up_ask = float(up.get("price", 0.5))
-    pm_state.down_bid = pm_state.down_ask = float(down.get("price", 0.5))
-    pm_state.up_bid_size = 0.0
-    pm_state.up_ask_size = 0.0
-    pm_state.down_bid_size = 0.0
-    pm_state.down_ask_size = 0.0
     return [pm_state.token_id_up, pm_state.token_id_down]
 
 
@@ -272,22 +269,6 @@ def refresh_pm_quotes_from_rest(reason: str = "") -> bool:
     if not token_ids:
         return False
 
-    now = time.time()
-    if 0 < pm_state.up_bid < 1 and 0 < pm_state.up_ask < 1:
-        pm_state.up_live = True
-        pm_state.last_up_book_ts = now
-    if 0 < pm_state.down_bid < 1 and 0 < pm_state.down_ask < 1:
-        pm_state.down_live = True
-        pm_state.last_down_book_ts = now
-
-    pm_state.ready = (
-        pm_state.up_live
-        and pm_state.down_live
-        and pm_state.up_bid > 0
-        and pm_state.down_bid > 0
-        and 0 < pm_state.up_ask < 1
-        and 0 < pm_state.down_ask < 1
-    )
     log.info(
         "PM REST refresh%s  ready=%s  up=%.3f/%.3f  down=%.3f/%.3f",
         f" ({reason})" if reason else "",
