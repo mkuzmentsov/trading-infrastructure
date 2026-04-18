@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Fetch logs for a pm-btc pod since it was started:
+# Fetch logs for pm-btc pods since they were started:
 #   - Loki logs (via kubectl port-forward + logcli) -> loki.log
 #   - /app/logs/logs-training.jsonl
 #   - /app/logs/logs-training-events.jsonl
+#
+# Usage:
+#   ./fetch-logs.sh              # fetch both bots
+#   ./fetch-logs.sh 1            # fetch pm-btc-1 only
+#   ./fetch-logs.sh 2            # fetch pm-btc-2 only
 set -euo pipefail
 
 # --- Config ---------------------------------------------------------------
 NAMESPACE="${NAMESPACE:-polymarket}"
-POD_SELECTOR="${POD_SELECTOR:-pm-btc}"     # substring match on pod name
-POD_NAME="${POD_NAME:-}"                    # override: exact pod name
-OUT_DIR="${OUT_DIR:-./pm-btc-logs_$(date +%Y%m%d_%H%M%S)}"
-
-# Loki
+BOT_NUM="${1:-}"                              # 1, 2, or empty for both
 LOKI_NS="${LOKI_NS:-monitoring}"
 LOKI_SVC="${LOKI_SVC:-loki-stack}"
 LOKI_PORT="${LOKI_PORT:-3100}"
@@ -24,39 +25,14 @@ for cmd in kubectl logcli date; do
   command -v "$cmd" &>/dev/null || { echo "Error: '$cmd' not found"; exit 1; }
 done
 
-# --- Resolve pod ----------------------------------------------------------
-if [[ -z "$POD_NAME" ]]; then
-  POD_NAME=$(kubectl -n "$NAMESPACE" get pods -o name \
-    | grep "$POD_SELECTOR" | head -n1 | sed 's|pod/||')
+# --- Build pod list -------------------------------------------------------
+if [[ -n "$BOT_NUM" ]]; then
+  SELECTORS=("pm-btc-$BOT_NUM")
+else
+  SELECTORS=("pm-btc-1" "pm-btc-2")
 fi
-[[ -z "$POD_NAME" ]] && { echo "Error: no pod matching '$POD_SELECTOR' in ns '$NAMESPACE'"; exit 1; }
 
-START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
-  -o jsonpath='{.status.startTime}')
-[[ -z "$START_TIME" ]] && { echo "Error: could not read startTime for $POD_NAME"; exit 1; }
-
-TO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-mkdir -p "$OUT_DIR"
-
-echo "==> Pod       : $NAMESPACE/$POD_NAME"
-echo "==> Started   : $START_TIME"
-echo "==> Now (UTC) : $TO"
-echo "==> Output    : $OUT_DIR"
-echo ""
-
-# --- Copy JSONL training logs from container -----------------------------
-echo "==> Copying /app/logs/*.jsonl from pod..."
-for f in logs-training.jsonl logs-training-events.jsonl; do
-  if kubectl -n "$NAMESPACE" exec "$POD_NAME" -- test -f "/app/logs/$f" 2>/dev/null; then
-    kubectl -n "$NAMESPACE" cp "$POD_NAME:/app/logs/$f" "$OUT_DIR/$f" \
-      && echo "    ok: $f" \
-      || echo "    warn: failed copying $f"
-  else
-    echo "    skip: /app/logs/$f not present"
-  fi
-done
-
-# --- Loki logs via port-forward ------------------------------------------
+# --- Start Loki port-forward once -----------------------------------------
 echo "==> Port-forwarding $LOKI_SVC:$LOKI_PORT ..."
 kubectl -n "$LOKI_NS" port-forward "svc/$LOKI_SVC" "$LOKI_PORT:$LOKI_PORT" &>/dev/null &
 PF_PID=$!
@@ -67,22 +43,64 @@ for i in {1..15}; do
   sleep 1
 done
 
-QUERY="{namespace=\"$NAMESPACE\", pod=\"$POD_NAME\"}"
-echo "==> Loki query: $QUERY"
-echo "==> Range     : $START_TIME -> $TO"
+# --- Fetch each bot -------------------------------------------------------
+for SELECTOR in "${SELECTORS[@]}"; do
+  POD_NAME=$(kubectl -n "$NAMESPACE" get pods -o name \
+    | grep "$SELECTOR" | head -n1 | sed 's|pod/||')
 
-logcli query "$QUERY" \
-  --addr="$LOKI_ADDR" \
-  --from="$START_TIME" \
-  --to="$TO" \
-  --limit="$LIMIT" \
-  --batch="$BATCH" \
-  --forward \
-  --output=raw \
-  > "$OUT_DIR/loki.log"
+  if [[ -z "$POD_NAME" ]]; then
+    echo "Warning: no pod matching '$SELECTOR' in ns '$NAMESPACE', skipping"
+    continue
+  fi
 
-LINES=$(wc -l < "$OUT_DIR/loki.log" | tr -d ' ')
-echo "==> Done. Loki lines: $LINES"
-echo ""
-echo "Artifacts in $OUT_DIR:"
-ls -lh "$OUT_DIR"
+  OUT_DIR="./pm-btc-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
+
+  START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
+    -o jsonpath='{.status.startTime}')
+  [[ -z "$START_TIME" ]] && { echo "Error: could not read startTime for $POD_NAME"; continue; }
+
+  TO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  mkdir -p "$OUT_DIR"
+
+  echo ""
+  echo "============================================================"
+  echo "==> Bot       : $SELECTOR"
+  echo "==> Pod       : $NAMESPACE/$POD_NAME"
+  echo "==> Started   : $START_TIME"
+  echo "==> Now (UTC) : $TO"
+  echo "==> Output    : $OUT_DIR"
+  echo "============================================================"
+
+  # --- Copy JSONL training logs from container ---------------------------
+  echo "==> Copying /app/logs/*.jsonl from pod..."
+  for f in logs-training.jsonl logs-training-events.jsonl; do
+    if kubectl -n "$NAMESPACE" exec "$POD_NAME" -- test -f "/app/logs/$f" 2>/dev/null; then
+      kubectl -n "$NAMESPACE" cp "$POD_NAME:/app/logs/$f" "$OUT_DIR/$f" \
+        && echo "    ok: $f" \
+        || echo "    warn: failed copying $f"
+    else
+      echo "    skip: /app/logs/$f not present"
+    fi
+  done
+
+  # --- Loki logs ---------------------------------------------------------
+  QUERY="{namespace=\"$NAMESPACE\", pod=\"$POD_NAME\"}"
+  echo "==> Loki query: $QUERY"
+  echo "==> Range     : $START_TIME -> $TO"
+
+  logcli query "$QUERY" \
+    --addr="$LOKI_ADDR" \
+    --from="$START_TIME" \
+    --to="$TO" \
+    --limit="$LIMIT" \
+    --batch="$BATCH" \
+    --forward \
+    --output=raw \
+    > "$OUT_DIR/loki.log"
+
+  LINES=$(wc -l < "$OUT_DIR/loki.log" | tr -d ' ')
+  echo "==> Done. Loki lines: $LINES"
+  echo ""
+  echo "Artifacts in $OUT_DIR:"
+  ls -lh "$OUT_DIR"
+done

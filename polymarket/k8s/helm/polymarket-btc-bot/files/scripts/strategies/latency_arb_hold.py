@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 from config import (
+    ENTRY_ORDER_MODE,
     HOLD_TO_EXPIRY_DEFAULT,
     SIGNAL_EXIT_EDGE,
     SL_ARM_DELAY_SECS,
@@ -37,9 +38,13 @@ class LatencyArbHoldStrategy:
     def startup_details(self) -> list[str]:
         return [
             f"STRATEGY={self.name}",
+            f"ENTRY_MODE={self.entry_order_mode()}",
             f"HOLD_TO_EXPIRY={HOLD_TO_EXPIRY_DEFAULT}  MIN_BTC_DIST={MIN_BTC_DISTANCE:.5f}  MIN_BOOK_DIV={MIN_BOOK_DIVERGENCE:.3f}",
             f"LATE_SECS={LATE_ENTRY_SECS}  LATE_DISCOUNT={LATE_ENTRY_EDGE_DISCOUNT:.2f}",
         ]
+
+    def entry_order_mode(self) -> str:
+        return ENTRY_ORDER_MODE
 
     def entry_hold_to_expiry(self) -> bool:
         return HOLD_TO_EXPIRY_DEFAULT

@@ -24,7 +24,12 @@ class StrategyContext:
     down_ask: float
     down_bid_size: float
     down_ask_size: float
+    book_events: int
+    feed_price_age: float
+    feed_up_age: float
+    feed_down_age: float
     binance_price: float
+    binance_age: float
     ml_p_up: float | None
 
 
@@ -40,6 +45,9 @@ class Strategy(Protocol):
     name: str
 
     def startup_details(self) -> list[str]:
+        ...
+
+    def entry_order_mode(self) -> str:
         ...
 
     def entry_hold_to_expiry(self) -> bool:

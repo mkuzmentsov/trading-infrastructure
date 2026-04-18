@@ -31,11 +31,10 @@ from clob import (
     get_order_status,
     place_bet,
     place_limit_sell,
+    place_market_buy,
 )
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
-    AVERAGING_MAX_BTC_MOVE,
-    AVERAGING_MIN_SECONDS_LEFT,
     BINANCE_STALE_SECS,
     BINANCE_WS_URL,
     BET_SIZE_MAX,
@@ -71,11 +70,7 @@ from config import (
     ULTRA_CHEAP_TAIL_PRICE,
     TRAINING_EVENT_LOG_PATH,
     TRAINING_LOG_PATH,
-    THESIS_EDGE_FRACTION,
-    THESIS_MIN_EDGE,
     THESIS_MIN_BTC_DISTANCE,
-    THESIS_PROFIT_LOCK,
-    SIGNAL_EXIT_EDGE,
     STOP_LOSS,
     TRAILING_ARM_GAIN,
     TRAILING_STOP_GAP,
@@ -284,6 +279,7 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
 
 
 def _build_strategy_context(cash_amount: float, seconds_left: int, ml_p_up: float | None) -> StrategyContext:
+    staleness = _feed_staleness()
     return StrategyContext(
         cash_amount=cash_amount,
         seconds_left=seconds_left,
@@ -300,7 +296,12 @@ def _build_strategy_context(cash_amount: float, seconds_left: int, ml_p_up: floa
         down_ask=pm_state.down_ask,
         down_bid_size=pm_state.down_bid_size,
         down_ask_size=pm_state.down_ask_size,
+        book_events=pm_state.book_events,
+        feed_price_age=staleness.get("price_age", 0.0),
+        feed_up_age=staleness.get("pm_up_age", 0.0),
+        feed_down_age=staleness.get("pm_down_age", 0.0),
         binance_price=_binance_price_if_fresh(),
+        binance_age=binance_state.age() if binance_state.ready else 0.0,
         ml_p_up=ml_p_up,
     )
 
@@ -502,6 +503,12 @@ async def _write_balance_snapshot(clob, reason: str) -> None:
         pending_buy=pos_store.pending_buy is not None,
         dry_run=False,
     )
+    tg(
+        f"💰 <b>Balance</b>  ${balance:.2f} USDC\n"
+        f"Reason: {reason}  "
+        f"pos: {'yes' if pos_store.position else 'no'}  "
+        f"held: {len(pos_store.held_positions)}"
+    )
 
 
 async def _ensure_ctf_approval_for_token(clob, token_id: str) -> None:
@@ -674,77 +681,6 @@ def _exit_target_price(current_bid: float, reason: str) -> float:
     if reason in {"stop_loss", "signal_flip", "take_profit"}:
         return max(MIN_EXIT_BID, current_bid - AGGRESSIVE_EXIT_SLIPPAGE)
     return max(current_bid, MIN_EXIT_BID)
-
-
-async def _average_down(clob, pos, seconds_left: int) -> bool:
-    avg_ask = pm_state.up_ask if pos.direction == "UP" else pm_state.down_ask
-
-    balance = float(os.getenv("DRY_RUN_BALANCE", "100.0")) if DRY_RUN else await _get_balance(clob)
-    budget = min(balance, BET_SIZE_MAX)
-    new_shares = math.floor(budget / avg_ask) if avg_ask > 0 else 0
-
-    if new_shares < MIN_POSITION_SHARES:
-        log.warning(
-            "AVERAGE_DOWN blocked — insufficient budget  dir=%s  ask=%.4f  budget=%.2f  shares=%d  min=%d",
-            pos.direction, avg_ask, budget, new_shares, MIN_POSITION_SHARES,
-        )
-        return False
-
-    spend = round(new_shares * avg_ask, 2)
-    log.info(
-        "AVERAGE_DOWN  dir=%s  old_entry=%.4f  old_shares=%d  add_price=%.4f  add_shares=%d  spend=$%.2f  secs_left=%d",
-        pos.direction, pos.entry_price, pos.shares, avg_ask, new_shares, spend, seconds_left,
-    )
-
-    if DRY_RUN:
-        order_id = "dry_run_avg"
-    else:
-        try:
-            order_id = await asyncio.to_thread(
-                place_bet, clob, pos.token_id, new_shares, avg_ask, pos.condition_id, pm_state.taker_fee
-            )
-        except Exception as exc:
-            log.error("AVERAGE_DOWN order failed: %s", exc)
-            return False
-
-    if not order_id:
-        log.warning("AVERAGE_DOWN order returned no order_id — skipping")
-        return False
-
-    total_shares = pos.shares + new_shares
-    new_avg_price = round((pos.shares * pos.entry_price + new_shares * avg_ask) / total_shares, 4)
-
-    log.info(
-        "AVERAGE_DOWN filled  new_avg_entry=%.4f  total_shares=%d  order=%s",
-        new_avg_price, total_shares, order_id,
-    )
-    tg(
-        f"📉 <b>Averaged down</b>  {pos.direction}  "
-        f"entry {pos.entry_price:.3f}→{new_avg_price:.3f}  "
-        f"shares {pos.shares}→{total_shares}  +${spend:.2f}"
-    )
-    _write_training_event(
-        "averaged_down",
-        direction=pos.direction,
-        token_id=pos.token_id,
-        old_entry=pos.entry_price,
-        old_shares=pos.shares,
-        add_price=avg_ask,
-        add_shares=new_shares,
-        new_avg_entry=new_avg_price,
-        total_shares=total_shares,
-        seconds_left=seconds_left,
-        order_id=order_id,
-        dry_run=DRY_RUN,
-    )
-
-    pos.entry_price = new_avg_price
-    pos.shares = total_shares
-    pos.averaged = True
-    pos_store.clear_sell_order()
-    _balance_cache[1] = 0.0
-
-    return True
 
 
 async def _manage_position(clob) -> None:
@@ -940,123 +876,48 @@ async def _manage_position(clob) -> None:
             pos.peak_bid, pos.shares, seconds_left, _btc_dist, _bar_side,
         )
 
-    # Trailing stop should only protect an actual open profit. If price has already
-    # fallen back near/below basis, let the normal stop-loss logic handle the exit.
-    trailing_armed = pos.peak_bid >= pos.entry_price + TRAILING_ARM_GAIN
-    trailing_in_profit = unrealized >= max(THESIS_PROFIT_LOCK, TRAILING_STOP_GAP)
-    if (
-        trailing_armed
-        and trailing_in_profit
-        and current_bid <= pos.peak_bid - TRAILING_STOP_GAP
-        and not pos.sell_order_id
-    ):
-        log.info(
-            "TRAILING_STOP  bid=%.4f  peak=%.4f  entry=%.4f  drawdown=%.4f",
-            current_bid,
-            pos.peak_bid,
-            pos.entry_price,
-            pos.peak_bid - current_bid,
-        )
-        await _exit_position(clob, pos, current_bid, reason="trailing_stop")
-        return
+    # Exit logic mirrors backtest.simulate_active_exits. Two branches:
+    #   - profit_1      : trailing_stop → take_profit → stop_loss → signal_flip → late_bar_cut
+    #   - pm_btc_ml-entry: all exits live inside MLEntryStrategy.evaluate_position
+    # Each check is the minimum logic required; no arming, no floors, no
+    # stale-order cancellation. If a sell order is already resting, a later
+    # check will just reprice it below.
+    strategy_name = getattr(_strategy, "name", "")
+    ml_entry_active = strategy_name == "pm_btc_ml-entry"
 
-    if unrealized >= TAKE_PROFIT and not (pos.sell_order_id and pos.exit_reason == "take_profit"):
-        if not pos.take_profit_armed:
-            pos.take_profit_armed = True
-            pos.take_profit_floor = pos.entry_price + 0.01
+    if not ml_entry_active:
+        # 1. Trailing stop — fires whenever peak_bid exceeded arm gain and bid
+        #    has pulled back by TRAILING_STOP_GAP.
+        if (
+            pos.peak_bid >= pos.entry_price + TRAILING_ARM_GAIN
+            and current_bid <= pos.peak_bid - TRAILING_STOP_GAP
+            and not pos.sell_order_id
+        ):
             log.info(
-                "TAKE_PROFIT_ARMED  entry=%.4f  floor=%.4f",
-                pos.entry_price,
-                pos.take_profit_floor,
+                "TRAILING_STOP  bid=%.4f  peak=%.4f  entry=%.4f  drawdown=%.4f",
+                current_bid, pos.peak_bid, pos.entry_price, pos.peak_bid - current_bid,
             )
-        log.info(
-            "TAKE_PROFIT  bid=%.4f  entry=%.4f  pnl=%.4f  threshold=%.4f  floor=%.4f",
-            current_bid,
-            pos.entry_price,
-            unrealized,
-            TAKE_PROFIT,
-            pos.take_profit_floor,
-        )
-        await _exit_position(clob, pos, current_bid, reason="take_profit")
-        return
-
-    stop_loss_gap = STOP_LOSS
-    if seconds_left <= 90:
-        stop_loss_gap *= 0.75
-
-    # TP abandonment: if a take_profit is resting but bid has collapsed back to
-    # SL territory, cancel it so the SL / late-bar-cut branches below can fire.
-    # Without this, an armed TP stays "sticky" at floor forever while bid decays,
-    # and the position bleeds to redemption.
-    if (
-        pos.sell_order_id
-        and pos.exit_reason == "take_profit"
-        and current_bid <= pos.entry_price - stop_loss_gap
-    ):
-        log.info(
-            "TAKE_PROFIT abandoned — bid=%.4f fell to SL line  entry=%.4f  gap=%.4f  order=%s",
-            current_bid, pos.entry_price, stop_loss_gap, pos.sell_order_id,
-        )
-        if not DRY_RUN:
-            canceled = await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-            if canceled:
-                pos_store.clear_sell_order()
-            else:
-                log.info("TP abandon cancel failed — leaving resting order in place")
-                return
-        else:
-            pos_store.clear_sell_order()
-
-    # Late-bar panic exit: within the final 45s, if we're meaningfully underwater,
-    # cancel any resting exit (typically an unreachable take_profit at entry+0.08)
-    # and sell at the current bid. Without this, losing positions get parked at the
-    # bar boundary (hold_to_expiry) and redeem to 0.
-    if seconds_left <= 45 and unrealized <= -0.05:
-        stale_tp_resting = pos.sell_order_id and pos.exit_reason in {"take_profit", "thesis_decay", "trailing_stop"}
-        if not pos.sell_order_id or stale_tp_resting:
-            if stale_tp_resting and not DRY_RUN:
-                log.info(
-                    "LATE_BAR_CUT cancelling resting %s order=%s price=%.4f",
-                    pos.exit_reason, pos.sell_order_id, pos.sell_price,
-                )
-                canceled = await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-                if canceled:
-                    pos_store.clear_sell_order()
-                else:
-                    log.info("LATE_BAR_CUT cancel failed — leaving resting order in place")
-                    return
-            log.info(
-                "LATE_BAR_CUT  secs_left=%d  bid=%.4f  entry=%.4f  pnl=%.4f",
-                seconds_left, current_bid, pos.entry_price, unrealized,
-            )
-            await _exit_position(clob, pos, current_bid, reason="late_bar_cut")
+            await _exit_position(clob, pos, current_bid, reason="trailing_stop")
             return
 
-    # Stop-loss arm delay: don't trigger SL for the first N seconds after entry.
-    # Ultra-cheap tail entries (low entry price) get a longer delay.
-    time_held = time.time() - pos.entry_time
-    is_ultra_cheap = pos.entry_price <= ULTRA_CHEAP_TAIL_PRICE
-    sl_delay = ULTRA_CHEAP_SL_DELAY_SECS if is_ultra_cheap else SL_ARM_DELAY_SECS
-    sl_armed = time_held >= sl_delay
-
-    # Stop-loss only overrides soft exits (take_profit, thesis_decay, signal_flip).
-    # It never overrides an already-active stop_loss or trailing_stop sell order.
-    _hard_exit_active = pos.sell_order_id and pos.exit_reason in {"stop_loss", "trailing_stop", "take_profit"}
-    if current_bid <= pos.entry_price - stop_loss_gap and not _hard_exit_active:
-        if not sl_armed:
-            log.debug(
-                "STOP_LOSS suppressed — hold time %.0fs < delay %ds  bid=%.4f  entry=%.4f",
-                time_held, sl_delay, current_bid, pos.entry_price,
+        # 2. Take profit — simple threshold, no arming/floor.
+        if unrealized >= TAKE_PROFIT and not (pos.sell_order_id and pos.exit_reason == "take_profit"):
+            log.info(
+                "TAKE_PROFIT  bid=%.4f  entry=%.4f  pnl=%.4f  threshold=%.4f",
+                current_bid, pos.entry_price, unrealized, TAKE_PROFIT,
             )
-        else:
+            await _exit_position(clob, pos, current_bid, reason="take_profit")
+            return
+
+        # 3. Stop loss with BTC-adverse-move gate.
+        stop_loss_gap = STOP_LOSS * (0.75 if seconds_left <= 90 else 1.0)
+        time_held = time.time() - pos.entry_time
+        is_ultra_cheap = pos.entry_price <= ULTRA_CHEAP_TAIL_PRICE
+        sl_delay = ULTRA_CHEAP_SL_DELAY_SECS if is_ultra_cheap else SL_ARM_DELAY_SECS
+        sl_armed = time_held >= sl_delay
+        if current_bid <= pos.entry_price - stop_loss_gap and sl_armed:
             btc_distance = math.log(btc_state.current_price / btc_state.bar_open) if btc_state.bar_open > 0 else 0.0
             adverse_move = btc_distance if pos.direction == "DOWN" else -btc_distance
-            # The BTC-adverse gate filters Polymarket book noise while the bar is
-            # still young. Two escape hatches always let SL fire:
-            #   * bid_collapse: bid has dropped ≥ 2× the stop-loss gap — a real
-            #     move, not jitter.
-            #   * late_bar: within the final 60s, book is authoritative and we
-            #     can't afford to wait for BTC confirmation.
             bid_collapse = current_bid <= pos.entry_price - 2 * stop_loss_gap
             gate_active = (
                 adverse_move < SL_MIN_ADVERSE_BTC
@@ -1077,6 +938,9 @@ async def _manage_position(clob) -> None:
                 await _exit_position(clob, pos, current_bid, reason="stop_loss")
                 return
 
+    # Strategy-level exits. For profit_1 this is only signal_flip; for
+    # pm_btc_ml-entry the strategy owns SL / trailing / thesis_decay /
+    # late_bar_cut / late_bar_fade / force_close (mirrors backtest).
     ml_snapshot = _build_ml_snapshot(seconds_left)
     ml_p_up = ml_predict_p_up(ml_snapshot)
     strategy_decision = _strategy.evaluate_position(
@@ -1087,90 +951,37 @@ async def _manage_position(clob) -> None:
     )
     if strategy_decision.signal is not None:
         _log_signal_debug("manage_position", strategy_decision.signal, cash_amount=0, seconds_left=seconds_left)
-    if strategy_decision.action == "average_down":
-        averaged = await _average_down(clob, pos, seconds_left)
-        if averaged:
-            return
     if strategy_decision.exit_reason:
+        log.info(
+            "STRATEGY_EXIT  reason=%s  bid=%.4f  entry=%.4f  pnl=%.4f  secs_left=%d",
+            strategy_decision.exit_reason, current_bid, pos.entry_price, unrealized, seconds_left,
+        )
         await _exit_position(clob, pos, current_bid, reason=strategy_decision.exit_reason)
         return
     current_side_edge = strategy_decision.current_side_edge
 
+    # Late-bar cut — last-ditch exit if underwater near bar end. profit_1 only;
+    # pm_btc_ml-entry already has its own late_bar_cut in the strategy.
+    if not ml_entry_active and seconds_left <= 45 and unrealized <= -0.05 and not pos.sell_order_id:
+        log.info(
+            "LATE_BAR_CUT  secs_left=%d  bid=%.4f  entry=%.4f  pnl=%.4f",
+            seconds_left, current_bid, pos.entry_price, unrealized,
+        )
+        await _exit_position(clob, pos, current_bid, reason="late_bar_cut")
+        return
+
+    # Reprice any resting exit toward the current bid. Backtest assumes
+    # immediate fill at current_bid; live order chases via cancel+repost.
     if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
-        if pos.exit_reason == "take_profit":
-            if current_bid >= pos.take_profit_floor:
-                # Case A: bid above floor — normal reprice downward, clamped at floor
-                new_price = max(_exit_target_price(current_bid, "take_profit"), pos.take_profit_floor)
-                if abs(new_price - pos.sell_price) < 1e-6:
-                    log.debug(
-                        "Take-profit replace skipped  old=%.4f  bid=%.4f  computed=%.4f (no-op)",
-                        pos.sell_price,
-                        current_bid,
-                        new_price,
-                    )
-                    return
-                log.info(
-                    "TAKE_PROFIT_REPRICE  old=%.4f  bid=%.4f  new=%.4f  floor=%.4f",
-                    pos.sell_price,
-                    current_bid,
-                    new_price,
-                    pos.take_profit_floor,
-                )
-                if not DRY_RUN:
-                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-                pos_store.clear_sell_order()
-                await _post_sell_order(clob, pos, new_price, reason="take_profit")
-            elif pos.sell_price > pos.take_profit_floor + ORDER_REPLACE_GAP:
-                # Case B: bid below floor, stale high order — cancel and repost at floor
-                log.info(
-                    "TAKE_PROFIT_REPOST_AT_FLOOR  old=%.4f  bid=%.4f  floor=%.4f",
-                    pos.sell_price,
-                    current_bid,
-                    pos.take_profit_floor,
-                )
-                if not DRY_RUN:
-                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-                pos_store.clear_sell_order()
-                await _post_sell_order(clob, pos, pos.take_profit_floor, reason="take_profit")
-            else:
-                # Case C: bid below floor, order already near floor — leave resting
-                log.info(
-                    "TAKE_PROFIT_FLOOR_RESTING  floor=%.4f  bid=%.4f  resting=%.4f",
-                    pos.take_profit_floor,
-                    current_bid,
-                    pos.sell_price,
-                )
+        new_price = _exit_target_price(current_bid, pos.exit_reason or "")
+        if abs(new_price - pos.sell_price) < 1e-6:
             return
-        if pos.exit_reason in {"trailing_stop", "thesis_decay"}:
-            if current_bid > pos.sell_price:
-                new_price = max(current_bid, MIN_EXIT_BID)
-                log.info(
-                    "Exit improved  old=%.4f  bid=%.4f — replace at %.4f",
-                    pos.sell_price,
-                    current_bid,
-                    new_price,
-                )
-                if not DRY_RUN:
-                    await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-                pos_store.clear_sell_order()
-                await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason or "take_profit")
-                return
-        else:
-            new_price = _exit_target_price(current_bid, pos.exit_reason or "")
-            if abs(new_price - pos.sell_price) < 1e-6:
-                log.debug(
-                    "Sell replace skipped  old=%.4f  bid=%.4f  computed=%.4f (no-op)",
-                    pos.sell_price,
-                    current_bid,
-                    new_price,
-                )
-                return
-            log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
-            if not DRY_RUN:
-                await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-            pos_store.clear_sell_order()
-            await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason)
-            return
+        log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
+        if not DRY_RUN:
+            await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
+        pos_store.clear_sell_order()
+        await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason or "")
+        return
 
     log.debug(
         "Holding position  dir=%s  entry=%.4f  bid=%.4f  peak=%.4f  edge_now=%.4f  secs_left=%d",
@@ -1456,9 +1267,11 @@ async def _try_enter(clob, balance: float) -> None:
 
     token_id = pm_state.token_id_up if direction == "UP" else pm_state.token_id_down
 
+    entry_mode = _strategy.entry_order_mode()
+
     # Maker entry: post below the ask to avoid crossing the spread immediately.
     # Re-derive size from the same dollar budget at the new (lower) price.
-    if ENTRY_MAKER_OFFSET > 0:
+    if entry_mode == "gtc" and ENTRY_MAKER_OFFSET > 0:
         maker_price = round(max(0.01, signal.price - ENTRY_MAKER_OFFSET), 2)
         if maker_price < MIN_ENTRY_PRICE or maker_price > MAX_ENTRY_PRICE:
             log.info(
@@ -1496,8 +1309,8 @@ async def _try_enter(clob, balance: float) -> None:
 
     if DRY_RUN:
         log.info(
-            "DRY_RUN — would buy %s  price=%.4f  shares=%d  spend=$%.2f  market=%s  hold=%s",
-            signal.action, entry_price, entry_size, spend, pm_state.question[:60], _strategy.entry_hold_to_expiry(),
+            "DRY_RUN — would buy %s  mode=%s  price=%.4f  shares=%d  spend=$%.2f  market=%s  hold=%s",
+            signal.action, entry_mode, entry_price, entry_size, spend, pm_state.question[:60], _strategy.entry_hold_to_expiry(),
         )
         pos_store.open(
             condition_id=pm_state.condition_id,
@@ -1523,7 +1336,7 @@ async def _try_enter(clob, balance: float) -> None:
             entry_seconds_left=seconds_left,
             spend=round(spend, 2),
             hold_to_expiry=_strategy.entry_hold_to_expiry(),
-            source="dry_run_entry",
+            source=f"dry_run_{entry_mode}_entry",
             dry_run=True,
         )
         _entry_confirmation["count"] = 0
@@ -1582,9 +1395,15 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     try:
-        order_id = await asyncio.to_thread(
-            place_bet, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
-        )
+        if entry_mode == "market":
+            order_id, is_matched = await asyncio.to_thread(
+                place_market_buy, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
+            )
+        else:
+            order_id = await asyncio.to_thread(
+                place_bet, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
+            )
+            is_matched = False
     except Exception as exc:
         if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
             log.warning("Token orderbook gone — skipping market %s", pm_state.condition_id[:16])
@@ -1593,34 +1412,41 @@ async def _try_enter(clob, balance: float) -> None:
             log.error("Order failed: %s", exc)
         return
 
-    if order_id:
+    if entry_mode == "market" and order_id and is_matched:
         log.info(
-            "GTC buy placed  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
+            "Market buy IMMEDIATELY MATCHED  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
             order_id, direction, entry_price, entry_size, spend,
         )
-        _write_training_event(
-            "buy_order_posted",
-            direction=direction,
-            token_id=token_id,
-            shares=entry_size,
-            entry_price=round(entry_price, 4),
-            spend=round(spend, 2),
-            order_id=order_id,
-            dry_run=False,
-        )
-        pos_store.open_pending_buy(
-            order_id=order_id,
+        pos_store.open(
             condition_id=pm_state.condition_id,
             token_id=token_id,
             direction=direction,
             shares=entry_size,
-            price=entry_price,
-            edge=signal.edge,
-            p_up=signal.p_up,
-            seconds_left=seconds_left,
+            entry_price=entry_price,
+            entry_time=time.time(),
+            entry_edge=signal.edge,
+            entry_p_up=signal.p_up,
+            entry_seconds_left=seconds_left,
+        )
+        if _strategy.entry_hold_to_expiry() and pos_store.position:
+            pos_store.position.hold_to_expiry = True
+        _write_training_event(
+            "position_opened",
+            direction=direction,
+            token_id=token_id,
+            shares=entry_size,
+            entry_price=round(entry_price, 4),
+            entry_edge=round(signal.edge, 4),
+            entry_p_up=round(signal.p_up, 4),
+            entry_seconds_left=seconds_left,
+            spend=round(spend, 2),
+            hold_to_expiry=_strategy.entry_hold_to_expiry(),
+            order_id=order_id,
+            source="market_buy",
+            dry_run=False,
         )
         tg(
-            f"📋 <b>BTC 5m Order placed</b>\n"
+            f"✅ <b>BTC 5m Position opened</b>\n"
             f"Market: {pm_state.question[:80]}\n"
             f"Direction: {direction}\n"
             f"P(UP)={signal.p_up:.2%}  price={entry_price:.3f}  edge={signal.edge:.3f}\n"
@@ -1629,6 +1455,52 @@ async def _try_enter(clob, balance: float) -> None:
         )
         _entry_confirmation["count"] = 0
         _balance_cache[1] = 0.0
+        return
+
+    if order_id:
+        if entry_mode == "market":
+            log.warning(
+                "Market buy returned order without matched status  order=%s  dir=%s  price=%.4f  shares=%d",
+                order_id, direction, entry_price, entry_size,
+            )
+        else:
+            log.info(
+                "GTC buy placed  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
+                order_id, direction, entry_price, entry_size, spend,
+            )
+            _write_training_event(
+                "buy_order_posted",
+                direction=direction,
+                token_id=token_id,
+                shares=entry_size,
+                entry_price=round(entry_price, 4),
+                spend=round(spend, 2),
+                order_id=order_id,
+                dry_run=False,
+            )
+            pos_store.open_pending_buy(
+                order_id=order_id,
+                condition_id=pm_state.condition_id,
+                token_id=token_id,
+                direction=direction,
+                shares=entry_size,
+                price=entry_price,
+                edge=signal.edge,
+                p_up=signal.p_up,
+                seconds_left=seconds_left,
+            )
+            tg(
+                f"📋 <b>BTC 5m Order placed</b>\n"
+                f"Market: {pm_state.question[:80]}\n"
+                f"Direction: {direction}\n"
+                f"P(UP)={signal.p_up:.2%}  price={entry_price:.3f}  edge={signal.edge:.3f}\n"
+                f"Shares: {entry_size}  Spend: ${spend:.2f}\n"
+                f"Order: {order_id}"
+            )
+            _balance_cache[1] = 0.0
+    else:
+        log.error("%s buy order failed", entry_mode.capitalize())
+    _entry_confirmation["count"] = 0
 
 
 async def _tick(clob) -> None:

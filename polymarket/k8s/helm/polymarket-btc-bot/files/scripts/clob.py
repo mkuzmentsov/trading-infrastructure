@@ -176,6 +176,43 @@ def place_bet(
         return None
 
 
+def place_market_buy(
+    clob,
+    token_id: str,
+    shares: int,
+    price: float,
+    condition_id: str = "",
+    fee_rate_bps: int = 0,
+) -> tuple[Optional[str], bool]:
+    from py_clob_client.clob_types import OrderArgs, OrderType
+
+    try:
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=shares,
+            side="BUY",
+            fee_rate_bps=fee_rate_bps,
+            expiration=0,
+        )
+        log.debug(
+            "CLOB create_order BUY REQUEST  token=%s  price=%s  shares=%s  mode=FOK",
+            token_id, price, shares,
+        )
+        signed = clob.create_order(order_args)
+        log.info("CLOB create_order BUY RESPONSE  %s", signed)
+        resp = clob.post_order(signed, OrderType.FOK)
+        log.info("CLOB post_order BUY FOK RESPONSE  %s", resp)
+        order_id = resp.get("orderID") or resp.get("order_id") or None
+        is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
+        return order_id, is_matched
+    except Exception as exc:
+        if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
+            raise
+        log.error("Market buy failed: %s", exc)
+        return None, False
+
+
 def has_trade_on_market(clob, condition_id: str) -> bool:
     from py_clob_client.clob_types import TradeParams
 

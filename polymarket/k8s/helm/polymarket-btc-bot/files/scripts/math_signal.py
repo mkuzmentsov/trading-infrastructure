@@ -26,7 +26,10 @@ from typing import Optional
 from config import (
     BET_SIZE_MAX,
     BET_SIZE_MIN,
+    CONTRARIAN_MOVE_FILTER,
+    CONTRARIAN_TAIL_MAX_PRICE,
     ENTRY_MIN_SECONDS_LEFT,
+    FILTER_CONTRARIAN_ENTRIES,
     KELLY_SCALE,
     MAX_BUDGET_FRACTION,
     MAX_ENTRY_PRICE,
@@ -263,6 +266,30 @@ def generate_signal(
         elif net_down >= edge_threshold and not down_tradeable:
             reason = f"DOWN not tradeable (ask={down_ask:.3f}, spread={spread_down:.3f})"
         return _no_trade(reason, p_up_value=p_up, edge_value=max(net_up, net_down), **dbg)
+
+    # Optional guard against paying up for contrarian entries. If the selected
+    # side disagrees with the current BTC move, only allow very cheap tails and
+    # only while BTC is still close to the open.
+    if FILTER_CONTRARIAN_ENTRIES:
+        is_contrarian_up = action == "BUY_UP" and btc_distance < 0
+        is_contrarian_down = action == "BUY_DOWN" and btc_distance > 0
+        if is_contrarian_up or is_contrarian_down:
+            if abs(btc_distance) > CONTRARIAN_MOVE_FILTER:
+                side = "UP" if is_contrarian_up else "DOWN"
+                return _no_trade(
+                    f"Contrarian {side} blocked (dist={btc_distance:+.5f}, max={CONTRARIAN_MOVE_FILTER:.5f})",
+                    p_up_value=p_up,
+                    edge_value=edge,
+                    **dbg,
+                )
+            if price > CONTRARIAN_TAIL_MAX_PRICE:
+                side = "UP" if is_contrarian_up else "DOWN"
+                return _no_trade(
+                    f"Contrarian {side} too expensive (ask={price:.3f}, cap={CONTRARIAN_TAIL_MAX_PRICE:.3f})",
+                    p_up_value=p_up,
+                    edge_value=edge,
+                    **dbg,
+                )
 
     if not require_budget:
         return Signal(
