@@ -63,6 +63,24 @@ SMART_ENTRY_MIN_SECONDS_LEFT = int(_os.getenv("SMART_ENTRY_MIN_SECONDS_LEFT", "2
 SMART_SIZE_Z_REF = float(_os.getenv("SMART_SIZE_Z_REF", "2.0"))
 SMART_SIZE_MIN_MULT = float(_os.getenv("SMART_SIZE_MIN_MULT", "0.5"))
 SMART_SIZE_MAX_MULT = float(_os.getenv("SMART_SIZE_MAX_MULT", "2.0"))
+# Binance staleness gate. If binance_age exceeds this, skip entry (latency edge is gone).
+# Late-bar entries (seconds_left < SMART_LATE_BAR_SECS) bypass this gate.
+# 0 disables the gate entirely.
+SMART_BINANCE_MAX_AGE = float(_os.getenv("SMART_BINANCE_MAX_AGE", "0"))
+# Require this many seconds to have elapsed in the bar before entering.
+# Early-bar entries have near-full sigma_rem and are usually noise. 0 disables.
+SMART_MIN_ELAPSED_SECS = int(_os.getenv("SMART_MIN_ELAPSED_SECS", "0"))
+# Probability shrinkage factor applied to raw_p_up. 1.0 = no shrinkage, 0.5 = heavy shrinkage.
+SMART_SHRINKAGE = float(_os.getenv("SMART_SHRINKAGE", "0.92"))
+# Hard cap on sigma_5m — above this, skip (high vol = unreliable signal). 0 disables.
+SMART_MAX_SIGMA = float(_os.getenv("SMART_MAX_SIGMA", "0"))
+# If set, evaluate_position always returns empty (pure hold-to-expiry mode, for A/B testing).
+SMART_DISABLE_EXITS = _os.getenv("SMART_DISABLE_EXITS", "0") == "1"
+# Toggle each exit individually (for ablation). "1" = enabled.
+SMART_EXIT_PROFIT_LOCK = _os.getenv("SMART_EXIT_PROFIT_LOCK", "1") == "1"
+SMART_EXIT_LATE_SKIM = _os.getenv("SMART_EXIT_LATE_SKIM", "1") == "1"
+SMART_EXIT_THESIS_BREAK = _os.getenv("SMART_EXIT_THESIS_BREAK", "1") == "1"
+SMART_EXIT_LATE_SALVAGE = _os.getenv("SMART_EXIT_LATE_SALVAGE", "1") == "1"
 
 # ── Exit tuning ─────────────────────────────────────────────────────────────
 SMART_PROFIT_LOCK_ARM = float(_os.getenv("SMART_PROFIT_LOCK_ARM", "0.10"))
@@ -103,8 +121,19 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
 
     if ctx.seconds_left < SMART_ENTRY_MIN_SECONDS_LEFT:
         return _nope("Too little time left")
+    elapsed = 300 - ctx.seconds_left
+    if SMART_MIN_ELAPSED_SECS > 0 and elapsed < SMART_MIN_ELAPSED_SECS:
+        return _nope(f"Bar too fresh elapsed={elapsed}")
     if ctx.bar_open <= 0 or ctx.current_price <= 0:
         return _nope("Missing BTC prices")
+    if SMART_MAX_SIGMA > 0 and ctx.sigma_5m > SMART_MAX_SIGMA:
+        return _nope(f"Sigma too high {ctx.sigma_5m:.5f}")
+    if (
+        SMART_BINANCE_MAX_AGE > 0
+        and ctx.seconds_left >= SMART_LATE_BAR_SECS
+        and (ctx.binance_price <= 0 or ctx.binance_age > SMART_BINANCE_MAX_AGE)
+    ):
+        return _nope(f"Binance stale age={ctx.binance_age:.1f}")
     if not (0 < ctx.up_bid <= ctx.up_ask < 1 and 0 < ctx.down_bid <= ctx.down_ask < 1):
         return _nope("Books not live")
 
@@ -131,7 +160,7 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
 
     # Fair probability (same normal model as math_signal, kept local)
     raw_p_up = _norm_cdf(_clip(z, -3.0, 3.0))
-    p_up = 0.5 + 0.92 * (raw_p_up - 0.5)
+    p_up = 0.5 + SMART_SHRINKAGE * (raw_p_up - 0.5)
     p_up = _clip(p_up, 0.05, 0.95)
     p_down = 1.0 - p_up
     implied = _book_implied_p_up(ctx.up_bid, ctx.up_ask, ctx.down_bid, ctx.down_ask)
@@ -232,6 +261,8 @@ class MathSmartStrategy:
         current_bid: float,
         now: float,
     ) -> PositionDecision:
+        if SMART_DISABLE_EXITS:
+            return PositionDecision()
         unrealized = current_bid - pos.entry_price
         btc_distance = (
             math.log(ctx.current_price / ctx.bar_open) if ctx.bar_open > 0 and ctx.current_price > 0 else 0.0
@@ -252,7 +283,8 @@ class MathSmartStrategy:
 
         # 2. Late-bar skim: pocket near-resolution profit rather than risk flip.
         if (
-            ctx.seconds_left < SMART_LATE_SKIM_SECS
+            SMART_EXIT_LATE_SKIM
+            and ctx.seconds_left < SMART_LATE_SKIM_SECS
             and current_bid >= SMART_LATE_SKIM_BID
             and not pos.sell_order_id
         ):
@@ -263,7 +295,7 @@ class MathSmartStrategy:
             return PositionDecision(exit_reason="late_bar_skim")
 
         # 3. Profit-lock trailing once we're comfortably ahead.
-        if pos.peak_bid >= pos.entry_price + SMART_PROFIT_LOCK_ARM:
+        if SMART_EXIT_PROFIT_LOCK and pos.peak_bid >= pos.entry_price + SMART_PROFIT_LOCK_ARM:
             if (
                 current_bid <= pos.peak_bid - SMART_PROFIT_LOCK_GAP
                 and current_bid > pos.entry_price
@@ -277,7 +309,8 @@ class MathSmartStrategy:
 
         # 4. Thesis break — BTC turned against us meaningfully with time left.
         if (
-            ctx.seconds_left > SMART_THESIS_BREAK_SECS
+            SMART_EXIT_THESIS_BREAK
+            and ctx.seconds_left > SMART_THESIS_BREAK_SECS
             and adverse_btc > SMART_THESIS_BREAK_BTC
             and not pos.sell_order_id
         ):
@@ -289,7 +322,8 @@ class MathSmartStrategy:
 
         # 5. Late-bar salvage — close <SALVAGE secs with thesis dead and losing.
         if (
-            ctx.seconds_left < SMART_SALVAGE_SECS
+            SMART_EXIT_LATE_SALVAGE
+            and ctx.seconds_left < SMART_SALVAGE_SECS
             and not thesis_alive
             and unrealized < -0.03
             and not pos.sell_order_id
