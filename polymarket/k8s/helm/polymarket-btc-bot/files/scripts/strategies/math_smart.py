@@ -1,0 +1,304 @@
+"""Pure-math, time-aware smart entry/exit strategy.
+
+Drops the ML models (they've been marginal) and leans fully on the Binance
+latency edge, but is smarter than `latency_arb_hold` about when to enter and
+when to bail out early:
+
+Entry
+  * z-score of BTC log-distance from bar_open vs remaining-bar sigma.
+  * Time-scaled z threshold: early bars need a bigger move (more time to
+    revert), late bars accept smaller z.
+  * Hard price floor 0.30 / ceiling 0.70 on the side we buy — cheap tails
+    (<0.30) are the WR drag; expensive (>0.70) have no upside left.
+  * Late-bar override: with <45s left AND z > 2.5, floor drops to 0.15 and
+    ceiling rises to 0.88.
+  * Book-divergence filter kept (book hasn't repriced the BTC move yet).
+  * Size scaled by z: clamp(z/2, 0.5x, 2.0x) of the default stake.
+
+Exits (strategy owns all of them — no outer TP/SL applied)
+  * thesis_break: BTC moved AGAINST us by more than THESIS_MIN_BTC_DISTANCE
+    while >60s remain → cut the loss, don't wait for expiry.
+  * profit_lock_trail: once unrealized >= 0.10, arm trailing; exit if bid
+    falls TRAILING_STOP_GAP from peak.
+  * late_bar_skim: with <90s left and bid >= 0.88 → sell now, avoid oracle
+    flip risk in the last minute.
+  * late_bar_salvage: with <45s left and thesis no longer alive → exit.
+  * Otherwise hold to expiry — signal edge is at entry, not exit timing.
+"""
+from __future__ import annotations
+
+import math
+
+from config import (
+    ENTRY_ORDER_MODE,
+    MAX_ENTRY_SPREAD,
+    MIN_POSITION_SHARES,
+    BET_SIZE_MAX,
+    BET_SIZE_MIN,
+    MAX_BUDGET_FRACTION,
+    TAKER_FEE_BPS,
+    THESIS_MIN_BTC_DISTANCE,
+    TRAILING_STOP_GAP,
+    log,
+)
+from math_signal import Signal, _book_implied_p_up, _clip, _norm_cdf
+from positions import Position
+
+from .base import PositionDecision, StrategyContext
+
+import os as _os
+
+# ── Entry tuning ────────────────────────────────────────────────────────────
+SMART_MIN_Z_EARLY = float(_os.getenv("SMART_MIN_Z_EARLY", "1.8"))
+SMART_MIN_Z_LATE = float(_os.getenv("SMART_MIN_Z_LATE", "0.8"))
+SMART_MIN_EDGE = float(_os.getenv("SMART_MIN_EDGE", "0.03"))
+SMART_MIN_BOOK_DIVERGENCE = float(_os.getenv("SMART_MIN_BOOK_DIVERGENCE", "0.03"))
+SMART_ENTRY_FLOOR = float(_os.getenv("SMART_ENTRY_FLOOR", "0.30"))
+SMART_ENTRY_CEIL = float(_os.getenv("SMART_ENTRY_CEIL", "0.70"))
+SMART_LATE_FLOOR = float(_os.getenv("SMART_LATE_FLOOR", "0.15"))
+SMART_LATE_CEIL = float(_os.getenv("SMART_LATE_CEIL", "0.88"))
+SMART_LATE_BAR_SECS = int(_os.getenv("SMART_LATE_BAR_SECS", "45"))
+SMART_LATE_OVERRIDE_Z = float(_os.getenv("SMART_LATE_OVERRIDE_Z", "2.5"))
+SMART_ENTRY_MIN_SECONDS_LEFT = int(_os.getenv("SMART_ENTRY_MIN_SECONDS_LEFT", "20"))
+SMART_SIZE_Z_REF = float(_os.getenv("SMART_SIZE_Z_REF", "2.0"))
+SMART_SIZE_MIN_MULT = float(_os.getenv("SMART_SIZE_MIN_MULT", "0.5"))
+SMART_SIZE_MAX_MULT = float(_os.getenv("SMART_SIZE_MAX_MULT", "2.0"))
+
+# ── Exit tuning ─────────────────────────────────────────────────────────────
+SMART_PROFIT_LOCK_ARM = float(_os.getenv("SMART_PROFIT_LOCK_ARM", "0.10"))
+SMART_PROFIT_LOCK_GAP = float(_os.getenv("SMART_PROFIT_LOCK_GAP", str(TRAILING_STOP_GAP)))
+SMART_LATE_SKIM_SECS = int(_os.getenv("SMART_LATE_SKIM_SECS", "90"))
+SMART_LATE_SKIM_BID = float(_os.getenv("SMART_LATE_SKIM_BID", "0.88"))
+SMART_SALVAGE_SECS = int(_os.getenv("SMART_SALVAGE_SECS", "45"))
+SMART_THESIS_BREAK_SECS = int(_os.getenv("SMART_THESIS_BREAK_SECS", "60"))
+SMART_THESIS_BREAK_BTC = float(_os.getenv("SMART_THESIS_BREAK_BTC", str(THESIS_MIN_BTC_DISTANCE)))
+SMART_FORCE_EXIT_SECS = int(_os.getenv("SMART_FORCE_EXIT_SECS", "10"))
+
+
+def _min_z_for(seconds_left: int) -> float:
+    """Linearly interpolate z-threshold: high early, low late."""
+    bar_len = 300.0
+    sec = max(0, min(seconds_left, int(bar_len)))
+    elapsed = 1.0 - sec / bar_len
+    return SMART_MIN_Z_EARLY - (SMART_MIN_Z_EARLY - SMART_MIN_Z_LATE) * elapsed
+
+
+def _price_band(seconds_left: int, z_abs: float) -> tuple[float, float]:
+    if seconds_left < SMART_LATE_BAR_SECS and z_abs >= SMART_LATE_OVERRIDE_Z:
+        return SMART_LATE_FLOOR, SMART_LATE_CEIL
+    return SMART_ENTRY_FLOOR, SMART_ENTRY_CEIL
+
+
+def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
+    def _nope(reason: str, **dbg) -> Signal:
+        return Signal(
+            action="NO_TRADE",
+            price=None,
+            size=0,
+            p_up=round(dbg.get("p_up", 0.5), 4),
+            edge=round(dbg.get("edge", 0.0), 4),
+            reason=reason,
+            debug=dbg,
+        )
+
+    if ctx.seconds_left < SMART_ENTRY_MIN_SECONDS_LEFT:
+        return _nope("Too little time left")
+    if ctx.bar_open <= 0 or ctx.current_price <= 0:
+        return _nope("Missing BTC prices")
+    if not (0 < ctx.up_bid <= ctx.up_ask < 1 and 0 < ctx.down_bid <= ctx.down_ask < 1):
+        return _nope("Books not live")
+
+    spread_up = ctx.up_ask - ctx.up_bid
+    spread_down = ctx.down_ask - ctx.down_bid
+    if spread_up > MAX_ENTRY_SPREAD and spread_down > MAX_ENTRY_SPREAD:
+        return _nope(f"Spread wide up={spread_up:.3f} dn={spread_down:.3f}")
+
+    best_price = ctx.binance_price if ctx.binance_price > 0 else ctx.current_price
+    price_source = "binance" if ctx.binance_price > 0 else "chainlink"
+
+    btc_distance = math.log(best_price / ctx.bar_open)
+    time_frac = max(ctx.seconds_left / 300.0, 1e-6)
+    sigma_rem = max(ctx.sigma_5m * math.sqrt(time_frac), 1e-6)
+    z = _clip(btc_distance / sigma_rem, -4.0, 4.0)
+
+    min_z = _min_z_for(ctx.seconds_left)
+    if abs(z) < min_z:
+        return _nope(
+            f"z={z:+.2f} below min={min_z:.2f}",
+            z=round(z, 3), min_z=round(min_z, 3),
+            btc_distance=round(btc_distance, 6), price_source=price_source,
+        )
+
+    # Fair probability (same normal model as math_signal, kept local)
+    raw_p_up = _norm_cdf(_clip(z, -3.0, 3.0))
+    p_up = 0.5 + 0.92 * (raw_p_up - 0.5)
+    p_up = _clip(p_up, 0.05, 0.95)
+    p_down = 1.0 - p_up
+    implied = _book_implied_p_up(ctx.up_bid, ctx.up_ask, ctx.down_bid, ctx.down_ask)
+    book_divergence = abs(p_up - implied)
+    if book_divergence < SMART_MIN_BOOK_DIVERGENCE:
+        return _nope(
+            f"Book priced in div={book_divergence:.3f}",
+            p_up=p_up, book_divergence=round(book_divergence, 4),
+            btc_distance=round(btc_distance, 6), price_source=price_source,
+        )
+
+    fee = TAKER_FEE_BPS / 10000.0
+    net_up = p_up - ctx.up_ask - fee
+    net_down = p_down - ctx.down_ask - fee
+
+    floor, ceil = _price_band(ctx.seconds_left, abs(z))
+    up_tradeable = floor <= ctx.up_ask <= ceil and spread_up <= MAX_ENTRY_SPREAD
+    down_tradeable = floor <= ctx.down_ask <= ceil and spread_down <= MAX_ENTRY_SPREAD
+
+    dbg = dict(
+        z=round(z, 3), min_z=round(min_z, 3),
+        p_up=round(p_up, 4), p_down=round(p_down, 4),
+        net_up=round(net_up, 4), net_down=round(net_down, 4),
+        seconds_left=ctx.seconds_left,
+        btc_distance=round(btc_distance, 6),
+        price_source=price_source,
+        book_divergence=round(book_divergence, 4),
+        floor=floor, ceil=ceil,
+        sigma_5m=round(ctx.sigma_5m, 6),
+    )
+
+    if net_up >= net_down and net_up >= SMART_MIN_EDGE and up_tradeable:
+        action, price, p, edge = "BUY_UP", ctx.up_ask, p_up, net_up
+    elif net_down > net_up and net_down >= SMART_MIN_EDGE and down_tradeable:
+        action, price, p, edge = "BUY_DOWN", ctx.down_ask, p_down, net_down
+    else:
+        reason = f"No edge above {SMART_MIN_EDGE:.3f}"
+        if net_up >= SMART_MIN_EDGE and not up_tradeable:
+            reason = f"UP outside band ask={ctx.up_ask:.3f}"
+        elif net_down >= SMART_MIN_EDGE and not down_tradeable:
+            reason = f"DOWN outside band ask={ctx.down_ask:.3f}"
+        return _nope(reason, edge=max(net_up, net_down), **dbg)
+
+    if not require_budget:
+        return Signal(
+            action=action, price=round(price, 4), size=0,
+            p_up=round(p_up, 4), edge=round(edge, 4),
+            reason=f"z={z:+.2f} fair={p:.3f} mkt={price:.3f} edge={edge:.4f} div={book_divergence:.3f}",
+            debug=dbg,
+        )
+
+    size_mult = _clip(abs(z) / SMART_SIZE_Z_REF, SMART_SIZE_MIN_MULT, SMART_SIZE_MAX_MULT)
+    budget_cap = min(ctx.cash_amount * MAX_BUDGET_FRACTION, BET_SIZE_MAX)
+    budget = min(budget_cap * size_mult, BET_SIZE_MAX)
+    if budget < BET_SIZE_MIN:
+        return _nope(f"Budget {budget:.3f} < min {BET_SIZE_MIN:.3f}", edge=edge, **dbg)
+    shares = int(math.floor(budget / price))
+    if shares < MIN_POSITION_SHARES:
+        return _nope(f"Shares {shares} < min {MIN_POSITION_SHARES}", edge=edge, shares=shares, **dbg)
+
+    dbg["size_mult"] = round(size_mult, 3)
+    return Signal(
+        action=action, price=round(price, 4), size=shares,
+        p_up=round(p_up, 4), edge=round(edge, 4),
+        reason=f"z={z:+.2f} fair={p:.3f} mkt={price:.3f} edge={edge:.4f} div={book_divergence:.3f} src={price_source}",
+        debug=dbg,
+    )
+
+
+class MathSmartStrategy:
+    name = "math_smart"
+
+    def startup_details(self) -> list[str]:
+        return [
+            f"STRATEGY={self.name}",
+            f"ENTRY_MODE={self.entry_order_mode()}",
+            f"Z_EARLY={SMART_MIN_Z_EARLY:.2f} Z_LATE={SMART_MIN_Z_LATE:.2f} MIN_EDGE={SMART_MIN_EDGE:.3f}",
+            f"BAND=[{SMART_ENTRY_FLOOR:.2f},{SMART_ENTRY_CEIL:.2f}] LATE=[{SMART_LATE_FLOOR:.2f},{SMART_LATE_CEIL:.2f}]",
+            f"THESIS_BREAK_BTC={SMART_THESIS_BREAK_BTC:.4f} LATE_SKIM@{SMART_LATE_SKIM_BID:.2f}<{SMART_LATE_SKIM_SECS}s",
+        ]
+
+    def entry_order_mode(self) -> str:
+        return ENTRY_ORDER_MODE
+
+    def entry_hold_to_expiry(self) -> bool:
+        # We may exit early on thesis break / profit lock. main.py uses this
+        # only to decide whether to post the $0.99 GTC sell immediately; we
+        # want active management, so return False.
+        return False
+
+    def evaluate_entry(self, ctx: StrategyContext) -> Signal:
+        return _compute_signal(ctx, require_budget=True)
+
+    def evaluate_position(
+        self,
+        ctx: StrategyContext,
+        pos: Position,
+        current_bid: float,
+        now: float,
+    ) -> PositionDecision:
+        unrealized = current_bid - pos.entry_price
+        btc_distance = (
+            math.log(ctx.current_price / ctx.bar_open) if ctx.bar_open > 0 and ctx.current_price > 0 else 0.0
+        )
+        thesis_alive = (
+            (pos.direction == "UP" and btc_distance > 0)
+            or (pos.direction == "DOWN" and btc_distance < 0)
+        )
+        adverse_btc = -btc_distance if pos.direction == "UP" else btc_distance
+
+        # 1. Force exit in final seconds regardless of state.
+        if ctx.seconds_left <= SMART_FORCE_EXIT_SECS:
+            log.info(
+                "SMART_FORCE_EXIT  secs=%d bid=%.4f entry=%.4f pnl=%+.4f",
+                ctx.seconds_left, current_bid, pos.entry_price, unrealized,
+            )
+            return PositionDecision(exit_reason="force_close")
+
+        # 2. Late-bar skim: pocket near-resolution profit rather than risk flip.
+        if (
+            ctx.seconds_left < SMART_LATE_SKIM_SECS
+            and current_bid >= SMART_LATE_SKIM_BID
+            and not pos.sell_order_id
+        ):
+            log.info(
+                "SMART_LATE_SKIM  secs=%d bid=%.4f entry=%.4f pnl=%+.4f",
+                ctx.seconds_left, current_bid, pos.entry_price, unrealized,
+            )
+            return PositionDecision(exit_reason="late_bar_skim")
+
+        # 3. Profit-lock trailing once we're comfortably ahead.
+        if pos.peak_bid >= pos.entry_price + SMART_PROFIT_LOCK_ARM:
+            if (
+                current_bid <= pos.peak_bid - SMART_PROFIT_LOCK_GAP
+                and current_bid > pos.entry_price
+                and not pos.sell_order_id
+            ):
+                log.info(
+                    "SMART_PROFIT_LOCK  bid=%.4f peak=%.4f entry=%.4f",
+                    current_bid, pos.peak_bid, pos.entry_price,
+                )
+                return PositionDecision(exit_reason="profit_lock_trail")
+
+        # 4. Thesis break — BTC turned against us meaningfully with time left.
+        if (
+            ctx.seconds_left > SMART_THESIS_BREAK_SECS
+            and adverse_btc > SMART_THESIS_BREAK_BTC
+            and not pos.sell_order_id
+        ):
+            log.info(
+                "SMART_THESIS_BREAK  dir=%s adv_btc=%+.4f secs=%d bid=%.4f entry=%.4f",
+                pos.direction, adverse_btc, ctx.seconds_left, current_bid, pos.entry_price,
+            )
+            return PositionDecision(exit_reason="thesis_break")
+
+        # 5. Late-bar salvage — close <SALVAGE secs with thesis dead and losing.
+        if (
+            ctx.seconds_left < SMART_SALVAGE_SECS
+            and not thesis_alive
+            and unrealized < -0.03
+            and not pos.sell_order_id
+        ):
+            log.info(
+                "SMART_LATE_SALVAGE  secs=%d bid=%.4f entry=%.4f pnl=%+.4f adv=%+.4f",
+                ctx.seconds_left, current_bid, pos.entry_price, unrealized, adverse_btc,
+            )
+            return PositionDecision(exit_reason="late_bar_salvage")
+
+        # Otherwise hold.
+        return PositionDecision()

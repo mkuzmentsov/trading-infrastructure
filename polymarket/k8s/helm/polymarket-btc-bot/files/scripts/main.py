@@ -19,6 +19,7 @@ import os
 import time
 
 from binance_ws import binance_state, run_binance_ws
+from btc_next_bar_model import blend_model_probabilities, predict_next_bar_p_up
 from btc_ws import btc_state, run_btc_ws
 from clob import (
     build_clob_client,
@@ -197,6 +198,26 @@ def _build_ml_snapshot(seconds_left: int) -> dict:
             "staleness": _feed_staleness(),
         },
     }
+
+
+def _combined_ml_probability(seconds_left: int, ml_snapshot: dict | None = None) -> float | None:
+    snapshot = ml_snapshot or _build_ml_snapshot(seconds_left)
+    pm_prob = ml_predict_p_up(snapshot)
+    prior_prob = predict_next_bar_p_up(
+        binance_state.completed_bars(before_ts=pm_state.market_start_ts, limit=64),
+        market_start_ts=pm_state.market_start_ts,
+    )
+    combined, info = blend_model_probabilities(pm_prob, prior_prob, seconds_left)
+    if combined is not None and (pm_prob is not None or prior_prob is not None):
+        log.debug(
+            "ML blend  combined=%.4f pm=%.4f prior=%.4f prior_weight=%.3f prior_conf=%.3f",
+            combined,
+            pm_prob if pm_prob is not None else -1.0,
+            prior_prob if prior_prob is not None else -1.0,
+            float(info.get("prior_weight") or 0.0),
+            float(info.get("prior_confidence") or 0.0),
+        )
+    return combined
 
 
 def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int, ml_p_up: float | None) -> None:
@@ -878,12 +899,12 @@ async def _manage_position(clob) -> None:
 
     # Exit logic mirrors backtest.simulate_active_exits. Two branches:
     #   - profit_1      : trailing_stop → take_profit → stop_loss → signal_flip → late_bar_cut
-    #   - pm_btc_ml-entry: all exits live inside MLEntryStrategy.evaluate_position
+    #   - pm_btc_ml-entry / pm_btc_ml-entry-v2: all exits live inside the ML entry strategy
     # Each check is the minimum logic required; no arming, no floors, no
     # stale-order cancellation. If a sell order is already resting, a later
     # check will just reprice it below.
     strategy_name = getattr(_strategy, "name", "")
-    ml_entry_active = strategy_name == "pm_btc_ml-entry"
+    ml_entry_active = strategy_name in {"pm_btc_ml-entry", "pm_btc_ml-entry-v2", "math_smart"}
 
     if not ml_entry_active:
         # 1. Trailing stop — fires whenever peak_bid exceeded arm gain and bid
@@ -939,10 +960,10 @@ async def _manage_position(clob) -> None:
                 return
 
     # Strategy-level exits. For profit_1 this is only signal_flip; for
-    # pm_btc_ml-entry the strategy owns SL / trailing / thesis_decay /
+    # pm_btc_ml-entry* strategies own SL / trailing / thesis_decay /
     # late_bar_cut / late_bar_fade / force_close (mirrors backtest).
     ml_snapshot = _build_ml_snapshot(seconds_left)
-    ml_p_up = ml_predict_p_up(ml_snapshot)
+    ml_p_up = _combined_ml_probability(seconds_left, ml_snapshot)
     strategy_decision = _strategy.evaluate_position(
         _build_strategy_context(0.0, seconds_left, ml_p_up),
         pos,
@@ -961,7 +982,7 @@ async def _manage_position(clob) -> None:
     current_side_edge = strategy_decision.current_side_edge
 
     # Late-bar cut — last-ditch exit if underwater near bar end. profit_1 only;
-    # pm_btc_ml-entry already has its own late_bar_cut in the strategy.
+    # pm_btc_ml-entry* strategies already have their own late_bar_cut.
     if not ml_entry_active and seconds_left <= 45 and unrealized <= -0.05 and not pos.sell_order_id:
         log.info(
             "LATE_BAR_CUT  secs_left=%d  bid=%.4f  entry=%.4f  pnl=%.4f",
@@ -1174,7 +1195,7 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     ml_snapshot = _build_ml_snapshot(seconds_left)
-    ml_p_up = ml_predict_p_up(ml_snapshot)
+    ml_p_up = _combined_ml_probability(seconds_left, ml_snapshot)
     signal = _strategy.evaluate_entry(_build_strategy_context(balance, seconds_left, ml_p_up))
     _log_signal_debug("try_enter", signal, cash_amount=balance, seconds_left=seconds_left)
 
@@ -1525,8 +1546,6 @@ async def _tick(clob) -> None:
     if not DRY_RUN and clob is not None and _feeds_are_fresh():
         await _prewarm_ctf_approvals(clob)
 
-    cid = pm_state.condition_id
-
     if DRY_RUN:
         balance = float(os.getenv("DRY_RUN_BALANCE", "100.0"))
     else:
@@ -1588,6 +1607,7 @@ async def main() -> None:
             if not DRY_RUN and clob is None and btc_state.ready and pm_state.ready and _feeds_are_fresh():
                 log.info("Feeds recovered — initializing trading client")
                 clob = await _init_clob()
+                await _write_balance_snapshot(clob, reason="startup")
             await _tick(clob)
         except Exception as exc:
             log.exception("Tick error: %s", exc)
@@ -1599,31 +1619,6 @@ async def main() -> None:
             stale_keys = [key for key in _stop_loss_reentry_guard if key[0] != pm_state.condition_id]
             for key in stale_keys:
                 _stop_loss_reentry_guard.pop(key, None)
-            if not DRY_RUN:
-                try:
-                    await asyncio.to_thread(redeem_resolved_positions, _write_training_event)
-                    await _write_balance_snapshot(clob, reason="post_redemption_boundary")
-                except Exception as exc:
-                    log.error("Redemption sweep failed: %s", exc)
-
-            pos = pos_store.position
-            if pos and pos.condition_id != pm_state.condition_id and not pos.sell_order_id:
-                if not pos.hold_to_expiry:
-                    log.info("Bar boundary: old market position has no live exit — hold to expiry  %s", pos.condition_id[:16])
-                    pos.hold_to_expiry = True
-                log.info(
-                    "Bar boundary: parking old-market hold position  dir=%s shares=%d entry=%.4f market=%s",
-                    pos.direction,
-                    pos.shares,
-                    pos.entry_price,
-                    pos.condition_id[:16],
-                )
-                _write_position_parked_event(pos, reason="bar_boundary_old_market_hold")
-                pos_store.park_current_position()
-            pb = pos_store.pending_buy
-            if pb and pb.condition_id != pm_state.condition_id:
-                log.info("Bar boundary: clearing stale pending buy (old market %s)", pb.condition_id[:16])
-                pos_store.clear_pending_buy()
 
         elapsed = time.time() - tick_start
         await asyncio.sleep(max(0, EVAL_INTERVAL_SECS - elapsed))

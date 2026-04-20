@@ -20,6 +20,7 @@ from collections import deque
 
 import websockets
 
+from btc_next_bar_model import BinanceBarHistory
 from config import BINANCE_WS_URL, log
 
 
@@ -34,8 +35,9 @@ class BinanceState:
 
         # Rolling price history for returns: (wall_time, log_price)
         self._prices: deque[tuple[float, float]] = deque(maxlen=600)
+        self._bar_history = BinanceBarHistory()
 
-    def _record(self, wall_time: float, price: float) -> None:
+    def _record(self, wall_time: float, price: float, quantity: float = 0.0, buyer_is_maker: bool | None = None) -> None:
         if price <= 0:
             return
         self.current_price = price
@@ -47,6 +49,7 @@ class BinanceState:
             self._prices[-1] = (wall_time, lp)
         else:
             self._prices.append((wall_time, lp))
+        self._bar_history.update(wall_time, price, quantity=quantity, buyer_is_maker=buyer_is_maker)
 
     def ret_since(self, seconds: float) -> float:
         """Log-return over the last `seconds` seconds."""
@@ -64,6 +67,9 @@ class BinanceState:
         if self.last_updated_at <= 0:
             return float("inf")
         return time.time() - self.last_updated_at
+
+    def completed_bars(self, before_ts: int | None = None, limit: int = 64) -> list[dict]:
+        return self._bar_history.completed_bars(before_ts=before_ts, limit=limit)
 
 
 binance_state = BinanceState()
@@ -101,11 +107,14 @@ async def run_binance_ws() -> None:
                     # aggTrade message format:
                     # {"e":"aggTrade","s":"BTCUSDT","p":"84532.10","T":1713200000000,...}
                     price_str = msg.get("p")
+                    qty_str = msg.get("q")
+                    buyer_is_maker = msg.get("m")
                     trade_ts = msg.get("T")  # ms
                     if price_str and trade_ts:
                         price = float(price_str)
+                        quantity = float(qty_str or 0.0)
                         wall_time = float(trade_ts) / 1000.0
-                        binance_state._record(wall_time, price)
+                        binance_state._record(wall_time, price, quantity=quantity, buyer_is_maker=buyer_is_maker)
 
                     now = time.time()
                     if now - last_heartbeat >= 30:

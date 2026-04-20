@@ -28,7 +28,12 @@ bot:
   modelProbCeil: "0.95"       # wider probability range (was 0.88)
   signalModel: "math"
   mlBlendWeight: "0.50"
+  btcNextBarModelPath: "/app/model/pm_btc_binance_next_bar_model.txt"
+  btcNextBarMetaPath: "/app/model/pm_btc_binance_next_bar_meta.json"
+  btcNextBarBlendWeight: "0.35"
   entryGateModelPath: "/app/model/pm_btc_entry_gate_model.txt"
+  entryGateModelPathV2: "/app/model/pm_btc_entry_gate_model_v2.txt"
+  entryGateCalibratorPathV2: "/app/model/pm_btc_entry_gate_calibrator_v2.json"
   entryGateThreshold: "0.55"
   entryGateMinPrice: "0.30"
   entryGateCheapOverrideScore: "0.78"

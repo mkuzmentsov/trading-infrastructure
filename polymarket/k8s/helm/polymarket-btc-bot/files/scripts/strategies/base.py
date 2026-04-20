@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from math_signal import Signal
 from positions import Position
@@ -31,6 +31,12 @@ class StrategyContext:
     binance_price: float
     binance_age: float
     ml_p_up: float | None
+    # Optional — populated by replays/live for strategies that need the raw
+    # snapshot dict or an in-bar history window (e.g. v2 velocity features).
+    condition_id: str = ""
+    ts: float = 0.0
+    raw_snapshot: dict[str, Any] = field(default_factory=dict)
+    prior_snapshots: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

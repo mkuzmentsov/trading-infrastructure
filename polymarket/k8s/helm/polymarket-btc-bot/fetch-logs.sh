@@ -73,11 +73,28 @@ for SELECTOR in "${SELECTORS[@]}"; do
 
   # --- Copy JSONL training logs from container ---------------------------
   echo "==> Copying /app/logs/*.jsonl from pod..."
+  copy_remote_file() {
+    local pod="$1"
+    local remote_path="$2"
+    local local_path="$3"
+    local tries=0
+    local max_tries=3
+    while [[ $tries -lt $max_tries ]]; do
+      tries=$((tries + 1))
+      if kubectl -n "$NAMESPACE" exec "$pod" -- sh -c "cat '$remote_path'" > "$local_path"; then
+        return 0
+      fi
+      sleep 1
+    done
+    return 1
+  }
   for f in logs-training.jsonl logs-training-events.jsonl; do
     if kubectl -n "$NAMESPACE" exec "$POD_NAME" -- test -f "/app/logs/$f" 2>/dev/null; then
-      kubectl -n "$NAMESPACE" cp "$POD_NAME:/app/logs/$f" "$OUT_DIR/$f" \
-        && echo "    ok: $f" \
-        || echo "    warn: failed copying $f"
+      if copy_remote_file "$POD_NAME" "/app/logs/$f" "$OUT_DIR/$f"; then
+        echo "    ok: $f"
+      else
+        echo "    warn: failed copying $f"
+      fi
     else
       echo "    skip: /app/logs/$f not present"
     fi

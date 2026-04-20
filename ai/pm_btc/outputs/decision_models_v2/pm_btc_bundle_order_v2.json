@@ -1,0 +1,202 @@
+[
+  {
+    "bundle": "pm-btc-logs_20260415_140116",
+    "sort_key": "20260415_140116",
+    "n_bars": 70,
+    "usable_bars": 70,
+    "entry_rows": 303,
+    "positives_primary": 116
+  },
+  {
+    "bundle": "pm-btc-logs_20260416_024504",
+    "sort_key": "20260416_024504",
+    "n_bars": 24,
+    "usable_bars": 24,
+    "entry_rows": 370,
+    "positives_primary": 217
+  },
+  {
+    "bundle": "pm-btc-logs_20260416_081326",
+    "sort_key": "20260416_081326",
+    "n_bars": 66,
+    "usable_bars": 66,
+    "entry_rows": 861,
+    "positives_primary": 360
+  },
+  {
+    "bundle": "pm-btc-logs_20260417_080254",
+    "sort_key": "20260417_080254",
+    "n_bars": 124,
+    "usable_bars": 124,
+    "entry_rows": 99,
+    "positives_primary": 58
+  },
+  {
+    "bundle": "pm-btc-logs_20260417_123031",
+    "sort_key": "20260417_123031",
+    "n_bars": 36,
+    "usable_bars": 36,
+    "entry_rows": 18,
+    "positives_primary": 11
+  },
+  {
+    "bundle": "pm-btc-logs_20260417_161521",
+    "sort_key": "20260417_161521",
+    "n_bars": 5,
+    "usable_bars": 5,
+    "entry_rows": 6,
+    "positives_primary": 3
+  },
+  {
+    "bundle": "pm-btc-logs_20260417_211507",
+    "sort_key": "20260417_211507",
+    "n_bars": 64,
+    "usable_bars": 64,
+    "entry_rows": 87,
+    "positives_primary": 21
+  },
+  {
+    "bundle": "pm-btc-logs_20260418_111619",
+    "sort_key": "20260418_111619",
+    "n_bars": 15,
+    "usable_bars": 15,
+    "entry_rows": 9,
+    "positives_primary": 3
+  },
+  {
+    "bundle": "pm-btc-logs_20260418_120244",
+    "sort_key": "20260418_120244",
+    "n_bars": 24,
+    "usable_bars": 24,
+    "entry_rows": 19,
+    "positives_primary": 10
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_131825",
+    "sort_key": "20260418_131825",
+    "n_bars": 3,
+    "usable_bars": 3,
+    "entry_rows": 60,
+    "positives_primary": 25
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_133133",
+    "sort_key": "20260418_133133",
+    "n_bars": 6,
+    "usable_bars": 6,
+    "entry_rows": 84,
+    "positives_primary": 26
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_144308",
+    "sort_key": "20260418_144308",
+    "n_bars": 2,
+    "usable_bars": 2,
+    "entry_rows": 0,
+    "positives_primary": 0
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_144600",
+    "sort_key": "20260418_144600",
+    "n_bars": 3,
+    "usable_bars": 3,
+    "entry_rows": 1,
+    "positives_primary": 0
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_174254",
+    "sort_key": "20260418_174254",
+    "n_bars": 38,
+    "usable_bars": 38,
+    "entry_rows": 380,
+    "positives_primary": 169
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260418_181846",
+    "sort_key": "20260418_181846",
+    "n_bars": 2,
+    "usable_bars": 2,
+    "entry_rows": 3,
+    "positives_primary": 2
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_182515",
+    "sort_key": "20260418_182515",
+    "n_bars": 4,
+    "usable_bars": 4,
+    "entry_rows": 34,
+    "positives_primary": 2
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_183522",
+    "sort_key": "20260418_183522",
+    "n_bars": 3,
+    "usable_bars": 3,
+    "entry_rows": 2,
+    "positives_primary": 0
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260418_184034",
+    "sort_key": "20260418_184034",
+    "n_bars": 4,
+    "usable_bars": 4,
+    "entry_rows": 35,
+    "positives_primary": 10
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260418_195918",
+    "sort_key": "20260418_195918",
+    "n_bars": 13,
+    "usable_bars": 13,
+    "entry_rows": 16,
+    "positives_primary": 15
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_195930",
+    "sort_key": "20260418_195930",
+    "n_bars": 13,
+    "usable_bars": 13,
+    "entry_rows": 16,
+    "positives_primary": 5
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260418_224248",
+    "sort_key": "20260418_224248",
+    "n_bars": 25,
+    "usable_bars": 25,
+    "entry_rows": 34,
+    "positives_primary": 4
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260418_224258",
+    "sort_key": "20260418_224258",
+    "n_bars": 14,
+    "usable_bars": 14,
+    "entry_rows": 23,
+    "positives_primary": 6
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260418_232058",
+    "sort_key": "20260418_232058",
+    "n_bars": 1,
+    "usable_bars": 1,
+    "entry_rows": 0,
+    "positives_primary": 0
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-3_20260419_101700",
+    "sort_key": "20260419_101700",
+    "n_bars": 122,
+    "usable_bars": 122,
+    "entry_rows": 36,
+    "positives_primary": 16
+  },
+  {
+    "bundle": "pm-btc-logs_pm-btc-2_20260419_101755",
+    "sort_key": "20260419_101755",
+    "n_bars": 126,
+    "usable_bars": 126,
+    "entry_rows": 126,
+    "positives_primary": 61
+  }
+]

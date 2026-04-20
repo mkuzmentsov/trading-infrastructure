@@ -1,8 +1,9 @@
 """
 Polymarket CLOB WebSocket — real-time UP/DOWN book state.
 
-On startup and every MARKET_REFRESH_SECS, fetches the active BTC 5-min
-UP/DOWN market from the Gamma REST API and subscribes to its token IDs.
+On startup and whenever the current 5-minute market rolls over, fetches
+the active BTC UP/DOWN market from the Gamma REST API and subscribes to
+its token IDs.
 
 Book events update pm_state.up_bid / up_ask / down_bid / down_ask in place.
 A market is considered ready only after both sides have received live book data.
@@ -17,7 +18,6 @@ import websockets
 
 from btc_ws import btc_state
 from config import (
-    MARKET_REFRESH_SECS,
     POLYMARKET_WS,
     WS_HEARTBEAT_SECS,
     log,
@@ -336,8 +336,6 @@ async def run_pm_ws() -> None:
                 await ws.send(json.dumps({"type": "market", "assets_ids": token_ids, "custom_feature_enabled": True}))
                 log.info("Polymarket WS connected  session=%d", pm_state.ws_session_id)
                 backoff = 1
-
-                last_refresh = asyncio.get_event_loop().time()
                 last_ping = asyncio.get_event_loop().time()
 
                 while True:
@@ -393,9 +391,7 @@ async def run_pm_ws() -> None:
                                 snippet = raw[:200].replace("\n", "\\n")
                                 log.error("PM WS processing error: %s  raw=%s", exc, snippet)
 
-                    now = asyncio.get_event_loop().time()
-                    if now - last_refresh >= MARKET_REFRESH_SECS:
-                        last_refresh = now
+                    if pm_state.market_end_ts > 0 and time.time() >= pm_state.market_end_ts:
                         try:
                             fresh = fetch_btc_5m_market()
                             if fresh:
@@ -418,13 +414,13 @@ async def run_pm_ws() -> None:
                                         )
                                     token_ids = new_ids
                                     log.info(
-                                        "PM WS: switched market  session=%d market=%s token_ids=%s",
+                                        "PM WS: switched market on boundary  session=%d market=%s token_ids=%s",
                                         pm_state.ws_session_id,
                                         pm_state.question[:70],
                                         token_ids,
                                     )
                         except Exception as exc:
-                            log.warning("PM WS market refresh error: %s", exc)
+                            log.warning("PM WS boundary market switch error: %s", exc)
                 log.warning(
                     "PM WS loop ended  session=%d close_code=%s close_reason=%s last_msg_kind=%s",
                     pm_state.ws_session_id,

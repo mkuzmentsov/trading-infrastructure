@@ -1,0 +1,4 @@
+interface:
+  display_name: "PM BTC Strategy Tuning"
+  short_description: "Tune PM BTC strategy config and code toward profit."
+  default_prompt: "Use $pm-btc-strategy-tuning to inspect PM BTC config, adjust strategy logic, and validate whether the variant improves expected PnL."

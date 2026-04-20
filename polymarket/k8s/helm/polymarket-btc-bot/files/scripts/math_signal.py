@@ -39,6 +39,7 @@ from config import (
     MIN_POSITION_SHARES,
     MODEL_PROB_CEIL,
     MODEL_PROB_FLOOR,
+    ML_BLEND_WEIGHT,
     TAKER_FEE_BPS,
 )
 
@@ -180,7 +181,12 @@ def generate_signal(
     btc_distance = math.log(best_price / bar_open) if bar_open > 0 and best_price > 0 else 0.0
 
     # Our fair probability using the freshest price
-    p_up = _fair_p_up(bar_open, best_price, sigma_5m, seconds_left)
+    raw_p_up = _fair_p_up(bar_open, best_price, sigma_5m, seconds_left)
+    p_up = raw_p_up
+    model_blend_weight = 0.0
+    if model_p_up is not None and math.isfinite(model_p_up):
+        model_blend_weight = max(0.0, min(0.95, ML_BLEND_WEIGHT))
+        p_up = _clip((1.0 - model_blend_weight) * raw_p_up + model_blend_weight * float(model_p_up), MODEL_PROB_FLOOR, MODEL_PROB_CEIL)
     p_down = 1.0 - p_up
 
     # What the book currently thinks
@@ -212,6 +218,7 @@ def generate_signal(
     dbg = dict(
         p_up=round(p_up, 4),
         p_down=round(p_down, 4),
+        p_up_closed_form=round(raw_p_up, 4),
         net_up=round(net_up, 4),
         net_down=round(net_down, 4),
         sigma_5m=round(sigma_5m, 6),
@@ -231,6 +238,7 @@ def generate_signal(
         spread_down=round(spread_down, 4),
         fee=round(fee, 4),
         p_up_model=round(float(model_p_up), 4) if model_p_up is not None else None,
+        p_up_model_blend_weight=round(model_blend_weight, 4),
     )
 
     # ── Smart filters ────────────────────────────────────────────────────────

@@ -16,7 +16,9 @@ from config import (
     SIGNATURE_TYPE, USDC_ADDRESS, log,
 )
 from positions import Position, pos_store
-from telegram import tg
+
+
+_redeemed_conditions: set[str] = set()
 
 
 # ── Polygon RPC ───────────────────────────────────────────────────────────────
@@ -214,7 +216,6 @@ def _claim_to_funder() -> None:
     raw     = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction", None)
     tx_hash = _rpc("eth_sendRawTransaction", ["0x" + raw.hex()])
     log.info("Claim tx sent: %s  (%.2f USDC.e)", tx_hash, usdc_amount)
-    tg(f"🏦 <b>Claimed</b>\n{usdc_amount:.2f} USDC.e → funder\ntx: {tx_hash}")
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -292,6 +293,9 @@ def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) ->
         if not condition_id or not token_id:
             log.warning("Position missing conditionId or asset: %s", pos)
             continue
+        if condition_id in _redeemed_conditions:
+            log.info("Condition already processed for redemption: %s", condition_id[:16])
+            continue
 
         try:
             holder  = POLYMARKET_FUNDER if POLYMARKET_FUNDER else POLYMARKET_ADDRESS
@@ -322,9 +326,9 @@ def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) ->
             else:
                 tx_hash = _send_tx(calldata, nonce, gas_price)
             log.info("Redeemed %s  tx=%s", question[:40], tx_hash)
-            tg(f"💰 <b>Redeemed</b>\n{question[:80]}\ntx: {tx_hash}")
             tracked_pos = pos_store.pop_matching_position(condition_id, token_id)
             _emit_redemption_event(on_event, payload, tracked_pos, tx_hash)
+            _redeemed_conditions.add(condition_id)
             nonce += 1
         except Exception as exc:
             err = str(exc)
@@ -332,6 +336,7 @@ def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) ->
                 log.info("Position already redeemed externally: %s", question[:40])
                 tracked_pos = pos_store.pop_matching_position(condition_id, token_id)
                 _emit_redemption_event(on_event, payload, tracked_pos, "")
+                _redeemed_conditions.add(condition_id)
                 nonce += 1
             else:
                 log.error("Redeem failed for %s: %s", question[:40], exc)

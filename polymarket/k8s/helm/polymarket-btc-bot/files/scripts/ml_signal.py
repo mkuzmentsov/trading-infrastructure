@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 from typing import Any, Optional
 
 from config import log
@@ -47,6 +48,14 @@ FEATURE_COLUMNS: list[str] = [
 
 _booster = None  # lazy, cached on first call
 _load_failed = False
+
+
+def _resolve_model_path() -> Path:
+    path = Path(MODEL_PATH)
+    if path.exists():
+        return path
+    local_candidate = Path(__file__).resolve().parent.parent / "model" / path.name
+    return local_candidate
 
 
 def _safe_log1p(x: Optional[float]) -> float:
@@ -121,8 +130,9 @@ def _load() -> None:
     global _booster, _load_failed
     if _booster is not None or _load_failed:
         return
-    if not os.path.exists(MODEL_PATH):
-        log.info("ML signal: model file not found at %s — inference disabled", MODEL_PATH)
+    model_path = _resolve_model_path()
+    if not model_path.exists():
+        log.info("ML signal: model file not found at %s — inference disabled", model_path)
         _load_failed = True
         return
     try:
@@ -132,8 +142,8 @@ def _load() -> None:
         _load_failed = True
         return
     try:
-        _booster = lgb.Booster(model_file=MODEL_PATH)
-        log.info("ML signal: loaded model from %s (%d features)", MODEL_PATH, _booster.num_feature())
+        _booster = lgb.Booster(model_file=str(model_path))
+        log.info("ML signal: loaded model from %s (%d features)", model_path, _booster.num_feature())
     except Exception as exc:
         log.warning("ML signal: failed to load model: %s — inference disabled", exc)
         _load_failed = True
