@@ -113,7 +113,9 @@ def aggregate(per_bundle: dict) -> dict:
 
 
 def main():
-    rng = random.Random(42)
+    seed = int(os.environ.get("SWEEP_SEED", "42"))
+    rng = random.Random(seed)
+    print(f"seed={seed}")
     N = 400
     configs = [(i, sample_config(rng)) for i in range(N)]
 

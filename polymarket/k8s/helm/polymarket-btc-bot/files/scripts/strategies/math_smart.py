@@ -85,12 +85,36 @@ SMART_EXIT_LATE_SALVAGE = _os.getenv("SMART_EXIT_LATE_SALVAGE", "1") == "1"
 # ── Exit tuning ─────────────────────────────────────────────────────────────
 SMART_PROFIT_LOCK_ARM = float(_os.getenv("SMART_PROFIT_LOCK_ARM", "0.10"))
 SMART_PROFIT_LOCK_GAP = float(_os.getenv("SMART_PROFIT_LOCK_GAP", str(TRAILING_STOP_GAP)))
+# Conditional profit-lock: only arm when entry was high-conviction.
+# SMART_PROFIT_LOCK_MIN_ENTRY_PRICE: require entry_price >= threshold (0 disables).
+# SMART_PROFIT_LOCK_MIN_ABS_P: require |entry_p_up - 0.5| >= threshold (0 disables).
+SMART_PROFIT_LOCK_MIN_ENTRY_PRICE = float(_os.getenv("SMART_PROFIT_LOCK_MIN_ENTRY_PRICE", "0"))
+SMART_PROFIT_LOCK_MIN_ABS_P = float(_os.getenv("SMART_PROFIT_LOCK_MIN_ABS_P", "0"))
 SMART_LATE_SKIM_SECS = int(_os.getenv("SMART_LATE_SKIM_SECS", "90"))
 SMART_LATE_SKIM_BID = float(_os.getenv("SMART_LATE_SKIM_BID", "0.88"))
 SMART_SALVAGE_SECS = int(_os.getenv("SMART_SALVAGE_SECS", "45"))
 SMART_THESIS_BREAK_SECS = int(_os.getenv("SMART_THESIS_BREAK_SECS", "60"))
 SMART_THESIS_BREAK_BTC = float(_os.getenv("SMART_THESIS_BREAK_BTC", str(THESIS_MIN_BTC_DISTANCE)))
+# Sigma-aware thesis break: if >0, threshold becomes mult * sigma_5m (scales with realized vol).
+# Overrides SMART_THESIS_BREAK_BTC when active.
+SMART_THESIS_BREAK_SIGMA_MULT = float(_os.getenv("SMART_THESIS_BREAK_SIGMA_MULT", "0"))
 SMART_FORCE_EXIT_SECS = int(_os.getenv("SMART_FORCE_EXIT_SECS", "10"))
+
+# ── Advanced knobs (all OFF by default) ─────────────────────────────────────
+# Size cap: if |z| > cap, clamp size_mult to the value it would have at z=cap.
+# Phase-6 diag showed size_lvl=3 (big-z) was negative PnL.
+SMART_SIZE_Z_CAP = float(_os.getenv("SMART_SIZE_Z_CAP", "0"))
+# Directional divergence: if 1, require sign(p_up - implied) aligned with signal direction.
+SMART_DIVERGENCE_DIRECTIONAL = _os.getenv("SMART_DIVERGENCE_DIRECTIONAL", "0") == "1"
+# Regime-aware sizing (scales size_mult by BTC recent-drift alignment).
+# Uses ctx.ret_60s. Default neutral (both 1.0).
+SMART_REGIME_ALIGN = float(_os.getenv("SMART_REGIME_ALIGN", "1.0"))
+SMART_REGIME_AGAINST = float(_os.getenv("SMART_REGIME_AGAINST", "1.0"))
+SMART_REGIME_MIN_ABS_RET = float(_os.getenv("SMART_REGIME_MIN_ABS_RET", "0.0002"))
+# Kelly sizing: if "kelly", size_mult = clamp(edge / sigma_rem_proxy, MIN_MULT, MAX_MULT).
+SMART_SIZE_MODE = _os.getenv("SMART_SIZE_MODE", "zscore").lower()  # zscore | kelly
+# ML gate: if >0, require predict_entry_score() >= threshold as an additional gate.
+SMART_ML_GATE_MIN_P = float(_os.getenv("SMART_ML_GATE_MIN_P", "0"))
 
 
 def _min_z_for(seconds_left: int) -> float:
@@ -164,7 +188,8 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
     p_up = _clip(p_up, 0.05, 0.95)
     p_down = 1.0 - p_up
     implied = _book_implied_p_up(ctx.up_bid, ctx.up_ask, ctx.down_bid, ctx.down_ask)
-    book_divergence = abs(p_up - implied)
+    divergence_signed = p_up - implied  # + means we want UP, - means DOWN
+    book_divergence = abs(divergence_signed)
     if book_divergence < SMART_MIN_BOOK_DIVERGENCE:
         return _nope(
             f"Book priced in div={book_divergence:.3f}",
@@ -194,8 +219,10 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
 
     if net_up >= net_down and net_up >= SMART_MIN_EDGE and up_tradeable:
         action, price, p, edge = "BUY_UP", ctx.up_ask, p_up, net_up
+        direction_sign = 1.0
     elif net_down > net_up and net_down >= SMART_MIN_EDGE and down_tradeable:
         action, price, p, edge = "BUY_DOWN", ctx.down_ask, p_down, net_down
+        direction_sign = -1.0
     else:
         reason = f"No edge above {SMART_MIN_EDGE:.3f}"
         if net_up >= SMART_MIN_EDGE and not up_tradeable:
@@ -203,6 +230,31 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
         elif net_down >= SMART_MIN_EDGE and not down_tradeable:
             reason = f"DOWN outside band ask={ctx.down_ask:.3f}"
         return _nope(reason, edge=max(net_up, net_down), **dbg)
+
+    if SMART_DIVERGENCE_DIRECTIONAL and divergence_signed * direction_sign < 0:
+        return _nope(
+            f"Divergence against dir div={divergence_signed:+.3f} dir={action}",
+            edge=edge, **dbg,
+        )
+
+    if SMART_ML_GATE_MIN_P > 0:
+        try:
+            from entry_gate_ml import predict_entry_score as _ml_score
+            preview = Signal(
+                action=action, price=round(price, 4), size=0,
+                p_up=round(p_up, 4), edge=round(edge, 4), reason="ml_preview",
+                debug=dbg,
+            )
+            ml_p = _ml_score(ctx, preview)
+            if ml_p is not None and ml_p < SMART_ML_GATE_MIN_P:
+                return _nope(
+                    f"ML gate p={ml_p:.3f} < {SMART_ML_GATE_MIN_P:.3f}",
+                    edge=edge, ml_p=round(ml_p, 4), **dbg,
+                )
+            if ml_p is not None:
+                dbg["ml_p"] = round(ml_p, 4)
+        except Exception as e:
+            dbg["ml_error"] = str(e)[:60]
 
     if not require_budget:
         return Signal(
@@ -212,7 +264,27 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
             debug=dbg,
         )
 
-    size_mult = _clip(abs(z) / SMART_SIZE_Z_REF, SMART_SIZE_MIN_MULT, SMART_SIZE_MAX_MULT)
+    if SMART_SIZE_MODE == "kelly":
+        # Kelly for a binary bet: f* = edge / (price * (1-price)). Use p (our side prob).
+        variance = max(p * (1.0 - p), 1e-3)
+        kelly_raw = edge / variance
+        size_mult = _clip(kelly_raw, SMART_SIZE_MIN_MULT, SMART_SIZE_MAX_MULT)
+    else:
+        z_for_size = abs(z)
+        if SMART_SIZE_Z_CAP > 0 and z_for_size > SMART_SIZE_Z_CAP:
+            z_for_size = SMART_SIZE_Z_CAP
+        size_mult = _clip(z_for_size / SMART_SIZE_Z_REF, SMART_SIZE_MIN_MULT, SMART_SIZE_MAX_MULT)
+
+    if SMART_REGIME_ALIGN != 1.0 or SMART_REGIME_AGAINST != 1.0:
+        ret_60 = getattr(ctx, "ret_60s", 0.0) or 0.0
+        if abs(ret_60) >= SMART_REGIME_MIN_ABS_RET:
+            regime_sign = 1.0 if ret_60 > 0 else -1.0
+            if regime_sign * direction_sign > 0:
+                size_mult *= SMART_REGIME_ALIGN
+            else:
+                size_mult *= SMART_REGIME_AGAINST
+            size_mult = _clip(size_mult, SMART_SIZE_MIN_MULT, SMART_SIZE_MAX_MULT)
+
     budget_cap = min(ctx.cash_amount * MAX_BUDGET_FRACTION, BET_SIZE_MAX)
     budget = min(budget_cap * size_mult, BET_SIZE_MAX)
     if budget < BET_SIZE_MIN:
@@ -295,7 +367,15 @@ class MathSmartStrategy:
             return PositionDecision(exit_reason="late_bar_skim")
 
         # 3. Profit-lock trailing once we're comfortably ahead.
-        if SMART_EXIT_PROFIT_LOCK and pos.peak_bid >= pos.entry_price + SMART_PROFIT_LOCK_ARM:
+        profit_lock_gated_out = (
+            (SMART_PROFIT_LOCK_MIN_ENTRY_PRICE > 0 and pos.entry_price < SMART_PROFIT_LOCK_MIN_ENTRY_PRICE)
+            or (SMART_PROFIT_LOCK_MIN_ABS_P > 0 and abs(pos.entry_p_up - 0.5) < SMART_PROFIT_LOCK_MIN_ABS_P)
+        )
+        if (
+            SMART_EXIT_PROFIT_LOCK
+            and not profit_lock_gated_out
+            and pos.peak_bid >= pos.entry_price + SMART_PROFIT_LOCK_ARM
+        ):
             if (
                 current_bid <= pos.peak_bid - SMART_PROFIT_LOCK_GAP
                 and current_bid > pos.entry_price
@@ -308,10 +388,14 @@ class MathSmartStrategy:
                 return PositionDecision(exit_reason="profit_lock_trail")
 
         # 4. Thesis break — BTC turned against us meaningfully with time left.
+        if SMART_THESIS_BREAK_SIGMA_MULT > 0 and ctx.sigma_5m > 0:
+            thesis_break_threshold = SMART_THESIS_BREAK_SIGMA_MULT * ctx.sigma_5m
+        else:
+            thesis_break_threshold = SMART_THESIS_BREAK_BTC
         if (
             SMART_EXIT_THESIS_BREAK
             and ctx.seconds_left > SMART_THESIS_BREAK_SECS
-            and adverse_btc > SMART_THESIS_BREAK_BTC
+            and adverse_btc > thesis_break_threshold
             and not pos.sell_order_id
         ):
             log.info(
