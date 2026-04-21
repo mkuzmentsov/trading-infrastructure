@@ -3,6 +3,8 @@ Telegram notification helper.
 """
 from __future__ import annotations
 
+import asyncio
+
 import requests
 
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN
@@ -19,3 +21,8 @@ def tg(text: str) -> None:
         )
     except Exception:
         pass
+
+
+async def tg_async(text: str) -> None:
+    """Non-blocking Telegram send for use from the asyncio event loop."""
+    await asyncio.to_thread(tg, text)

@@ -82,7 +82,7 @@ from positions import pos_store
 from user_ws import run_user_ws, user_state
 from redemptions import redeem_resolved_positions
 from strategy import StrategyContext, build_strategy
-from telegram import tg
+from telegram import tg, tg_async
 
 _approved_ctf_tokens: set[str] = set()
 
@@ -508,26 +508,34 @@ async def _get_balance(clob) -> float:
     return bal
 
 
+_snapshot_in_flight: bool = False
+
+
 async def _write_balance_snapshot(clob, reason: str) -> None:
-    if DRY_RUN or clob is None:
+    global _snapshot_in_flight
+    if DRY_RUN or clob is None or _snapshot_in_flight:
         return
-    _balance_cache[1] = 0.0
-    balance = await _get_balance(clob)
-    _write_training_event(
-        "balance_snapshot",
-        reason=reason,
-        usdc_balance=round(balance, 4),
-        active_position=pos_store.position is not None,
-        held_positions=len(pos_store.held_positions),
-        pending_buy=pos_store.pending_buy is not None,
-        dry_run=False,
-    )
-    tg(
-        f"💰 <b>Balance</b>  ${balance:.2f} USDC\n"
-        f"Reason: {reason}  "
-        f"pos: {'yes' if pos_store.position else 'no'}  "
-        f"held: {len(pos_store.held_positions)}"
-    )
+    _snapshot_in_flight = True
+    try:
+        _balance_cache[1] = 0.0
+        balance = await _get_balance(clob)
+        _write_training_event(
+            "balance_snapshot",
+            reason=reason,
+            usdc_balance=round(balance, 4),
+            active_position=pos_store.position is not None,
+            held_positions=len(pos_store.held_positions),
+            pending_buy=pos_store.pending_buy is not None,
+            dry_run=False,
+        )
+        await tg_async(
+            f"💰 <b>Balance</b>  ${balance:.2f} USDC\n"
+            f"Reason: {reason}  "
+            f"pos: {'yes' if pos_store.position else 'no'}  "
+            f"held: {len(pos_store.held_positions)}"
+        )
+    finally:
+        _snapshot_in_flight = False
 
 
 async def _ensure_ctf_approval_for_token(clob, token_id: str) -> None:
@@ -1593,12 +1601,12 @@ async def main() -> None:
     if not DRY_RUN and ready:
         try:
             clob = await _init_clob()
-            await _write_balance_snapshot(clob, reason="startup")
         except Exception as exc:
             log.error("CLOB client init failed: %s", exc)
             raise
 
     last_cleanup_boundary = 0.0
+    last_snapshot_condition_id = ""
 
     while True:
         tick_start = time.time()
@@ -1606,7 +1614,13 @@ async def main() -> None:
             if not DRY_RUN and clob is None and btc_state.ready and pm_state.ready and _feeds_are_fresh():
                 log.info("Feeds recovered — initializing trading client")
                 clob = await _init_clob()
-                await _write_balance_snapshot(clob, reason="startup")
+            current_cid = pm_state.condition_id
+            if clob is not None and current_cid and current_cid != last_snapshot_condition_id:
+                last_snapshot_condition_id = current_cid
+                asyncio.create_task(
+                    _write_balance_snapshot(clob, reason="new_market"),
+                    name="balance_snapshot",
+                )
             await _tick(clob)
         except Exception as exc:
             log.exception("Tick error: %s", exc)
