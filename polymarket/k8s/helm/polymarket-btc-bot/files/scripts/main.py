@@ -44,6 +44,7 @@ from config import (
     ENTRY_MAKER_OFFSET,
     ENTRY_MIN_SECONDS_LEFT,
     ENTRY_ORDER_TIMEOUT_SECS,
+    ENTRY_SLIPPAGE_CAP,
     ENTRY_REPLACE_GAP,
     ENTRY_REPLACE_MIN_AGE_SECS,
     EVAL_INTERVAL_MS,
@@ -79,7 +80,7 @@ from config import (
 from ml_signal import predict_p_up as ml_predict_p_up
 from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
 from positions import pos_store
-from user_ws import run_user_ws, user_state
+from user_ws import run_user_ws, set_runtime_creds as _user_ws_set_creds, user_state
 from redemptions import redeem_resolved_positions
 from strategy import StrategyContext, build_strategy
 from telegram import tg, tg_async
@@ -361,9 +362,26 @@ def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: in
     _write_training_snapshot(context, signal, cash_amount, seconds_left, p_up_ml)
 
 
+def _push_user_ws_creds(clob) -> None:
+    """Hand the CLOB client's L2 API creds to user_ws so it can authenticate.
+
+    build_clob_client() already calls client.set_api_creds(create_or_derive_api_creds())
+    when env creds are empty, so clob.creds is always populated here."""
+    creds = getattr(clob, "creds", None)
+    if creds is None:
+        log.warning("CLOB client has no creds attribute — user_ws will stay idle")
+        return
+    try:
+        _user_ws_set_creds(creds.api_key, creds.api_secret, creds.api_passphrase)
+    except Exception as exc:
+        log.warning("Failed to push creds into user_ws: %s", exc)
+
+
 async def _init_clob() -> object:
     clob = build_clob_client()
     from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+
+    _push_user_ws_creds(clob)
 
     bal_data = clob.get_balance_allowance(
         params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
@@ -689,6 +707,34 @@ async def _check_pending_buy(clob) -> None:
             log.info("Pending buy timed out after %.0fs — cancelling", age)
             await asyncio.to_thread(cancel_order, clob, pb.order_id)
             pos_store.clear_pending_buy()
+
+
+async def _await_fill_reconciliation(
+    order_id: str,
+    requested_shares: int,
+    fallback_price: float,
+    timeout_secs: float = 3.0,
+    poll_interval: float = 0.1,
+) -> tuple[int, float]:
+    """Wait briefly for user_ws to deliver matched_shares/avg_price for a just-matched order.
+
+    Returns (actual_shares, actual_price). Falls back to (requested_shares, fallback_price)
+    if no fill event arrives within timeout.
+    """
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        shares = user_state.matched_shares.get(order_id, 0)
+        price = user_state.avg_price.get(order_id, 0.0)
+        if shares > 0 and price > 0:
+            return shares, price
+        await asyncio.sleep(poll_interval)
+    shares = user_state.matched_shares.get(order_id, 0) or requested_shares
+    price = user_state.avg_price.get(order_id, 0.0) or fallback_price
+    log.warning(
+        "Fill reconciliation timed out  order=%s  ws_shares=%d  ws_price=%.4f  — using fallback",
+        order_id, user_state.matched_shares.get(order_id, 0), user_state.avg_price.get(order_id, 0.0),
+    )
+    return shares, price
 
 
 def _confirm_fill(pb, shares: int, entry_price: float) -> None:
@@ -1444,8 +1490,9 @@ async def _try_enter(clob, balance: float) -> None:
 
     try:
         if entry_mode == "market":
+            limit_price = round(min(0.99, entry_price + ENTRY_SLIPPAGE_CAP), 3)
             order_id, is_matched = await asyncio.to_thread(
-                place_market_buy, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
+                place_market_buy, clob, token_id, entry_size, limit_price, pm_state.condition_id, pm_state.taker_fee
             )
         else:
             order_id = await asyncio.to_thread(
@@ -1461,16 +1508,20 @@ async def _try_enter(clob, balance: float) -> None:
         return
 
     if entry_mode == "market" and order_id and is_matched:
+        actual_shares, actual_price = await _await_fill_reconciliation(
+            order_id, entry_size, entry_price
+        )
+        actual_spend = round(actual_shares * actual_price, 2)
         log.info(
-            "Market buy IMMEDIATELY MATCHED  order=%s  dir=%s  price=%.4f  shares=%d  spend=$%.2f",
-            order_id, direction, entry_price, entry_size, spend,
+            "Market buy IMMEDIATELY MATCHED  order=%s  dir=%s  req_price=%.4f  fill_price=%.4f  req_shares=%d  filled=%d  spend=$%.2f",
+            order_id, direction, entry_price, actual_price, entry_size, actual_shares, actual_spend,
         )
         pos_store.open(
             condition_id=pm_state.condition_id,
             token_id=token_id,
             direction=direction,
-            shares=entry_size,
-            entry_price=entry_price,
+            shares=actual_shares,
+            entry_price=actual_price,
             entry_time=time.time(),
             entry_edge=signal.edge,
             entry_p_up=signal.p_up,
@@ -1482,12 +1533,14 @@ async def _try_enter(clob, balance: float) -> None:
             "position_opened",
             direction=direction,
             token_id=token_id,
-            shares=entry_size,
-            entry_price=round(entry_price, 4),
+            shares=actual_shares,
+            entry_price=round(actual_price, 4),
+            quoted_price=round(entry_price, 4),
+            requested_shares=entry_size,
             entry_edge=round(signal.edge, 4),
             entry_p_up=round(signal.p_up, 4),
             entry_seconds_left=seconds_left,
-            spend=round(spend, 2),
+            spend=actual_spend,
             hold_to_expiry=_strategy.entry_hold_to_expiry(),
             order_id=order_id,
             source="market_buy",
@@ -1497,8 +1550,8 @@ async def _try_enter(clob, balance: float) -> None:
             f"✅ <b>BTC 5m Position opened</b>\n"
             f"Market: {pm_state.question[:80]}\n"
             f"Direction: {direction}\n"
-            f"P(UP)={signal.p_up:.2%}  price={entry_price:.3f}  edge={signal.edge:.3f}\n"
-            f"Shares: {entry_size}  Spend: ${spend:.2f}\n"
+            f"P(UP)={signal.p_up:.2%}  price={actual_price:.3f}  edge={signal.edge:.3f}\n"
+            f"Shares: {actual_shares}/{entry_size}  Spend: ${actual_spend:.2f}\n"
             f"Order: {order_id}"
         )
         _entry_confirmation["count"] = 0

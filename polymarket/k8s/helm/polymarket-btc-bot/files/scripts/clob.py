@@ -155,13 +155,13 @@ def place_market_buy(
             expiration=0,
         )
         log.debug(
-            "CLOB create_order BUY REQUEST  token=%s  price=%s  shares=%s  mode=FOK",
+            "CLOB create_order BUY REQUEST  token=%s  price=%s  shares=%s  mode=FAK",
             token_id, price, shares,
         )
         signed = clob.create_order(order_args)
         log.info("CLOB create_order BUY RESPONSE  %s", signed)
-        resp = clob.post_order(signed, OrderType.FOK)
-        log.info("CLOB post_order BUY FOK RESPONSE  %s", resp)
+        resp = clob.post_order(signed, OrderType.FAK)
+        log.info("CLOB post_order BUY FAK RESPONSE  %s", resp)
         order_id = resp.get("orderID") or resp.get("order_id") or None
         is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
         return order_id, is_matched

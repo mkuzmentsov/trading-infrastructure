@@ -771,6 +771,16 @@ class BundleBacktestRunner:
             if entry_shares <= 0 or entry_price <= 0:
                 continue
 
+            # FAK fill model: cap shares at top-of-book ask depth. The live FAK
+            # order walks the book up to the slippage-capped limit, but snapshots
+            # only expose top-of-book — so we conservatively treat anything above
+            # top-of-book size as a partial fill at the quoted ask.
+            top_ask_size = float(pm.get("up_ask_size") if direction == "UP" else pm.get("down_ask_size") or 0.0)
+            available = int(top_ask_size) if top_ask_size > 0 else entry_shares
+            entry_shares = min(entry_shares, available)
+            if entry_shares <= 0:
+                continue
+
             market_end_ts = int(snap.get("market_end_ts") or 0)
             position = Position(
                 condition_id=cid,

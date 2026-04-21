@@ -37,6 +37,36 @@ USER_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
 _FILLED_STATUSES = {"matched", "mined", "confirmed"}
 _CANCELED_STATUSES = {"canceled", "cancelled", "expired", "unmatched"}
 
+# Runtime-provided creds (e.g. derived via ClobClient.create_or_derive_api_creds()).
+# Populated by main.py after _init_clob(); takes precedence over env vars when set.
+_runtime_creds: dict[str, str] | None = None
+
+
+def set_runtime_creds(api_key: str, api_secret: str, api_passphrase: str) -> None:
+    """Inject API creds at runtime (e.g. derived from the signing PK via CLOB).
+    Called by main.py after the CLOB client is initialised. Safe to call repeatedly."""
+    global _runtime_creds
+    if not (api_key and api_secret and api_passphrase):
+        return
+    _runtime_creds = {
+        "apiKey": api_key,
+        "secret": api_secret,
+        "passphrase": api_passphrase,
+    }
+    log.info("USER_WS runtime creds set (key=%s…)", api_key[:8])
+
+
+def _current_creds() -> dict[str, str] | None:
+    if _runtime_creds:
+        return _runtime_creds
+    if POLYMARKET_API_KEY and POLYMARKET_API_SECRET and POLYMARKET_API_PASSPHRASE:
+        return {
+            "apiKey": POLYMARKET_API_KEY,
+            "secret": POLYMARKET_API_SECRET,
+            "passphrase": POLYMARKET_API_PASSPHRASE,
+        }
+    return None
+
 
 def _coerce_float(x: object, default: float = 0.0) -> float:
     try:
@@ -198,12 +228,9 @@ def _apply_order(msg: dict) -> None:
 async def _subscribe(ws, market: str, is_initial: bool) -> None:
     """Send auth+subscribe on first connect, or an incremental update on rollover."""
     if is_initial:
+        creds = _current_creds() or {}
         payload = {
-            "auth": {
-                "apiKey": POLYMARKET_API_KEY,
-                "secret": POLYMARKET_API_SECRET,
-                "passphrase": POLYMARKET_API_PASSPHRASE,
-            },
+            "auth": creds,
             "markets": [market],
             "type": "user",
         }
@@ -281,14 +308,21 @@ def _dispatch_message(raw: str) -> None:
 
 async def run_user_ws() -> None:
     """Long-lived loop. Reconnects only on real socket failure; subscription
-    changes use `operation: subscribe`/`unsubscribe` on the same connection."""
-    if not (POLYMARKET_API_KEY and POLYMARKET_API_SECRET and POLYMARKET_API_PASSPHRASE):
-        log.warning("USER_WS: API creds not set — user WS disabled")
-        return
+    changes use `operation: subscribe`/`unsubscribe` on the same connection.
 
+    Waits for both (a) a pm_ws market to subscribe to, and (b) API creds —
+    either from env or injected at runtime via `set_runtime_creds()` once the
+    CLOB client has derived them from the signing key."""
+    _creds_logged = False
     backoff = 1
     while True:
         try:
+            if _current_creds() is None:
+                if not _creds_logged:
+                    log.info("USER_WS waiting for API creds (env or runtime-derived) …")
+                    _creds_logged = True
+                await asyncio.sleep(1.0)
+                continue
             # Wait for pm_ws to publish a market so we have something to subscribe to
             if not pm_state.condition_id:
                 await asyncio.sleep(1.0)
