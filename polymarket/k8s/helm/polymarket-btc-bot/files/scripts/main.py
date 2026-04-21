@@ -26,10 +26,7 @@ from clob import (
     cancel_order,
     ensure_approvals,
     ensure_ctf_approval,
-    fetch_token_balance,
     fetch_usdc_balance,
-    get_order_fill_info,
-    get_order_status,
     place_bet,
     place_limit_sell,
     place_market_buy,
@@ -82,6 +79,7 @@ from config import (
 from ml_signal import predict_p_up as ml_predict_p_up
 from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
 from positions import pos_store
+from user_ws import run_user_ws, user_state
 from redemptions import redeem_resolved_positions
 from strategy import StrategyContext, build_strategy
 from telegram import tg
@@ -586,11 +584,11 @@ async def _check_pending_buy(clob) -> None:
         _confirm_fill(pb, shares=pb.shares, entry_price=pb.price)
         return
 
-    status, matched_shares, avg_price = await asyncio.to_thread(
-        get_order_fill_info, clob, pb.order_id, pb.price, pb.shares
+    status, matched_shares, avg_price = user_state.get_order_fill_info(
+        pb.order_id, pb.price, pb.shares
     )
     if status == "filled":
-        token_balance = await asyncio.to_thread(fetch_token_balance, clob, pb.token_id)
+        token_balance = user_state.get_token_balance(pb.token_id)
         balance_shares = max(0, int(math.floor(token_balance)))
         actual_shares = matched_shares or pb.shares
         if balance_shares > 0:
@@ -712,13 +710,13 @@ async def _manage_position(clob) -> None:
 
     if pos.condition_id != pm_state.condition_id and pm_state.condition_id:
         if pos.sell_order_id and not DRY_RUN:
-            status, sold_shares, avg_price = await asyncio.to_thread(
-                get_order_fill_info, clob, pos.sell_order_id, pos.sell_price, pos.shares
+            status, sold_shares, avg_price = user_state.get_order_fill_info(
+                pos.sell_order_id, pos.sell_price, pos.shares
             )
             if status == "filled":
                 exit_price = avg_price or pos.sell_price
                 realized_shares = float(sold_shares or pos.shares)
-                remaining_balance = await asyncio.to_thread(fetch_token_balance, clob, pos.token_id)
+                remaining_balance = user_state.get_token_balance(pos.token_id)
                 if remaining_balance > 0:
                     realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
                     residual_whole = int(math.floor(remaining_balance))
@@ -799,13 +797,13 @@ async def _manage_position(clob) -> None:
             log.debug("Sell fill check in cooldown — skipping  order=%s", pos.sell_order_id)
             return
         if not DRY_RUN:
-            status, sold_shares, avg_price = await asyncio.to_thread(
-                get_order_fill_info, clob, pos.sell_order_id, pos.sell_price, pos.shares
+            status, sold_shares, avg_price = user_state.get_order_fill_info(
+                pos.sell_order_id, pos.sell_price, pos.shares
             )
             if status == "filled":
                 exit_price = avg_price or pos.sell_price
                 realized_shares = float(sold_shares or pos.shares)
-                remaining_balance = await asyncio.to_thread(fetch_token_balance, clob, pos.token_id)
+                remaining_balance = user_state.get_token_balance(pos.token_id)
                 if remaining_balance > 0:
                     realized_shares = max(0.0, float(pos.shares) - float(remaining_balance))
                     residual_whole = int(math.floor(remaining_balance))
@@ -1123,9 +1121,8 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             return
 
     if order_id and is_matched:
-        # Sell was immediately matched off-chain. Close the position right now without
-        # calling fetch_token_balance, which lags on-chain settlement by several seconds
-        # and would otherwise produce a false residual reading.
+        # Sell was immediately matched off-chain. Close the position right now;
+        # the user WS will emit MATCHED → MINED → CONFIRMED for accounting.
         exit_price = price
         realized_shares = float(pos.shares)
         pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
@@ -1582,6 +1579,8 @@ async def main() -> None:
     asyncio.create_task(run_binance_ws(), name="binance_ws")
     asyncio.create_task(run_btc_ws(), name="btc_ws")
     asyncio.create_task(run_pm_ws(), name="pm_ws")
+    if not DRY_RUN:
+        asyncio.create_task(run_user_ws(), name="user_ws")
 
     log.info("Waiting for WebSocket feeds …")
     ready = await _wait_for_ready(timeout=60)

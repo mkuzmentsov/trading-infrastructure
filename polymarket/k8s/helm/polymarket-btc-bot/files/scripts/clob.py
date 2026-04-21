@@ -1,9 +1,11 @@
 """
-Polymarket CLOB client: order placement, balance, sizing, and trade queries.
+Polymarket CLOB client: order placement, startup balance, approvals.
+
+Fill confirmation, token balances, and order status live on the User WebSocket
+(see user_ws.py). This module is strictly write-side + one-shot startup queries.
 """
 from __future__ import annotations
 
-import math
 import os
 from typing import Any, Optional
 
@@ -45,35 +47,6 @@ def build_clob_client():
     return client
 
 
-def _as_float(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _order_view(resp: Any) -> dict:
-    if not isinstance(resp, dict):
-        return {}
-    order = resp.get("order")
-    if isinstance(order, dict):
-        merged = dict(order)
-        merged.update(resp)
-        return merged
-    return resp
-
-
-def _first_number(data: dict, *keys: str) -> float | None:
-    for key in keys:
-        if key in data:
-            val = _as_float(data.get(key))
-            if val is not None:
-                return val
-    return None
-
-
 def ensure_approvals(clob) -> None:
     from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
 
@@ -108,6 +81,8 @@ def ensure_ctf_approval(clob, token_id: str) -> None:
 
 
 def fetch_usdc_balance(clob=None) -> float:
+    """One-shot USDC balance for startup logging. Runtime balance tracking lives
+    in user_ws (trade events update token_shares; USDC delta is implicit)."""
     if DRY_RUN:
         return float(os.getenv("DRY_RUN_BALANCE", "100.0"))
     try:
@@ -122,22 +97,6 @@ def fetch_usdc_balance(clob=None) -> float:
         return bal
     except Exception as exc:
         log.warning("Balance fetch failed: %s", exc)
-        return 0.0
-
-
-def fetch_token_balance(clob, token_id: str) -> float:
-    """Fetch conditional token balance in whole-share units (6 decimals on-chain)."""
-    try:
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
-
-        data = clob.get_balance_allowance(
-            params=BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id)
-        )
-        bal = float(data.get("balance", 0)) / 1_000_000
-        log.info("Token balance  token=%s  balance=%.6f", token_id[:16], bal)
-        return bal
-    except Exception as exc:
-        log.warning("Token balance fetch failed for %s: %s", token_id[:16], exc)
         return 0.0
 
 
@@ -213,17 +172,6 @@ def place_market_buy(
         return None, False
 
 
-def has_trade_on_market(clob, condition_id: str) -> bool:
-    from py_clob_client.clob_types import TradeParams
-
-    log.info("CLOB get_trades REQUEST  market=%s", condition_id)
-    result = clob.get_trades(TradeParams(market=condition_id))
-    if result is None:
-        result = []
-    log.info("CLOB get_trades RESPONSE  market=%s  count=%d", condition_id, len(result))
-    return len(result) > 0
-
-
 def place_limit_sell(
     clob,
     token_id: str,
@@ -236,8 +184,6 @@ def place_limit_sell(
 
     is_immediately_matched=True when Polymarket's response shows status='matched',
     meaning the sell was fully committed off-chain and settlement is in progress.
-    In that case the caller should close the position immediately without re-querying
-    token balance, which lags behind off-chain state during settlement.
     """
     from py_clob_client.clob_types import OrderArgs, OrderType
 
@@ -282,71 +228,3 @@ def cancel_order(clob, order_id: str) -> bool:
     except Exception as exc:
         log.warning("Cancel order %s failed: %s", order_id, exc)
         return False
-
-
-def get_order_details(clob, order_id: str) -> dict:
-    try:
-        log.debug("CLOB get_order REQUEST  order_id=%s", order_id)
-        resp = clob.get_order(order_id)
-        log.debug("CLOB get_order RESPONSE  %s", resp)
-        return _order_view(resp)
-    except Exception as exc:
-        log.warning("get_order_details %s failed: %s", order_id, exc)
-        return {}
-
-
-def get_order_status(clob, order_id: str) -> str:
-    resp = get_order_details(clob, order_id)
-    status = str(resp.get("status") or "").lower()
-    if status in ("matched", "filled"):
-        return "filled"
-    if status in ("cancelled", "canceled", "expired"):
-        return "cancelled"
-    if status in ("open", "live"):
-        return "open"
-    return status or "unknown"
-
-
-def get_order_fill_info(clob, order_id: str, fallback_price: float, fallback_shares: int) -> tuple[str, int, float]:
-    """Return (status, matched_whole_shares, avg_price) for an order."""
-    resp = get_order_details(clob, order_id)
-    status = str(resp.get("status") or "").lower()
-    if status in ("matched", "filled"):
-        norm_status = "filled"
-    elif status in ("cancelled", "canceled", "expired"):
-        norm_status = "cancelled"
-    elif status in ("open", "live"):
-        norm_status = "open"
-    else:
-        norm_status = status or "unknown"
-
-    matched = _first_number(
-        resp,
-        "size_matched",
-        "sizeMatched",
-        "matched_size",
-        "matchedSize",
-        "filled_size",
-        "filledSize",
-        "original_size",
-        "originalSize",
-        "size",
-        "makingAmount",
-    )
-    if matched is None:
-        matched_shares = fallback_shares if norm_status == "filled" else 0
-    else:
-        matched_shares = max(0, int(math.floor(matched)))
-
-    avg_price = _first_number(
-        resp,
-        "avg_price",
-        "avgPrice",
-        "average_price",
-        "averagePrice",
-        "price",
-    )
-    if avg_price is None or avg_price <= 0:
-        avg_price = fallback_price
-
-    return norm_status, matched_shares, float(avg_price)
