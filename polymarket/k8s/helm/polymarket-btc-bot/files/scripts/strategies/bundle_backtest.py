@@ -589,8 +589,10 @@ class BundleBacktestRunner:
             bar_outcome: str,
             debug: dict,
             question: str,
+            fill_shares: int | None = None,
         ) -> None:
-            pnl = round((exit_price - pos.entry_price) * int(pos.shares), 2)
+            shares = int(fill_shares) if fill_shares is not None else int(pos.shares)
+            pnl = round((exit_price - pos.entry_price) * shares, 2)
             trades.append(
                 Trade(
                     ts=snap_ts,
@@ -598,7 +600,7 @@ class BundleBacktestRunner:
                     question=question,
                     direction=pos.direction,
                     entry_price=pos.entry_price,
-                    shares=int(pos.shares),
+                    shares=shares,
                     edge=pos.entry_edge,
                     p_up=pos.entry_p_up,
                     seconds_left=pos.entry_seconds_left,
@@ -705,10 +707,27 @@ class BundleBacktestRunner:
                     if exit_reason:
                         exit_price = _exit_target(current_bid, exit_reason)
                         bar_outcome = _expiry_outcome(position.condition_id)
+                        # FAK sell fill model: cap fill at top-of-book bid depth.
+                        # Live FAK walks the book down to the price floor; snapshots
+                        # only expose top-of-book, so anything beyond that is a
+                        # partial fill — remainder retries on the next tick.
+                        top_bid_size = float(
+                            pm.get("up_bid_size") if position.direction == "UP" else pm.get("down_bid_size") or 0.0
+                        )
+                        available = int(top_bid_size) if top_bid_size > 0 else int(position.shares)
+                        fill = min(int(position.shares), max(0, available))
+                        if fill <= 0:
+                            # No liquidity at/above price floor — FAK kills, retry next tick.
+                            continue
                         _record_trade(
                             position, ts, exit_reason, exit_price,
                             bar_outcome, pos_debug, pos_question,
+                            fill_shares=fill,
                         )
+                        remaining = int(position.shares) - fill
+                        if remaining > 0:
+                            position.shares = remaining
+                            continue
                         if exit_reason == "stop_loss":
                             sl_reentry_guard[(cid, position.direction)] = position.entry_edge
                             market_sl_count[cid] = market_sl_count.get(cid, 0) + 1

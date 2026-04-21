@@ -19,8 +19,8 @@ class Position:
     condition_id: str
     token_id: str
     direction: str           # "UP" or "DOWN"
-    shares: int              # number of shares bought
-    entry_price: float       # ask price paid per share
+    shares: float            # fractional shares bought (Polymarket fills at 0.0001 precision)
+    entry_price: float       # size-weighted avg fill price
     entry_time: float        # time.time() at fill
     entry_edge: float = 0.0
     entry_p_up: float = 0.5
@@ -45,7 +45,7 @@ class PendingBuy:
     condition_id: str
     token_id: str
     direction: str       # "UP" or "DOWN"
-    shares: int
+    shares: float
     price: float
     placed_at: float     # time.time() when placed
     edge: float = 0.0

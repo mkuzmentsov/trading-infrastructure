@@ -3,6 +3,7 @@ from __future__ import annotations
 from .base import Strategy
 from .latency_arb_hold import LatencyArbHoldStrategy
 from .math_smart import MathSmartStrategy
+from .math_smart_v2 import MathSmartV2Strategy
 from .ml_entry import MLEntryStrategy
 from .ml_entry_v2 import MLEntryV2Strategy
 from .profit_1 import Profit1Strategy
@@ -20,4 +21,6 @@ def build_strategy(name: str) -> Strategy:
         return MLEntryV2Strategy()
     if normalized in {"math_smart", "pm_btc_math_smart", "pm_btc_math-smart"}:
         return MathSmartStrategy()
+    if normalized in {"math_smart_v2", "pm_btc_math_smart_v2", "pm_btc_math-smart-v2"}:
+        return MathSmartV2Strategy()
     raise ValueError(f"Unknown strategy: {name}")

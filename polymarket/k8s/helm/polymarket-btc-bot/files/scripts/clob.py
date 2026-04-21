@@ -103,7 +103,7 @@ def fetch_usdc_balance(clob=None) -> float:
 def place_bet(
     clob,
     token_id: str,
-    shares: int,
+    shares: float,
     price: float,
     condition_id: str = "",
     fee_rate_bps: int = 0,
@@ -138,7 +138,7 @@ def place_bet(
 def place_market_buy(
     clob,
     token_id: str,
-    shares: int,
+    shares: float,
     price: float,
     condition_id: str = "",
     fee_rate_bps: int = 0,
@@ -175,7 +175,7 @@ def place_market_buy(
 def place_limit_sell(
     clob,
     token_id: str,
-    shares: int,
+    shares: float,
     price: float,
     condition_id: str = "",
     fee_rate_bps: int = 0,
@@ -207,6 +207,48 @@ def place_limit_sell(
         if "not enough balance" in str(exc).lower() or "balance is not enough" in str(exc).lower():
             raise
         log.error("Limit sell failed: %s", exc)
+        return None, False
+
+
+def place_market_sell(
+    clob,
+    token_id: str,
+    shares: float,
+    price: float,
+    condition_id: str = "",
+    fee_rate_bps: int = 0,
+) -> tuple[Optional[str], bool]:
+    """FAK sell: fill what's available down to `price`, kill the rest.
+
+    `price` is the MIN acceptable fill price — the order walks the bid book
+    from top down until it hits this floor or the book runs out.
+    Returns (order_id, is_matched). Partial fills surface via user_ws.
+    """
+    from py_clob_client.clob_types import OrderArgs, OrderType
+
+    try:
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=shares,
+            side="SELL",
+            fee_rate_bps=fee_rate_bps,
+        )
+        log.debug(
+            "CLOB create_order SELL REQUEST  token=%s  price=%s  shares=%s  mode=FAK",
+            token_id, price, shares,
+        )
+        signed = clob.create_order(order_args)
+        log.info("CLOB create_order SELL RESPONSE  %s", signed)
+        resp = clob.post_order(signed, OrderType.FAK)
+        log.info("CLOB post_order SELL FAK RESPONSE  %s", resp)
+        order_id = resp.get("orderID") or resp.get("order_id") or None
+        is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
+        return order_id, is_matched
+    except Exception as exc:
+        if "not enough balance" in str(exc).lower() or "balance is not enough" in str(exc).lower():
+            raise
+        log.error("Market sell failed: %s", exc)
         return None, False
 
 

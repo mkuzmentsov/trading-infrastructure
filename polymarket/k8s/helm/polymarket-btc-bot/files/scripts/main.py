@@ -28,8 +28,8 @@ from clob import (
     ensure_ctf_approval,
     fetch_usdc_balance,
     place_bet,
-    place_limit_sell,
     place_market_buy,
+    place_market_sell,
 )
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
@@ -711,28 +711,29 @@ async def _check_pending_buy(clob) -> None:
 
 async def _await_fill_reconciliation(
     order_id: str,
-    requested_shares: int,
+    requested_shares: float,
     fallback_price: float,
     timeout_secs: float = 3.0,
     poll_interval: float = 0.1,
-) -> tuple[int, float]:
+) -> tuple[float, float]:
     """Wait briefly for user_ws to deliver matched_shares/avg_price for a just-matched order.
 
-    Returns (actual_shares, actual_price). Falls back to (requested_shares, fallback_price)
-    if no fill event arrives within timeout.
+    Returns (actual_shares, actual_price) — fractional shares accumulated across
+    all trade events for this order, and the size-weighted avg fill price.
+    Falls back to (requested_shares, fallback_price) if no fill event arrives.
     """
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
-        shares = user_state.matched_shares.get(order_id, 0)
+        shares = user_state.matched_shares.get(order_id, 0.0)
         price = user_state.avg_price.get(order_id, 0.0)
         if shares > 0 and price > 0:
             return shares, price
         await asyncio.sleep(poll_interval)
-    shares = user_state.matched_shares.get(order_id, 0) or requested_shares
+    shares = user_state.matched_shares.get(order_id, 0.0) or float(requested_shares)
     price = user_state.avg_price.get(order_id, 0.0) or fallback_price
     log.warning(
-        "Fill reconciliation timed out  order=%s  ws_shares=%d  ws_price=%.4f  — using fallback",
-        order_id, user_state.matched_shares.get(order_id, 0), user_state.avg_price.get(order_id, 0.0),
+        "Fill reconciliation timed out  order=%s  ws_shares=%.4f  ws_price=%.4f  — using fallback",
+        order_id, user_state.matched_shares.get(order_id, 0.0), user_state.avg_price.get(order_id, 0.0),
     )
     return shares, price
 
@@ -1065,19 +1066,6 @@ async def _manage_position(clob) -> None:
         await _exit_position(clob, pos, current_bid, reason="late_bar_cut")
         return
 
-    # Reprice any resting exit toward the current bid. Backtest assumes
-    # immediate fill at current_bid; live order chases via cancel+repost.
-    if pos.sell_order_id and abs(current_bid - pos.sell_price) >= ORDER_REPLACE_GAP:
-        new_price = _exit_target_price(current_bid, pos.exit_reason or "")
-        if abs(new_price - pos.sell_price) < 1e-6:
-            return
-        log.info("Sell stale  old=%.4f  bid=%.4f — replace at %.4f", pos.sell_price, current_bid, new_price)
-        if not DRY_RUN:
-            await asyncio.to_thread(cancel_order, clob, pos.sell_order_id)
-        pos_store.clear_sell_order()
-        await _post_sell_order(clob, pos, new_price, reason=pos.exit_reason or "")
-        return
-
     log.debug(
         "Holding position  dir=%s  entry=%.4f  bid=%.4f  peak=%.4f  edge_now=%.4f  secs_left=%d",
         pos.direction, pos.entry_price, current_bid, pos.peak_bid, current_side_edge, _seconds_left_in_bar(),
@@ -1133,77 +1121,54 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
         _balance_cache[1] = 0.0
         return
 
-    shares = pos.shares
+    # Authoritative share count comes from user_ws token_shares (on-chain truth),
+    # not pos.shares. This eliminates both failure modes:
+    #   - over-fill drift (stored 13, actually own 13.70 → 0.70 left as dust)
+    #   - under-fill drift (stored 35, actually own 33.67 → FAK rejects "not enough balance")
+    onchain = user_state.get_token_balance(pos.token_id)
+    # Round DOWN to 0.01 to avoid over-selling due to float precision.
+    requested_shares = math.floor(onchain * 100) / 100
+    if requested_shares < 1.0:
+        log.warning(
+            "Sell skipped — on-chain balance too small to trade  token_shares=%.4f  pos.shares=%.4f%s",
+            onchain, pos.shares, label,
+        )
+        if pos_store.position:
+            pos_store.position.hold_to_expiry = True
+        return
+
     try:
         order_id, is_matched = await asyncio.to_thread(
-            place_limit_sell, clob, pos.token_id, shares, price, pos.condition_id, pm_state.taker_fee
+            place_market_sell, clob, pos.token_id, requested_shares, price, pos.condition_id, pm_state.taker_fee
         )
     except Exception as exc:
-        import re
+        log.warning("Market sell raised — will retry next tick%s: %s", label, exc)
+        return
 
-        exc_str = str(exc)
-
-        # If the error includes "sum of matched orders", those shares are already committed
-        # to an existing GTC order (prior partial-fill retry that succeeded but left a residual).
-        # Retrying would double-commit and always fail. Mark hold-to-expiry immediately.
-        if "sum of matched orders" in exc_str:
-            log.warning(
-                "Sell failed — shares already committed to matched order — hold-to-expiry%s", label
-            )
-            if pos_store.position:
-                pos_store.position.hold_to_expiry = True
-                _write_position_parked_event(pos_store.position, reason=f"matched_order_committed:{reason or 'sell'}")
-            return
-
-        m = re.search(r"balance[:\s]+(\d+)", exc_str)
-        if m:
-            actual = int(m.group(1)) // 1_000_000
-            min_sell = 5
-            # Guard: if actual >= shares, no shares were freed by the partial fill — don't retry.
-            if actual >= shares:
-                log.warning(
-                    "Partial fill: actual (%d) >= expected (%d) — no shares freed, hold-to-expiry%s",
-                    actual, shares, label,
-                )
-                if pos_store.position:
-                    pos_store.position.hold_to_expiry = True
-                    _write_position_parked_event(pos_store.position, reason=f"partial_fill_no_shares_freed:{reason or 'sell'}")
-                return
-            if actual >= min_sell:
-                log.warning(
-                    "Partial fill detected (expected=%d actual=%d) — retrying sell%s",
-                    shares, actual, label,
-                )
-                if pos_store.position:
-                    pos_store.position.shares = actual
-                order_id, is_matched = await asyncio.to_thread(
-                    place_limit_sell, clob, pos.token_id, actual, price, pos.condition_id, pm_state.taker_fee
-                )
-            else:
-                log.warning(
-                    "Partial fill below min order size (actual=%d, min=5) — hold-to-expiry%s",
-                    actual, label,
-                )
-                if pos_store.position:
-                    pos_store.position.shares = max(0, actual)
-                    pos_store.position.hold_to_expiry = True
-                    _write_position_parked_event(pos_store.position, reason=f"partial_fill_below_min:{reason or 'sell'}")
-                return
-        else:
-            log.warning("Limit sell failed — marking hold-to-expiry%s", label)
-            if pos_store.position:
-                pos_store.position.hold_to_expiry = True
-                _write_position_parked_event(pos_store.position, reason=f"limit_sell_failed:{reason or 'sell'}")
-            return
-
-    if order_id and is_matched:
-        # Sell was immediately matched off-chain. Close the position right now;
-        # the user WS will emit MATCHED → MINED → CONFIRMED for accounting.
-        exit_price = price
-        realized_shares = float(pos.shares)
-        pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
+    if not order_id or not is_matched:
+        # FAK killed without a fill (book floor too high or no bids at price).
+        # Leave the position intact; the next eval tick re-evaluates exit conditions.
         log.info(
-            "Sell IMMEDIATELY MATCHED — closing position  dir=%s  entry=%.4f  exit=%.4f  "
+            "FAK sell unfilled — retry next tick  order=%s  matched=%s  price=%.4f%s",
+            order_id, is_matched, price, label,
+        )
+        return
+
+    actual_shares, actual_price = await _await_fill_reconciliation(
+        order_id, requested_shares, price
+    )
+    if actual_shares <= 0:
+        log.warning("FAK sell matched=True but ws reports 0 shares — retry next tick%s", label)
+        return
+
+    exit_price = actual_price or price
+    remaining = max(0.0, requested_shares - actual_shares)
+    realized_shares = float(actual_shares)
+    pnl = round((exit_price - pos.entry_price) * realized_shares, 2)
+
+    if remaining < 0.01:
+        log.info(
+            "FAK sell FILLED — closing position  dir=%s  entry=%.4f  exit=%.4f  "
             "shares=%.0f  pnl=$%.2f  order=%s%s",
             pos.direction, pos.entry_price, exit_price, realized_shares, pnl, order_id, label,
         )
@@ -1221,7 +1186,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             entry_price=round(pos.entry_price, 4),
             exit_price=round(exit_price, 4),
             pnl=round(pnl, 2),
-            reason=reason or "sell_immediately_matched",
+            reason=reason or "fak_sell_filled",
             order_id=order_id,
             dry_run=False,
         )
@@ -1232,24 +1197,30 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
         _balance_cache[1] = 0.0
         return
 
-    if order_id:
-        log.info("Limit sell posted  order=%s  price=%.4f%s", order_id, price, label)
-        pos_store.attach_sell_order(order_id, price, reason)
-        _write_training_event(
-            "sell_order_posted",
-            direction=pos.direction,
-            shares=shares,
-            entry_price=round(pos.entry_price, 4),
-            exit_price=round(price, 4),
-            reason=reason or "",
-            order_id=order_id,
-            dry_run=False,
-        )
-    else:
-        log.warning("Limit sell failed — marking hold-to-expiry%s", label)
-        if pos_store.position:
+    # Partial fill: shrink position, record, let next tick retry remainder.
+    log.info(
+        "FAK sell PARTIAL — filled=%.4f remaining=%.4f  entry=%.4f  exit=%.4f  pnl=$%.2f  order=%s%s",
+        realized_shares, remaining, pos.entry_price, exit_price, pnl, order_id, label,
+    )
+    _write_training_event(
+        "position_partial_close",
+        direction=pos.direction,
+        shares=realized_shares,
+        remaining=remaining,
+        entry_price=round(pos.entry_price, 4),
+        exit_price=round(exit_price, 4),
+        pnl=round(pnl, 2),
+        reason=reason or "fak_sell_partial",
+        order_id=order_id,
+        dry_run=False,
+    )
+    if pos_store.position:
+        pos_store.position.shares = remaining
+        if remaining < MIN_POSITION_SHARES:
             pos_store.position.hold_to_expiry = True
-            _write_position_parked_event(pos_store.position, reason=f"limit_sell_no_order_id:{reason or 'sell'}")
+            _write_position_parked_event(
+                pos_store.position, reason=f"fak_partial_below_min:{reason or 'sell'}"
+            )
 
 
 async def _try_enter(clob, balance: float) -> None:
@@ -1513,7 +1484,7 @@ async def _try_enter(clob, balance: float) -> None:
         )
         actual_spend = round(actual_shares * actual_price, 2)
         log.info(
-            "Market buy IMMEDIATELY MATCHED  order=%s  dir=%s  req_price=%.4f  fill_price=%.4f  req_shares=%d  filled=%d  spend=$%.2f",
+            "Market buy IMMEDIATELY MATCHED  order=%s  dir=%s  req_price=%.4f  fill_price=%.4f  req_shares=%d  filled=%.4f  spend=$%.2f",
             order_id, direction, entry_price, actual_price, entry_size, actual_shares, actual_spend,
         )
         pos_store.open(

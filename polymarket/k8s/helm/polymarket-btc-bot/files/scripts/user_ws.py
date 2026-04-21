@@ -79,8 +79,9 @@ class UserState:
     def __init__(self) -> None:
         # Per-order fill state populated from trade events
         self.order_status: dict[str, str] = {}       # order_id -> "filled"/"cancelled"/"open"/"unknown"
-        self.matched_shares: dict[str, int] = {}     # order_id -> cumulative matched whole shares
-        self.avg_price: dict[str, float] = {}        # order_id -> last observed avg/trade price
+        self.matched_shares: dict[str, float] = {}   # order_id -> cumulative matched shares (fractional)
+        self.avg_price: dict[str, float] = {}        # order_id -> size-weighted avg fill price
+        self.total_notional: dict[str, float] = {}   # order_id -> cumulative size*price (for weighted avg)
 
         # Per-token net holdings inferred from trade events (BUY +, SELL −).
         # Used as a source of truth for residuals / hold-to-expiry checks.
@@ -104,16 +105,17 @@ class UserState:
         self,
         order_id: str,
         fallback_price: float,
-        fallback_shares: int,
-    ) -> tuple[str, int, float]:
+        fallback_shares: float,
+    ) -> tuple[str, float, float]:
         """Drop-in replacement for the deleted clob.get_order_fill_info.
 
-        Returns (status, matched_whole_shares, avg_price). Status is one of
-        "filled" / "cancelled" / "open" / "unknown". "unknown" means we have
-        not yet received any event for this order.
+        Returns (status, matched_shares, avg_price). `matched_shares` is the
+        cumulative fractional size across all trade events for this order, and
+        `avg_price` is the size-weighted average fill price across those trades.
+        Status is one of "filled" / "cancelled" / "open" / "unknown".
         """
         status = self.order_status.get(order_id, "unknown")
-        shares = self.matched_shares.get(order_id, 0)
+        shares = self.matched_shares.get(order_id, 0.0)
         price = self.avg_price.get(order_id, fallback_price)
         if status == "filled" and shares <= 0:
             shares = fallback_shares
@@ -171,17 +173,20 @@ def _apply_trade(msg: dict) -> None:
     if raw_status in _FILLED_STATUSES:
         for oid in order_ids:
             user_state.order_status[oid] = "filled"
-            if is_first_seen:
-                user_state.matched_shares[oid] = user_state.matched_shares.get(oid, 0) + int(size)
-            if price > 0:
-                user_state.avg_price[oid] = price
+            if is_first_seen and size > 0:
+                user_state.matched_shares[oid] = user_state.matched_shares.get(oid, 0.0) + size
+                if price > 0:
+                    user_state.total_notional[oid] = user_state.total_notional.get(oid, 0.0) + size * price
+                    total_shares = user_state.matched_shares[oid]
+                    if total_shares > 0:
+                        user_state.avg_price[oid] = user_state.total_notional[oid] / total_shares
 
         if is_first_seen and asset_id and size > 0:
             delta = size if side == "BUY" else -size
             user_state.token_shares[asset_id] = user_state.token_shares.get(asset_id, 0.0) + delta
 
         log.info(
-            "USER_WS trade %s  id=%s side=%s size=%.2f price=%.4f order=%s",
+            "USER_WS trade %s  id=%s side=%s size=%.4f price=%.4f order=%s",
             raw_status.upper(),
             trade_id[:10],
             side,
@@ -214,8 +219,10 @@ def _apply_order(msg: dict) -> None:
     if raw_status in _FILLED_STATUSES:
         user_state.order_status[order_id] = "filled"
         if size_matched > 0:
+            # Never shrink a float accumulated from trade events with the order
+            # event's rolling counter — use it only as a floor for the unknown case.
             user_state.matched_shares[order_id] = max(
-                user_state.matched_shares.get(order_id, 0), int(size_matched)
+                user_state.matched_shares.get(order_id, 0.0), float(size_matched)
             )
         if price > 0 and order_id not in user_state.avg_price:
             user_state.avg_price[order_id] = price
@@ -287,6 +294,7 @@ def _dispatch_message(raw: str) -> None:
     stripped = raw.strip()
     if not stripped or stripped == "PONG" or stripped[0] not in "[{":
         return
+    log.info("USER_WS raw  %s", stripped)
     try:
         msgs = json.loads(stripped)
     except Exception as exc:
