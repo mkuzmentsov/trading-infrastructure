@@ -509,6 +509,28 @@ async def _get_balance(clob) -> float:
 
 
 _snapshot_in_flight: bool = False
+_redemption_in_flight: bool = False
+
+
+async def _sweep_redemptions(reason: str) -> None:
+    """Run the on-chain redemption sweep off the event loop.
+
+    `redeem_resolved_positions` performs Data API + Polygon RPC calls and
+    signs/submits transactions — all blocking I/O. Delegate to a worker
+    thread so the trading loop never stalls.
+    """
+    global _redemption_in_flight
+    if DRY_RUN or _redemption_in_flight:
+        return
+    _redemption_in_flight = True
+    try:
+        log.info("Redemption sweep start (reason=%s)", reason)
+        await asyncio.to_thread(redeem_resolved_positions, None)
+        log.info("Redemption sweep done (reason=%s)", reason)
+    except Exception as exc:
+        log.exception("Redemption sweep failed: %s", exc)
+    finally:
+        _redemption_in_flight = False
 
 
 async def _write_balance_snapshot(clob, reason: str) -> None:
@@ -1620,6 +1642,10 @@ async def main() -> None:
                 asyncio.create_task(
                     _write_balance_snapshot(clob, reason="new_market"),
                     name="balance_snapshot",
+                )
+                asyncio.create_task(
+                    _sweep_redemptions(reason="new_market"),
+                    name="redemption_sweep",
                 )
             await _tick(clob)
         except Exception as exc:
