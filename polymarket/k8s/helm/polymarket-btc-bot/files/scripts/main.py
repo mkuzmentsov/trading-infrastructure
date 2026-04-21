@@ -16,6 +16,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import time
 
 from binance_ws import binance_state, run_binance_ws
@@ -1142,6 +1143,23 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             place_market_sell, clob, pos.token_id, requested_shares, price, pos.condition_id, pm_state.taker_fee
         )
     except Exception as exc:
+        # Polymarket format: "balance: 14114622, order amount: 14370000" in 1e6 chain units.
+        # Trade events accumulate pre-fee size in token_shares, but settlement deducts a
+        # taker fee in outcome tokens, so our ws-tracked balance is optimistic by ~2%.
+        # When the CLOB tells us the real on-chain balance, correct token_shares so the
+        # NEXT tick sells the right amount instead of repeating this mistake.
+        exc_str = str(exc)
+        match = re.search(r"balance:\s*(\d+)", exc_str)
+        if match and "not enough balance" in exc_str.lower():
+            chain_balance = int(match.group(1)) / 1_000_000.0
+            prev = user_state.token_shares.get(pos.token_id, 0.0)
+            user_state.token_shares[pos.token_id] = chain_balance
+            log.warning(
+                "Sell rejected — not enough balance; corrected token_shares  "
+                "prev=%.6f  onchain=%.6f  requested=%.4f%s",
+                prev, chain_balance, requested_shares, label,
+            )
+            return
         log.warning("Market sell raised — will retry next tick%s: %s", label, exc)
         return
 

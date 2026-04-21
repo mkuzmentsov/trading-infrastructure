@@ -20,12 +20,16 @@ import json
 import time
 from typing import Optional
 
+import requests
 import websockets
 
 from config import (
+    DATA_API,
+    POLYMARKET_ADDRESS,
     POLYMARKET_API_KEY,
     POLYMARKET_API_PASSPHRASE,
     POLYMARKET_API_SECRET,
+    POLYMARKET_FUNDER,
     WS_HEARTBEAT_SECS,
     log,
 )
@@ -133,6 +137,59 @@ class UserState:
 user_state = UserState()
 
 
+def _fetch_position_size(token_id: str, condition_id: str) -> float | None:
+    """Blocking GET /positions to get the user's on-chain (post-fee) share count.
+
+    Returns the position size for `token_id`, or None if the API is unreachable
+    or the position is not present (meaning zero on-chain).
+    """
+    user = POLYMARKET_FUNDER or POLYMARKET_ADDRESS
+    if not user:
+        return None
+    params = {"user": user, "market": condition_id, "sizeThreshold": "0"}
+    resp = requests.get(f"{DATA_API}/positions", params=params, timeout=10)
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, list):
+        return None
+    for p in payload:
+        if str(p.get("asset") or "") == token_id:
+            return float(p.get("size") or 0.0)
+    return 0.0  # Position endpoint returned successfully but no row for this token.
+
+
+async def _sync_token_shares_from_data_api(token_id: str, condition_id: str) -> None:
+    """Correct `token_shares` (and the active pos.shares) with the post-fee
+    on-chain balance from Polymarket's data API. Runs on CONFIRMED trade events."""
+    if not token_id or not condition_id:
+        return
+    try:
+        onchain = await asyncio.to_thread(_fetch_position_size, token_id, condition_id)
+    except Exception as exc:
+        log.warning("USER_WS data-api position fetch failed  token=%s err=%s", token_id[:16], exc)
+        return
+    if onchain is None:
+        return
+
+    prev = user_state.token_shares.get(token_id, 0.0)
+    user_state.token_shares[token_id] = onchain
+    log.info(
+        "USER_WS token_shares synced from data-api  token=%s  prev=%.6f  onchain=%.6f",
+        token_id[:16], prev, onchain,
+    )
+
+    # If this token is our active position, reconcile pos.shares so PnL accounting
+    # reflects the real post-fee share count (entry size is ~2% over pre-fee trade size).
+    pos = pos_store.position
+    if pos and pos.token_id == token_id and onchain > 0:
+        prev_pos_shares = pos.shares
+        pos.shares = onchain
+        log.info(
+            "Position shares reconciled from data-api  dir=%s  prev=%.4f  onchain=%.4f",
+            pos.direction, prev_pos_shares, onchain,
+        )
+
+
 # ── Event handlers ───────────────────────────────────────────────────────────
 def _apply_trade(msg: dict) -> None:
     """Accumulate fills per order_id and per token_id from a trade event."""
@@ -194,6 +251,19 @@ def _apply_trade(msg: dict) -> None:
             price,
             (order_ids[0][:12] if order_ids else "?"),
         )
+
+        # On final on-chain confirmation, fetch the authoritative post-fee balance
+        # from Polymarket's data API and use it to correct token_shares / pos.shares.
+        # We only fire on the first CONFIRMED per trade (dedupe via is_first_seen).
+        if raw_status == "confirmed" and is_first_seen and asset_id:
+            market = str(msg.get("market") or "")
+            try:
+                asyncio.get_running_loop().create_task(
+                    _sync_token_shares_from_data_api(asset_id, market)
+                )
+            except RuntimeError:
+                # No running loop (shouldn't happen in ws flow, but be defensive).
+                pass
     elif raw_status in _CANCELED_STATUSES or raw_status == "failed":
         for oid in order_ids:
             user_state.order_status[oid] = "cancelled"
