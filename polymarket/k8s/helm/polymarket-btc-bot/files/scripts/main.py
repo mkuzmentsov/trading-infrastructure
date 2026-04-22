@@ -31,6 +31,10 @@ from clob import (
     place_bet,
     place_market_buy,
     place_market_sell,
+    post_signed_buy_fak,
+    post_signed_sell_fak,
+    sign_buy_order,
+    sign_sell_order,
 )
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
@@ -95,6 +99,20 @@ _entry_confirmation: dict = {"condition_id": "", "action": "", "count": 0, "edge
 _stop_loss_reentry_guard: dict[tuple[str, str], float] = {}
 _market_stop_loss_count: dict[str, int] = {}
 _sell_cancel_cooldown_until: float = 0.0
+
+# Fast-retry signal: set by handlers (e.g. FAK kill) to wake the main loop
+# before the normal EVAL_INTERVAL_SECS sleep elapses. Initialized in main().
+_retry_now_event: "asyncio.Event | None" = None
+_FAST_RETRY_WS_SETTLE_SECS = 0.15
+
+
+async def _schedule_fast_retry(reason: str) -> None:
+    """Let the WS cache settle briefly, then wake the main loop for a retry."""
+    if _retry_now_event is None:
+        return
+    log.info("Fast-retry scheduled  reason=%s  settle=%.2fs", reason, _FAST_RETRY_WS_SETTLE_SECS)
+    await asyncio.sleep(_FAST_RETRY_WS_SETTLE_SECS)
+    _retry_now_event.set()
 # Tracks how many times we've seen a "filled but residual" result for a given sell order.
 # On the first occurrence we wait for on-chain settlement; on the second we treat it as real.
 _sell_residual_retries: dict[str, int] = {}
@@ -775,9 +793,10 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
 
 
 def _exit_target_price(current_bid: float, reason: str) -> float:
-    if reason in {"stop_loss", "signal_flip", "take_profit"}:
-        return max(MIN_EXIT_BID, current_bid - AGGRESSIVE_EXIT_SLIPPAGE)
-    return max(current_bid, MIN_EXIT_BID)
+    # FAK floor = min acceptable fill. Wider slippage doesn't worsen fill price
+    # (FAK walks top-of-book down), it only improves fill probability when the
+    # book reprices during the ~300ms order flight. Apply uniformly to all exits.
+    return max(MIN_EXIT_BID, current_bid - AGGRESSIVE_EXIT_SLIPPAGE)
 
 
 async def _manage_position(clob) -> None:
@@ -1138,16 +1157,25 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             pos_store.position.hold_to_expiry = True
         return
 
+    # Pre-sign the FAK sell in background. Overlaps EIP-712 signing (~100-300ms)
+    # with the sync work above and, on salvage exits into a crashing book, shaves
+    # enough latency to catch the bid before it drops further.
+    sign_task = asyncio.create_task(
+        asyncio.to_thread(
+            sign_sell_order, clob, pos.token_id, requested_shares, price, pm_state.taker_fee,
+        ),
+        name="sell_sign",
+    )
+
     try:
-        order_id, is_matched = await asyncio.to_thread(
-            place_market_sell, clob, pos.token_id, requested_shares, price, pos.condition_id, pm_state.taker_fee
-        )
+        signed = await sign_task
     except Exception as exc:
-        # Polymarket format: "balance: 14114622, order amount: 14370000" in 1e6 chain units.
-        # Trade events accumulate pre-fee size in token_shares, but settlement deducts a
-        # taker fee in outcome tokens, so our ws-tracked balance is optimistic by ~2%.
-        # When the CLOB tells us the real on-chain balance, correct token_shares so the
-        # NEXT tick sells the right amount instead of repeating this mistake.
+        log.warning("Market sell signing raised — will retry next tick%s: %s", label, exc)
+        return
+
+    try:
+        order_id, is_matched = await asyncio.to_thread(post_signed_sell_fak, clob, signed)
+    except Exception as exc:
         exc_str = str(exc)
         match = re.search(r"balance:\s*(\d+)", exc_str)
         if match and "not enough balance" in exc_str.lower():
@@ -1159,16 +1187,25 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
                 "prev=%.6f  onchain=%.6f  requested=%.4f%s",
                 prev, chain_balance, requested_shares, label,
             )
+            asyncio.create_task(
+                _schedule_fast_retry("sell_balance_corrected"),
+                name="fast_retry_sell_balance",
+            )
             return
-        log.warning("Market sell raised — will retry next tick%s: %s", label, exc)
+        log.warning("Market sell post raised — will retry next tick%s: %s", label, exc)
         return
 
     if not order_id or not is_matched:
         # FAK killed without a fill (book floor too high or no bids at price).
-        # Leave the position intact; the next eval tick re-evaluates exit conditions.
+        # Schedule a fast-retry so we don't wait a full 1s tick while the book
+        # keeps moving against us (critical for salvage exits).
         log.info(
-            "FAK sell unfilled — retry next tick  order=%s  matched=%s  price=%.4f%s",
+            "FAK sell unfilled — fast-retry scheduled  order=%s  matched=%s  price=%.4f%s",
             order_id, is_matched, price, label,
+        )
+        asyncio.create_task(
+            _schedule_fast_retry("fak_sell_no_match"),
+            name="fast_retry_fak_sell",
         )
         return
 
@@ -1450,6 +1487,27 @@ async def _try_enter(clob, balance: float) -> None:
         _entry_confirmation["count"] = 0
         return
 
+    # Pre-sign the order in a background task so EIP-712 signing (~100-300ms)
+    # overlaps with the approval check + post-approval revalidation. On the first
+    # entry per market (pre-warm pending), this also hides the approval RPC.
+    sign_task = None
+    if entry_mode == "market":
+        sign_price = round(min(0.99, entry_price + ENTRY_SLIPPAGE_CAP), 3)
+        sign_task = asyncio.create_task(
+            asyncio.to_thread(
+                sign_buy_order, clob, token_id, entry_size, sign_price, pm_state.taker_fee,
+            ),
+            name="entry_sign",
+        )
+
+    async def _abort_signing() -> None:
+        if sign_task is not None and not sign_task.done():
+            sign_task.cancel()
+            try:
+                await sign_task
+            except BaseException:
+                pass
+
     await _ensure_ctf_approval_for_token(clob, token_id)
 
     if not _feeds_are_fresh():
@@ -1457,10 +1515,12 @@ async def _try_enter(clob, balance: float) -> None:
     if not _feeds_are_fresh():
         log.info("Entry aborted after approval — feeds went stale")
         _entry_confirmation["count"] = 0
+        await _abort_signing()
         return
     if pm_state.condition_id != cid:
         log.info("Entry aborted after approval — market changed  old=%s new=%s", cid[:16], pm_state.condition_id[:16])
         _entry_confirmation["count"] = 0
+        await _abort_signing()
         return
     still_valid, reason = _entry_price_still_valid(direction, entry_price)
     if not still_valid:
@@ -1475,14 +1535,22 @@ async def _try_enter(clob, balance: float) -> None:
             pm_state.down_ask,
         )
         _entry_confirmation["count"] = 0
+        await _abort_signing()
         return
 
     try:
         if entry_mode == "market":
-            limit_price = round(min(0.99, entry_price + ENTRY_SLIPPAGE_CAP), 3)
-            order_id, is_matched = await asyncio.to_thread(
-                place_market_buy, clob, token_id, entry_size, limit_price, pm_state.condition_id, pm_state.taker_fee
-            )
+            try:
+                signed = await sign_task
+            except Exception as exc:
+                if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
+                    log.warning("Token orderbook gone — skipping market %s", pm_state.condition_id[:16])
+                    pm_state.ready = False
+                else:
+                    log.error("Order signing failed: %s", exc)
+                _entry_confirmation["count"] = 0
+                return
+            order_id, is_matched = await asyncio.to_thread(post_signed_buy_fak, clob, signed)
         else:
             order_id = await asyncio.to_thread(
                 place_bet, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee
@@ -1590,6 +1658,14 @@ async def _try_enter(clob, balance: float) -> None:
             _balance_cache[1] = 0.0
     else:
         log.error("%s buy order failed", entry_mode.capitalize())
+        if entry_mode == "market":
+            # FAK got killed (book moved against us during order flight). Schedule
+            # a fast-retry instead of waiting the full 1s tick — a short settle
+            # lets the WS cache absorb the book update that killed us.
+            asyncio.create_task(
+                _schedule_fast_retry("fak_no_match"),
+                name="fast_retry_fak",
+            )
     _entry_confirmation["count"] = 0
 
 
@@ -1611,9 +1687,6 @@ async def _tick(clob) -> None:
     if pos_store.has_pending_buy():
         await _check_pending_buy(clob)
         return
-
-    if not DRY_RUN and clob is not None and _feeds_are_fresh():
-        await _prewarm_ctf_approvals(clob)
 
     if DRY_RUN:
         balance = float(os.getenv("DRY_RUN_BALANCE", "100.0"))
@@ -1647,6 +1720,9 @@ async def main() -> None:
 
     if not POLYMARKET_PK and not DRY_RUN:
         raise RuntimeError("POLYMARKET_PK not set and DRY_RUN=false — refusing to start")
+
+    global _retry_now_event
+    _retry_now_event = asyncio.Event()
 
     asyncio.create_task(run_binance_ws(), name="binance_ws")
     asyncio.create_task(run_btc_ws(), name="btc_ws")
@@ -1689,6 +1765,10 @@ async def main() -> None:
                     _sweep_redemptions(reason="new_market"),
                     name="redemption_sweep",
                 )
+                asyncio.create_task(
+                    _prewarm_ctf_approvals(clob),
+                    name="ctf_prewarm",
+                )
             await _tick(clob)
         except Exception as exc:
             log.exception("Tick error: %s", exc)
@@ -1702,7 +1782,15 @@ async def main() -> None:
                 _stop_loss_reentry_guard.pop(key, None)
 
         elapsed = time.time() - tick_start
-        await asyncio.sleep(max(0, EVAL_INTERVAL_SECS - elapsed))
+        remaining = max(0, EVAL_INTERVAL_SECS - elapsed)
+        if remaining > 0 and _retry_now_event is not None:
+            try:
+                await asyncio.wait_for(_retry_now_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                pass
+            _retry_now_event.clear()
+        elif remaining > 0:
+            await asyncio.sleep(remaining)
 
 
 if __name__ == "__main__":
