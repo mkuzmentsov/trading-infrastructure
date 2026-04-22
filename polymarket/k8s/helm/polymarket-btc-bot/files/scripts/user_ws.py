@@ -20,11 +20,9 @@ import json
 import time
 from typing import Optional
 
-import requests
 import websockets
 
 from config import (
-    DATA_API,
     POLYMARKET_ADDRESS,
     POLYMARKET_API_KEY,
     POLYMARKET_API_PASSPHRASE,
@@ -137,44 +135,54 @@ class UserState:
 user_state = UserState()
 
 
-def _fetch_position_size(token_id: str, condition_id: str) -> float | None:
-    """Blocking GET /positions to get the user's on-chain (post-fee) share count.
+def _fetch_chain_balance(token_id: str) -> float | None:
+    """Authoritative on-chain CTF balance for `token_id`, via eth_call to
+    balanceOf on the ConditionalTokens contract. Post-fee, no indexer lag.
 
-    Returns the position size for `token_id`, or None if the API is unreachable
-    or the position is not present (meaning zero on-chain).
+    Returns shares as float (6-decimal units on-chain → float shares),
+    or None if no user address is configured or the RPC call fails.
     """
+    from redemptions import _erc1155_balance  # local import avoids import-time cycle
+
     user = POLYMARKET_FUNDER or POLYMARKET_ADDRESS
     if not user:
         return None
-    params = {"user": user, "market": condition_id, "sizeThreshold": "0"}
-    resp = requests.get(f"{DATA_API}/positions", params=params, timeout=10)
-    resp.raise_for_status()
-    payload = resp.json()
-    if not isinstance(payload, list):
-        return None
-    for p in payload:
-        if str(p.get("asset") or "") == token_id:
-            return float(p.get("size") or 0.0)
-    return 0.0  # Position endpoint returned successfully but no row for this token.
+    raw = _erc1155_balance(token_id, user)
+    return raw / 1_000_000.0
 
 
-async def _sync_token_shares_from_data_api(token_id: str, condition_id: str) -> None:
-    """Correct `token_shares` (and the active pos.shares) with the post-fee
-    on-chain balance from Polymarket's data API. Runs on CONFIRMED trade events."""
-    if not token_id or not condition_id:
+async def _sync_token_shares_from_chain(token_id: str) -> None:
+    """Correct `token_shares` (and the active pos.shares) with the authoritative
+    post-fee on-chain balance via Polygon RPC eth_call. Runs on MINED trade events.
+
+    Unlike Polymarket's data-api /positions endpoint (which is an indexer pipeline
+    that lags the matching engine), eth_call at `latest` block reflects state
+    immediately once the trade's tx is mined."""
+    if not token_id:
         return
     try:
-        onchain = await asyncio.to_thread(_fetch_position_size, token_id, condition_id)
+        onchain = await asyncio.to_thread(_fetch_chain_balance, token_id)
     except Exception as exc:
-        log.warning("USER_WS data-api position fetch failed  token=%s err=%s", token_id[:16], exc)
+        log.warning("USER_WS chain balance fetch failed  token=%s err=%s", token_id[:16], exc)
         return
     if onchain is None:
         return
 
     prev = user_state.token_shares.get(token_id, 0.0)
+    # Belt-and-suspenders guard: if RPC briefly returns 0 for a token we believe
+    # we hold (e.g. RPC node momentarily behind the mined block), skip the
+    # overwrite. The next trade's sync or the reactive sell-error handler will
+    # catch up. Not expected with eth_call at `latest`, but cheap to keep.
+    if onchain == 0.0 and prev > 0.0:
+        log.warning(
+            "USER_WS chain balance returned 0 for token=%s with prev=%.6f — ignoring (RPC lag?)",
+            token_id[:16], prev,
+        )
+        return
+
     user_state.token_shares[token_id] = onchain
     log.info(
-        "USER_WS token_shares synced from data-api  token=%s  prev=%.6f  onchain=%.6f",
+        "USER_WS token_shares synced from chain  token=%s  prev=%.6f  onchain=%.6f",
         token_id[:16], prev, onchain,
     )
 
@@ -185,7 +193,7 @@ async def _sync_token_shares_from_data_api(token_id: str, condition_id: str) -> 
         prev_pos_shares = pos.shares
         pos.shares = onchain
         log.info(
-            "Position shares reconciled from data-api  dir=%s  prev=%.4f  onchain=%.4f",
+            "Position shares reconciled from chain  dir=%s  prev=%.4f  onchain=%.4f",
             pos.direction, prev_pos_shares, onchain,
         )
 
@@ -252,14 +260,18 @@ def _apply_trade(msg: dict) -> None:
             (order_ids[0][:12] if order_ids else "?"),
         )
 
-        # On final on-chain confirmation, fetch the authoritative post-fee balance
-        # from Polymarket's data API and use it to correct token_shares / pos.shares.
-        # We only fire on the first CONFIRMED per trade (dedupe via is_first_seen).
-        if raw_status == "confirmed" and is_first_seen and asset_id:
-            market = str(msg.get("market") or "")
+        # On on-chain mining, fetch the authoritative post-fee balance via
+        # Polygon RPC eth_call to CTF.balanceOf. MINED arrives ~2s after MATCHED
+        # — by then the tx is in a block and eth_call at `latest` reflects it.
+        # (Earlier attempt used Polymarket's /positions data-api, but that's an
+        # indexer that lags and returned 0 for just-mined trades, clobbering
+        # good tracking on the 135201 bundle. eth_call reads chain state
+        # directly so it's authoritative with no indexer lag.)
+        # Outer (trade_id, raw_status) dedup at line 201-204 prevents re-firing.
+        if raw_status == "mined" and asset_id:
             try:
                 asyncio.get_running_loop().create_task(
-                    _sync_token_shares_from_data_api(asset_id, market)
+                    _sync_token_shares_from_chain(asset_id)
                 )
             except RuntimeError:
                 # No running loop (shouldn't happen in ws flow, but be defensive).
