@@ -169,21 +169,24 @@ async def _sync_token_shares_from_chain(token_id: str) -> None:
         return
 
     prev = user_state.token_shares.get(token_id, 0.0)
-    # Belt-and-suspenders guard: if RPC briefly returns 0 for a token we believe
-    # we hold (e.g. RPC node momentarily behind the mined block), skip the
-    # overwrite. The next trade's sync or the reactive sell-error handler will
-    # catch up. Not expected with eth_call at `latest`, but cheap to keep.
-    if onchain == 0.0 and prev > 0.0:
+    # Suspicious-drop guard: if an authoritative source (eth_call at `latest`)
+    # returns a value much smaller than prev, treat it as RPC lag, not a real
+    # balance change. We only *add* to shares via BUY fills; between two MINED
+    # events on the same token we either gained shares or stood still. A large
+    # drop (>50%) almost always indicates a stale/forked RPC response. Log
+    # loudly and skip — next trade's sync or sell-error handler recovers.
+    if prev >= 1.0 and onchain < prev * 0.5:
         log.warning(
-            "USER_WS chain balance returned 0 for token=%s with prev=%.6f — ignoring (RPC lag?)",
-            token_id[:16], prev,
+            "USER_WS chain balance SUSPICIOUS DROP  token=%s  prev=%.6f  onchain=%.6f  "
+            "ratio=%.3f (threshold 0.5) — ignoring, likely RPC lag",
+            token_id[:16], prev, onchain, onchain / max(prev, 1e-9),
         )
         return
 
     user_state.token_shares[token_id] = onchain
     log.info(
-        "USER_WS token_shares synced from chain  token=%s  prev=%.6f  onchain=%.6f",
-        token_id[:16], prev, onchain,
+        "USER_WS token_shares WRITE src=chain_sync  token=%s  prev=%.6f  onchain=%.6f  delta=%+.6f",
+        token_id[:16], prev, onchain, onchain - prev,
     )
 
     # If this token is our active position, reconcile pos.shares so PnL accounting
@@ -193,8 +196,8 @@ async def _sync_token_shares_from_chain(token_id: str) -> None:
         prev_pos_shares = pos.shares
         pos.shares = onchain
         log.info(
-            "Position shares reconciled from chain  dir=%s  prev=%.4f  onchain=%.4f",
-            pos.direction, prev_pos_shares, onchain,
+            "Position shares WRITE src=chain_sync  dir=%s  prev=%.4f  onchain=%.4f  delta=%+.4f",
+            pos.direction, prev_pos_shares, onchain, onchain - prev_pos_shares,
         )
 
 
@@ -248,7 +251,15 @@ def _apply_trade(msg: dict) -> None:
 
         if is_first_seen and asset_id and size > 0:
             delta = size if side == "BUY" else -size
-            user_state.token_shares[asset_id] = user_state.token_shares.get(asset_id, 0.0) + delta
+            prev_shares = user_state.token_shares.get(asset_id, 0.0)
+            new_shares = prev_shares + delta
+            user_state.token_shares[asset_id] = new_shares
+            log.info(
+                "USER_WS token_shares WRITE src=trade_%s  token=%s  prev=%.6f  new=%.6f  delta=%+.6f  "
+                "status=%s  trade_id=%s",
+                side.lower(), asset_id[:16], prev_shares, new_shares, delta,
+                raw_status, trade_id[:10],
+            )
 
         log.info(
             "USER_WS trade %s  id=%s side=%s size=%.4f price=%.4f order=%s",

@@ -1183,9 +1183,10 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             prev = user_state.token_shares.get(pos.token_id, 0.0)
             user_state.token_shares[pos.token_id] = chain_balance
             log.warning(
-                "Sell rejected — not enough balance; corrected token_shares  "
-                "prev=%.6f  onchain=%.6f  requested=%.4f%s",
-                prev, chain_balance, requested_shares, label,
+                "USER_WS token_shares WRITE src=sell_error  token=%s  prev=%.6f  onchain=%.6f  "
+                "delta=%+.6f  requested=%.4f  pos.shares=%.4f%s",
+                pos.token_id[:16], prev, chain_balance, chain_balance - prev,
+                requested_shares, pos.shares, label,
             )
             asyncio.create_task(
                 _schedule_fast_retry("sell_balance_corrected"),
