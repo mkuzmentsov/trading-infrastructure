@@ -1,6 +1,0 @@
-apiVersion: v2
-name: polymarket-bot
-description: Helm chart for a Polymarket prediction market trading bot powered by Claude AI
-type: application
-version: 0.1.0
-appVersion: "latest"

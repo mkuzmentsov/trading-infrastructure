@@ -1,6 +1,0 @@
-apiVersion: v2
-name: livekit
-description: Helm chart for deploying LiveKit SFU server for MatrixRTC/Element Call
-type: application
-version: 0.1.0
-appVersion: "latest"

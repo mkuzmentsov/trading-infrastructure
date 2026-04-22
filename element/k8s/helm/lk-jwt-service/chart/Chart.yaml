@@ -1,6 +1,0 @@
-apiVersion: v2
-name: lk-jwt-service
-description: Helm chart for lk-jwt-service — issues LiveKit tokens for Matrix/Synapse
-type: application
-version: 0.1.0
-appVersion: "latest"

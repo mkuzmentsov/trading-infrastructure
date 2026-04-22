@@ -1,6 +1,0 @@
-apiVersion: v2
-name: polymarket-portfolio-bot
-description: Claude-driven Polymarket portfolio manager — opens, averages, and exits positions
-type: application
-version: 0.1.0
-appVersion: "latest"
