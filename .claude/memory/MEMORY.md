@@ -22,6 +22,9 @@ util/           # Python utilities (hl_leaderboard.py - Hyperliquid leaderboard 
 - See `hummingbot.md` for Hummingbot stack + arbitrage bot details
 - See `kubernetes.md` for K8s/Helm/Hetzner details
 
+## Active PnL Investigation Notes
+- [PM BTC gap 2026-04-23](project_pm_btc_gap_2026_04_23.md) — pm-btc-smart 10.7h: replay +$88 / live-events +$13 / balance −$26. $55 execution-slippage leak + $39 fixed-fee leak ($0.40/trade). Main target: entry slippage.
+
 ## Critical Gitignored Files (must create manually)
 - `hummingbot/inventory.ini` - Ansible inventory
 - `hummingbot/env.values.yml` - Hummingbot configuration values
