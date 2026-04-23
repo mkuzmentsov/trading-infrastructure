@@ -64,6 +64,18 @@ _BLOCK_REENTRY_IF_BID_DROP_GT = float(os.getenv("BLOCK_REENTRY_IF_BID_DROP_GT", 
 # Block re-entry if BTC moved adversely (vs direction) by > this since first entry, in log-return.
 _BLOCK_REENTRY_IF_ADVERSE_BTC_GT = float(os.getenv("BLOCK_REENTRY_IF_ADVERSE_BTC_GT", "0"))
 
+# Slippage simulation: at entry-decision time, look back N seconds in same-cid
+# snapshots; if the bid for the chosen direction was at any point > current_bid
+# by ENTRY_BID_DRIFT_THRESH, abort (we're chasing a falling bid). Models the
+# live problem where decision-to-fill latency lets the bid move adversely.
+# 0 disables.
+_ENTRY_BID_DRIFT_LOOKBACK_SECS = float(os.getenv("ENTRY_BID_DRIFT_LOOKBACK_SECS", "0"))
+_ENTRY_BID_DRIFT_THRESH = float(os.getenv("ENTRY_BID_DRIFT_THRESH", "0.05"))
+
+# Global slot lockout after ANY exit (across markets). Models the live position-slot
+# busy state. 0 = no lockout (default).
+_SLOT_LOCK_AFTER_EXIT_SECS = float(os.getenv("SLOT_LOCK_AFTER_EXIT_SECS", "0"))
+
 
 def _resolve_events_path(path_arg: str) -> Path:
     path = Path(path_arg)
@@ -590,6 +602,8 @@ class BundleBacktestRunner:
         # Per (cid, direction) trackers for conditional re-entry blocks
         last_exit_by_dir: dict[tuple[str, str], dict] = {}
         first_entry_by_dir: dict[tuple[str, str], dict] = {}
+        # Global last-exit ts (across markets) for slot lockout
+        global_last_exit_ts: float = 0.0
 
         confirm_condition_id = ""
         confirm_action = ""
@@ -769,6 +783,7 @@ class BundleBacktestRunner:
                         if exit_reason in _GUARD_EXIT_REASONS and exit_reason != "stop_loss":
                             sl_reentry_guard[(cid, position.direction)] = position.entry_edge
                         last_exit_ts_by_market[cid] = ts
+                        global_last_exit_ts = ts
                         # Track per-(cid, dir) exit info for conditional re-entry blocks
                         # PnL approximation: (exit_price - entry_price) * fill (for buy direction match)
                         exit_pnl = (exit_price - position.entry_price) * fill
@@ -827,6 +842,26 @@ class BundleBacktestRunner:
                 last_exit_ts = last_exit_ts_by_market.get(cid, 0.0)
                 if last_exit_ts > 0 and ts < last_exit_ts + _SALVAGE_COOLDOWN_SECS:
                     continue
+            # Experiment: global slot lockout after ANY exit (Option D-ish).
+            if _SLOT_LOCK_AFTER_EXIT_SECS > 0 and global_last_exit_ts > 0:
+                if ts < global_last_exit_ts + _SLOT_LOCK_AFTER_EXIT_SECS:
+                    continue
+            # Experiment: entry-bid-drift guard (Option B in replay).
+            # If the bid for chosen direction was X cents higher within the last
+            # ENTRY_BID_DRIFT_LOOKBACK_SECS, abort — we'd be chasing a fall.
+            if _ENTRY_BID_DRIFT_LOOKBACK_SECS > 0:
+                cur_bid = float(pm.get("up_bid") if direction == "UP" else pm.get("down_bid") or 0)
+                if cur_bid > 0:
+                    cutoff_ts = ts - _ENTRY_BID_DRIFT_LOOKBACK_SECS
+                    recent = [r for r in prior_rows if float(r.get("ts", 0)) >= cutoff_ts]
+                    recent_max_bid = cur_bid
+                    for r in recent:
+                        rpm = r.get("pm", {})
+                        rb = float(rpm.get("up_bid") if direction == "UP" else rpm.get("down_bid") or 0)
+                        if rb > recent_max_bid:
+                            recent_max_bid = rb
+                    if (recent_max_bid - cur_bid) > _ENTRY_BID_DRIFT_THRESH:
+                        continue
             # Experiment: conditional re-entry blocks based on prior exit on (cid, direction).
             last_exit = last_exit_by_dir.get((cid, direction))
             first_entry = first_entry_by_dir.get((cid, direction))

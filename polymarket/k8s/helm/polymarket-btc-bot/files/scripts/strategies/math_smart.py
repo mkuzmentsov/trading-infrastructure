@@ -72,6 +72,12 @@ SMART_BINANCE_MAX_AGE = float(_os.getenv("SMART_BINANCE_MAX_AGE", "0"))
 SMART_MIN_ELAPSED_SECS = int(_os.getenv("SMART_MIN_ELAPSED_SECS", "0"))
 # Probability shrinkage factor applied to raw_p_up. 1.0 = no shrinkage, 0.5 = heavy shrinkage.
 SMART_SHRINKAGE = float(_os.getenv("SMART_SHRINKAGE", "0.92"))
+# Z-clip applied BEFORE computing p_up. Caps the z fed into norm_cdf so the
+# raw probability stays away from extremes. 0 disables (uses existing ±3 clip).
+# E.g. 1.5 → raw_p_up bounded to [norm_cdf(-1.5), norm_cdf(+1.5)] = [0.067, 0.933].
+# Phase-1 calibration showed model is dramatically over-confident at extreme |z|;
+# tighter clip + stronger shrinkage corrects this at the source.
+SMART_PUP_Z_CAP = float(_os.getenv("SMART_PUP_Z_CAP", "0"))
 # Hard cap on sigma_5m — above this, skip (high vol = unreliable signal). 0 disables.
 SMART_MAX_SIGMA = float(_os.getenv("SMART_MAX_SIGMA", "0"))
 # If set, evaluate_position always returns empty (pure hold-to-expiry mode, for A/B testing).
@@ -185,7 +191,8 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
         )
 
     # Fair probability (same normal model as math_signal, kept local)
-    raw_p_up = _norm_cdf(_clip(z, -3.0, 3.0))
+    pup_z_clip = SMART_PUP_Z_CAP if SMART_PUP_Z_CAP > 0 else 3.0
+    raw_p_up = _norm_cdf(_clip(z, -pup_z_clip, pup_z_clip))
     p_up = 0.5 + SMART_SHRINKAGE * (raw_p_up - 0.5)
     p_up = _clip(p_up, 0.05, 0.95)
     p_down = 1.0 - p_up
