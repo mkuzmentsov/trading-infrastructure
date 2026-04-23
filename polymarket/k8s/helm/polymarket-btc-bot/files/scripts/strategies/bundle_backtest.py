@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import statistics
 import sys
 from dataclasses import dataclass, field
@@ -35,6 +36,33 @@ _ULTRA_CHEAP_TAIL_PRICE = 0.10
 # block new entries). So the global slot is freed the moment the market
 # rotates — grace is zero.
 _HOLD_RELEASE_GRACE_SECS = 0
+
+# Experiment knobs (env-controlled, 0 = off / default-live behaviour)
+_SALVAGE_COOLDOWN_SECS = float(os.getenv("SALVAGE_COOLDOWN_SECS", "0"))
+# Which exit reasons should populate the sl_reentry_guard (edge-based guard).
+# Comma-separated; default only stop_loss (matches live). Set e.g.
+# "stop_loss,late_bar_salvage,force_close" to extend guard to those exits.
+_GUARD_EXIT_REASONS = set(
+    r.strip() for r in os.getenv("GUARD_EXIT_REASONS", "stop_loss").split(",") if r.strip()
+)
+# Max entries allowed per market (condition_id). 0 = unlimited (live default).
+_MAX_ENTRIES_PER_MARKET = int(os.getenv("MAX_ENTRIES_PER_MARKET", "0"))
+
+# Conditional re-entry block knobs. All default to disabled; set non-zero / non-empty to engage.
+# Block re-entry if the last exit on this (cid, direction) had one of these reasons.
+_BLOCK_REENTRY_AFTER_REASONS = set(
+    r.strip() for r in os.getenv("BLOCK_REENTRY_AFTER_REASONS", "").split(",") if r.strip()
+)
+# Block re-entry if the last close on this (cid, direction) had pnl below this (e.g. -3 means
+# block if last loss > $3).
+_BLOCK_REENTRY_IF_LAST_LOSS_LT = float(os.getenv("BLOCK_REENTRY_IF_LAST_LOSS_LT", "0"))
+# Block re-entry if the new requested size > first_entry_size * this multiplier (e.g. 1.5).
+_BLOCK_REENTRY_IF_SIZE_MULT_GT = float(os.getenv("BLOCK_REENTRY_IF_SIZE_MULT_GT", "0"))
+# Block re-entry if (last_exit_bid - current_bid) > this (in price units, e.g. 0.20).
+# Equivalently: bid keeps falling — flow against thesis.
+_BLOCK_REENTRY_IF_BID_DROP_GT = float(os.getenv("BLOCK_REENTRY_IF_BID_DROP_GT", "0"))
+# Block re-entry if BTC moved adversely (vs direction) by > this since first entry, in log-return.
+_BLOCK_REENTRY_IF_ADVERSE_BTC_GT = float(os.getenv("BLOCK_REENTRY_IF_ADVERSE_BTC_GT", "0"))
 
 
 def _resolve_events_path(path_arg: str) -> Path:
@@ -556,6 +584,12 @@ class BundleBacktestRunner:
 
         sl_reentry_guard: dict[tuple[str, str], float] = {}
         market_sl_count: dict[str, int] = {}
+        # Experiment trackers
+        market_entry_count: dict[str, int] = {}
+        last_exit_ts_by_market: dict[str, float] = {}
+        # Per (cid, direction) trackers for conditional re-entry blocks
+        last_exit_by_dir: dict[tuple[str, str], dict] = {}
+        first_entry_by_dir: dict[tuple[str, str], dict] = {}
 
         confirm_condition_id = ""
         confirm_action = ""
@@ -731,6 +765,19 @@ class BundleBacktestRunner:
                         if exit_reason == "stop_loss":
                             sl_reentry_guard[(cid, position.direction)] = position.entry_edge
                             market_sl_count[cid] = market_sl_count.get(cid, 0) + 1
+                        # Experiment: broaden which exits populate the edge-based guard.
+                        if exit_reason in _GUARD_EXIT_REASONS and exit_reason != "stop_loss":
+                            sl_reentry_guard[(cid, position.direction)] = position.entry_edge
+                        last_exit_ts_by_market[cid] = ts
+                        # Track per-(cid, dir) exit info for conditional re-entry blocks
+                        # PnL approximation: (exit_price - entry_price) * fill (for buy direction match)
+                        exit_pnl = (exit_price - position.entry_price) * fill
+                        last_exit_by_dir[(cid, position.direction)] = {
+                            "reason": exit_reason,
+                            "pnl": exit_pnl,
+                            "exit_bid": current_bid,
+                            "ts": ts,
+                        }
                         slot_free_at_ts = ts
                         position = None
                         pos_question = ""
@@ -772,6 +819,37 @@ class BundleBacktestRunner:
 
             if market_sl_count.get(cid, 0) >= stop_loss_market_limit:
                 continue
+            # Experiment: cap total entries per market (0 = unlimited).
+            if _MAX_ENTRIES_PER_MARKET > 0 and market_entry_count.get(cid, 0) >= _MAX_ENTRIES_PER_MARKET:
+                continue
+            # Experiment: post-exit cooldown per market.
+            if _SALVAGE_COOLDOWN_SECS > 0:
+                last_exit_ts = last_exit_ts_by_market.get(cid, 0.0)
+                if last_exit_ts > 0 and ts < last_exit_ts + _SALVAGE_COOLDOWN_SECS:
+                    continue
+            # Experiment: conditional re-entry blocks based on prior exit on (cid, direction).
+            last_exit = last_exit_by_dir.get((cid, direction))
+            first_entry = first_entry_by_dir.get((cid, direction))
+            if last_exit:
+                if _BLOCK_REENTRY_AFTER_REASONS and last_exit["reason"] in _BLOCK_REENTRY_AFTER_REASONS:
+                    continue
+                if _BLOCK_REENTRY_IF_LAST_LOSS_LT < 0 and last_exit["pnl"] < _BLOCK_REENTRY_IF_LAST_LOSS_LT:
+                    continue
+                if _BLOCK_REENTRY_IF_BID_DROP_GT > 0:
+                    cur_bid = float(pm.get("up_bid") if direction == "UP" else pm.get("down_bid") or 0)
+                    if cur_bid > 0 and (last_exit["exit_bid"] - cur_bid) > _BLOCK_REENTRY_IF_BID_DROP_GT:
+                        continue
+            if first_entry and _BLOCK_REENTRY_IF_SIZE_MULT_GT > 0:
+                if int(signal.size) > first_entry["shares"] * _BLOCK_REENTRY_IF_SIZE_MULT_GT:
+                    continue
+            if first_entry and _BLOCK_REENTRY_IF_ADVERSE_BTC_GT > 0:
+                cur_btc = float(snap.get("btc", {}).get("current_price") or 0)
+                first_btc = first_entry.get("btc_price", 0)
+                if cur_btc > 0 and first_btc > 0:
+                    btc_dist = math.log(cur_btc / first_btc)
+                    adverse = -btc_dist if direction == "UP" else btc_dist
+                    if adverse > _BLOCK_REENTRY_IF_ADVERSE_BTC_GT:
+                        continue
             guard = sl_reentry_guard.get((cid, direction))
             if guard is not None and float(signal.edge) < guard + _REENTRY_EDGE_PENALTY:
                 continue
@@ -816,6 +894,14 @@ class BundleBacktestRunner:
             pos_question = str(snap.get("question") or "")
             pos_debug = dict(signal.debug or {})
             pos_market_end_ts = market_end_ts
+            market_entry_count[cid] = market_entry_count.get(cid, 0) + 1
+            # Track first entry per (cid, direction) for size-multiplier and BTC-drift blocks
+            if (cid, direction) not in first_entry_by_dir:
+                first_entry_by_dir[(cid, direction)] = {
+                    "shares": entry_shares,
+                    "btc_price": float(snap.get("btc", {}).get("current_price") or 0),
+                    "ts": ts,
+                }
 
             if hold_to_expiry_default:
                 bar_outcome = _expiry_outcome(cid)

@@ -24,6 +24,8 @@ util/           # Python utilities (hl_leaderboard.py - Hyperliquid leaderboard 
 
 ## Active PnL Investigation Notes
 - [PM BTC gap 2026-04-23](project_pm_btc_gap_2026_04_23.md) — pm-btc-smart 10.7h: replay +$88 / live-events +$13 / balance −$26. $55 execution-slippage leak + $39 fixed-fee leak ($0.40/trade). Main target: entry slippage.
+- [PM BTC tuning winner 2026-04-23](project_pm_btc_tuning_2026_04_23.md) — walk-forward sweep: `skim_secs=60, skim_bid=0.91, thesis_break=OFF` adds +27% replay PnL across 7 bundles (+$63). Counter-intuitive: salvage cooldowns HURT (cascade re-entries are profitable in replay).
+- [PM BTC re-entry guard 2026-04-23](project_pm_btc_reentry_2026_04_23.md) — `blockReentryIfBidDropGt: 0.10` adds another +$16.52/+6.6% across 5 bundles. Surgical: only blocks re-entry when same-direction bid collapsed >10¢ since prior exit. Wired into config.py + main.py + secret.yaml + pm_btc_smart.yaml — DEPLOYMENT READY.
 
 ## Critical Gitignored Files (must create manually)
 - `hummingbot/inventory.ini` - Ansible inventory

@@ -93,6 +93,8 @@ SMART_PROFIT_LOCK_MIN_ABS_P = float(_os.getenv("SMART_PROFIT_LOCK_MIN_ABS_P", "0
 SMART_LATE_SKIM_SECS = int(_os.getenv("SMART_LATE_SKIM_SECS", "90"))
 SMART_LATE_SKIM_BID = float(_os.getenv("SMART_LATE_SKIM_BID", "0.88"))
 SMART_SALVAGE_SECS = int(_os.getenv("SMART_SALVAGE_SECS", "45"))
+# Minimum unrealized loss to trigger salvage (default -0.03). More negative = fires less often.
+SMART_SALVAGE_MIN_LOSS = float(_os.getenv("SMART_SALVAGE_MIN_LOSS", "-0.03"))
 SMART_THESIS_BREAK_SECS = int(_os.getenv("SMART_THESIS_BREAK_SECS", "60"))
 SMART_THESIS_BREAK_BTC = float(_os.getenv("SMART_THESIS_BREAK_BTC", str(THESIS_MIN_BTC_DISTANCE)))
 # Sigma-aware thesis break: if >0, threshold becomes mult * sigma_5m (scales with realized vol).
@@ -409,7 +411,7 @@ class MathSmartStrategy:
             SMART_EXIT_LATE_SALVAGE
             and ctx.seconds_left < SMART_SALVAGE_SECS
             and not thesis_alive
-            and unrealized < -0.03
+            and unrealized < SMART_SALVAGE_MIN_LOSS
             and not pos.sell_order_id
         ):
             log.info(

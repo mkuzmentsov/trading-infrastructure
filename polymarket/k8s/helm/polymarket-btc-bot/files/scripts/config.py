@@ -81,6 +81,11 @@ ULTRA_CHEAP_TAIL_EDGE = float(os.getenv("ULTRA_CHEAP_TAIL_EDGE", "0.20"))
 ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT = int(os.getenv("ULTRA_CHEAP_TAIL_MIN_SECONDS_LEFT", "90"))
 REENTRY_EDGE_PENALTY = float(os.getenv("REENTRY_EDGE_PENALTY", "0.05"))
 STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
+# Block re-entry on (cid, direction) if same-direction bid has dropped by more
+# than this since the last exit on that pair (any exit reason). 0 disables.
+# Calibrated 2026-04-23: 0.10 catches collapsing-bid cascades without breaking
+# small-wobble re-entries that recover.
+BLOCK_REENTRY_IF_BID_DROP_GT = float(os.getenv("BLOCK_REENTRY_IF_BID_DROP_GT", "0"))
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "60"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
 SL_MIN_ADVERSE_BTC = float(os.getenv("SL_MIN_ADVERSE_BTC", "0.0015"))
