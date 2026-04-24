@@ -139,6 +139,27 @@ SMART_SIZE_MODE = _os.getenv("SMART_SIZE_MODE", "zscore").lower()  # zscore | ke
 # ML gate: if >0, require predict_entry_score() >= threshold as an additional gate.
 SMART_ML_GATE_MIN_P = float(_os.getenv("SMART_ML_GATE_MIN_P", "0"))
 
+# ── Entry-quality gates (Phase 4 2026-04-24) ────────────────────────────────
+# All defaults preserve baseline behavior (gates disabled).
+# Mid-fair late skip: reject entries where price is in [LO, HI] AND seconds_left
+# < SECS. Coin-flip zone where both sides are uncertain and there's too little
+# time for a decisive move. Example: entry @ 0.56 w/ 46s left that lost -$8.
+# LO >= HI disables the rule.
+SMART_SKIP_MIDFAIR_LATE_PRICE_LO = float(_os.getenv("SMART_SKIP_MIDFAIR_LATE_PRICE_LO", "0"))
+SMART_SKIP_MIDFAIR_LATE_PRICE_HI = float(_os.getenv("SMART_SKIP_MIDFAIR_LATE_PRICE_HI", "0"))
+SMART_SKIP_MIDFAIR_LATE_SECS = int(_os.getenv("SMART_SKIP_MIDFAIR_LATE_SECS", "60"))
+# Override: if |z| >= this, don't skip even in mid-fair-late zone (strong signal).
+# Matches SMART_LATE_OVERRIDE_Z semantics from the price-band override.
+SMART_MIDFAIR_LATE_OVERRIDE_Z = float(_os.getenv("SMART_MIDFAIR_LATE_OVERRIDE_Z", "0"))
+# Contra-momentum skip: reject if |ret_30s| > threshold AND move direction
+# matches bet direction (chasing a played-out move). 0 disables.
+SMART_SKIP_CONTRA_MOMENTUM_RET = float(_os.getenv("SMART_SKIP_CONTRA_MOMENTUM_RET", "0"))
+# Late-bar min edge: require net edge >= LATE_MIN_EDGE when seconds_left <
+# LATE_EDGE_SECS. Countervails the strategy's looser _min_z_for() late-bar
+# threshold. 0 disables.
+SMART_LATE_MIN_EDGE = float(_os.getenv("SMART_LATE_MIN_EDGE", "0"))
+SMART_LATE_EDGE_SECS = int(_os.getenv("SMART_LATE_EDGE_SECS", "180"))
+
 
 def _min_z_for(seconds_left: int) -> float:
     """Linearly interpolate z-threshold: high early, low late."""
@@ -254,6 +275,39 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
         elif net_down >= SMART_MIN_EDGE and not down_tradeable:
             reason = f"DOWN outside band ask={ctx.down_ask:.3f}"
         return _nope(reason, edge=max(net_up, net_down), **dbg)
+
+    # Phase 4 entry-quality gates. All default-off; preserve baseline behavior.
+    if (
+        SMART_SKIP_MIDFAIR_LATE_PRICE_LO < SMART_SKIP_MIDFAIR_LATE_PRICE_HI
+        and SMART_SKIP_MIDFAIR_LATE_PRICE_LO <= price <= SMART_SKIP_MIDFAIR_LATE_PRICE_HI
+        and ctx.seconds_left < SMART_SKIP_MIDFAIR_LATE_SECS
+        and not (SMART_MIDFAIR_LATE_OVERRIDE_Z > 0 and abs(z) >= SMART_MIDFAIR_LATE_OVERRIDE_Z)
+    ):
+        return _nope(
+            f"Midfair-late skip price={price:.2f} secs={ctx.seconds_left} z={z:+.2f}",
+            edge=edge, **dbg,
+        )
+
+    if SMART_SKIP_CONTRA_MOMENTUM_RET > 0:
+        ret30 = getattr(ctx, "ret_30s", 0.0) or 0.0
+        if abs(ret30) > SMART_SKIP_CONTRA_MOMENTUM_RET:
+            move_sign = 1.0 if ret30 > 0 else -1.0
+            # Chasing: bet direction matches the recent move (betting it continues)
+            if move_sign * direction_sign > 0:
+                return _nope(
+                    f"Contra-momentum skip ret30={ret30:+.4f} dir={action}",
+                    edge=edge, **dbg,
+                )
+
+    if (
+        SMART_LATE_MIN_EDGE > 0
+        and ctx.seconds_left < SMART_LATE_EDGE_SECS
+        and edge < SMART_LATE_MIN_EDGE
+    ):
+        return _nope(
+            f"Late-edge floor edge={edge:.3f} < {SMART_LATE_MIN_EDGE:.3f} @ secs={ctx.seconds_left}",
+            edge=edge, **dbg,
+        )
 
     if SMART_DIVERGENCE_DIRECTIONAL and divergence_signed * direction_sign < 0:
         return _nope(
