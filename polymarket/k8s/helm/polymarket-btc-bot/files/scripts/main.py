@@ -248,7 +248,15 @@ def _combined_ml_probability(seconds_left: int, ml_snapshot: dict | None = None)
     return combined
 
 
-def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_left: int, ml_p_up: float | None) -> None:
+def _write_training_snapshot(
+    context: str,
+    signal,
+    cash_amount: float,
+    seconds_left: int,
+    ml_p_up: float | None,
+    decision=None,
+    current_bid: float | None = None,
+) -> None:
     if not TRAINING_LOG_PATH:
         return
 
@@ -294,15 +302,21 @@ def _write_training_snapshot(context: str, signal, cash_amount: float, seconds_l
             "staleness": {k: round(v, 3) for k, v in _feed_staleness().items()},
         },
         "signal": {
-            "action": signal.action,
-            "price": round(signal.price, 4) if signal.price is not None else None,
-            "size": signal.size,
-            "p_up": signal.p_up,
-            "edge": signal.edge,
-            "reason": signal.reason,
-            "debug": signal.debug,
+            "action": signal.action if signal is not None else None,
+            "price": round(signal.price, 4) if signal is not None and signal.price is not None else None,
+            "size": signal.size if signal is not None else 0,
+            "p_up": signal.p_up if signal is not None else None,
+            "edge": signal.edge if signal is not None else None,
+            "reason": signal.reason if signal is not None else None,
+            "debug": signal.debug if signal is not None else None,
             "ml_p_up": ml_p_up,
         },
+        "decision": {
+            "exit_reason": decision.exit_reason if decision is not None else None,
+            "current_side_edge": round(decision.current_side_edge, 4) if decision is not None else None,
+            "current_bid": round(current_bid, 4) if current_bid is not None else None,
+            "unrealized": round(current_bid - pos.entry_price, 4) if current_bid is not None and pos else None,
+        } if decision is not None or current_bid is not None else None,
         "position": {
             "direction": pos.direction if pos else None,
             "shares": pos.shares if pos else 0,
@@ -1078,6 +1092,15 @@ async def _manage_position(clob) -> None:
         pos,
         current_bid,
         now,
+    )
+    _write_training_snapshot(
+        "manage_position",
+        strategy_decision.signal,
+        cash_amount=0.0,
+        seconds_left=seconds_left,
+        ml_p_up=ml_p_up,
+        decision=strategy_decision,
+        current_bid=current_bid,
     )
     if strategy_decision.signal is not None:
         _log_signal_debug("manage_position", strategy_decision.signal, cash_amount=0, seconds_left=seconds_left)
