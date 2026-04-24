@@ -108,6 +108,21 @@ SMART_THESIS_BREAK_BTC = float(_os.getenv("SMART_THESIS_BREAK_BTC", str(THESIS_M
 SMART_THESIS_BREAK_SIGMA_MULT = float(_os.getenv("SMART_THESIS_BREAK_SIGMA_MULT", "0"))
 SMART_FORCE_EXIT_SECS = int(_os.getenv("SMART_FORCE_EXIT_SECS", "10"))
 
+# ── Velocity-aware salvage (Phase 1 2026-04-24) ─────────────────────────────
+# Fires independent of SMART_SALVAGE_SECS so collapsing-book losers are caught
+# before the bid crashes to 0.15.
+# Bid-floor: exit immediately if same-side bid drops below this absolute level
+# AND position is losing. 0 disables.
+SMART_SALVAGE_BID_FLOOR = float(_os.getenv("SMART_SALVAGE_BID_FLOOR", "0"))
+# Bid-velocity: exit if bid dropped more than this amount within the window,
+# AND position is losing. 0 disables.
+SMART_SALVAGE_BID_VELOCITY_DROP = float(_os.getenv("SMART_SALVAGE_BID_VELOCITY_DROP", "0"))
+SMART_SALVAGE_BID_VELOCITY_WINDOW = float(_os.getenv("SMART_SALVAGE_BID_VELOCITY_WINDOW", "3"))
+
+# In-bar bid history, keyed by (condition_id, direction). Populated on every
+# evaluate_position call; pruned beyond the velocity window.
+_bid_history: dict[tuple[str, str], list[tuple[float, float]]] = {}
+
 # ── Advanced knobs (all OFF by default) ─────────────────────────────────────
 # Size cap: if |z| > cap, clamp size_mult to the value it would have at z=cap.
 # Phase-6 diag showed size_lvl=3 (big-z) was negative PnL.
@@ -395,6 +410,48 @@ class MathSmartStrategy:
                     current_bid, pos.peak_bid, pos.entry_price,
                 )
                 return PositionDecision(exit_reason="profit_lock_trail")
+
+        # 3b. Velocity-aware salvage (Phase 1 2026-04-24).
+        # Runs regardless of seconds_left — catches collapsing books BEFORE the
+        # existing late-bar salvage at sec<45, which was exiting at 0.05-0.30.
+        # Gated on `not thesis_alive` (same as late_bar_salvage) to avoid cutting
+        # winners whose bid briefly dips while BTC still supports the position.
+        if (
+            (SMART_SALVAGE_BID_FLOOR > 0 or SMART_SALVAGE_BID_VELOCITY_DROP > 0)
+            and not thesis_alive
+            and unrealized < SMART_SALVAGE_MIN_LOSS
+            and not pos.sell_order_id
+        ):
+            key = (pos.condition_id, pos.direction)
+            hist = _bid_history.setdefault(key, [])
+            hist.append((now, current_bid))
+            cutoff_prune = now - max(SMART_SALVAGE_BID_VELOCITY_WINDOW, 10.0)
+            while hist and hist[0][0] < cutoff_prune:
+                hist.pop(0)
+
+            if SMART_SALVAGE_BID_FLOOR > 0 and current_bid < SMART_SALVAGE_BID_FLOOR:
+                log.info(
+                    "SMART_SALVAGE_FLOOR  secs=%d bid=%.4f floor=%.4f entry=%.4f pnl=%+.4f",
+                    ctx.seconds_left, current_bid, SMART_SALVAGE_BID_FLOOR, pos.entry_price, unrealized,
+                )
+                _bid_history.pop(key, None)
+                return PositionDecision(exit_reason="salvage_floor")
+
+            if SMART_SALVAGE_BID_VELOCITY_DROP > 0:
+                cutoff_vel = now - SMART_SALVAGE_BID_VELOCITY_WINDOW
+                past_max = current_bid
+                for ts_h, bid_h in hist:
+                    if ts_h >= cutoff_vel and bid_h > past_max:
+                        past_max = bid_h
+                drop = past_max - current_bid
+                if drop > SMART_SALVAGE_BID_VELOCITY_DROP:
+                    log.info(
+                        "SMART_SALVAGE_VELOCITY  secs=%d bid=%.4f past_max=%.4f drop=%+.4f window=%.1fs entry=%.4f pnl=%+.4f",
+                        ctx.seconds_left, current_bid, past_max, drop, SMART_SALVAGE_BID_VELOCITY_WINDOW,
+                        pos.entry_price, unrealized,
+                    )
+                    _bid_history.pop(key, None)
+                    return PositionDecision(exit_reason="salvage_velocity")
 
         # 4. Thesis break — BTC turned against us meaningfully with time left.
         if SMART_THESIS_BREAK_SIGMA_MULT > 0 and ctx.sigma_5m > 0:
