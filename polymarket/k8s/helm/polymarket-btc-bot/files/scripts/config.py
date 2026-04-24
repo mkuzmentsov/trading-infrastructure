@@ -86,6 +86,13 @@ STOP_LOSS_MARKET_LIMIT = int(os.getenv("STOP_LOSS_MARKET_LIMIT", "1"))
 # Calibrated 2026-04-23: 0.10 catches collapsing-bid cascades without breaking
 # small-wobble re-entries that recover.
 BLOCK_REENTRY_IF_BID_DROP_GT = float(os.getenv("BLOCK_REENTRY_IF_BID_DROP_GT", "0"))
+# Comma-separated set of exit reasons after which re-entry on the same
+# (condition_id, direction) is blocked for the rest of the bar. Empty disables.
+# Replay 2026-04-24 on bundle 20260424_065920: setting to
+# "late_bar_salvage,force_close" raised PnL +$95→+$112 (+18%) and WR 67%→74%.
+BLOCK_REENTRY_AFTER_REASONS = {
+    r.strip() for r in os.getenv("BLOCK_REENTRY_AFTER_REASONS", "").split(",") if r.strip()
+}
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "60"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
 SL_MIN_ADVERSE_BTC = float(os.getenv("SL_MIN_ADVERSE_BTC", "0.0015"))

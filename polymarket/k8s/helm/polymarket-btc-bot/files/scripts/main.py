@@ -65,6 +65,7 @@ from config import (
     ORDER_REPLACE_GAP,
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
+    BLOCK_REENTRY_AFTER_REASONS,
     BLOCK_REENTRY_IF_BID_DROP_GT,
     REENTRY_EDGE_PENALTY,
     SL_ARM_DELAY_SECS,
@@ -103,6 +104,10 @@ _market_stop_loss_count: dict[str, int] = {}
 # Used by BLOCK_REENTRY_IF_BID_DROP_GT to refuse re-entry when same-direction
 # bid has collapsed since the prior exit (signal that flow is against thesis).
 _last_exit_bid_by_dir: dict[tuple[str, str], float] = {}
+# Last exit reason per (cid, direction). Used by BLOCK_REENTRY_AFTER_REASONS
+# to refuse re-entry after a salvage/force_close on the same market+direction
+# (the cascade pattern that produced multi-entry losers in 20260424 bundle).
+_last_exit_reason_by_dir: dict[tuple[str, str], str] = {}
 _sell_cancel_cooldown_until: float = 0.0
 
 # Fast-retry signal: set by handlers (e.g. FAK kill) to wake the main loop
@@ -870,6 +875,7 @@ async def _manage_position(clob) -> None:
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
+                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = pos.exit_reason or "market_rotated_filled"
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -971,6 +977,7 @@ async def _manage_position(clob) -> None:
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
+                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = pos.exit_reason or "sell_filled"
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -1145,6 +1152,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
         _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(price)
+        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = reason or "dry_run_exit"
         pos_store.close()
         _balance_cache[1] = 0.0
         return
@@ -1258,6 +1266,7 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
         _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
+        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = reason or "fak_sell_filled"
         pos_store.close()
         _balance_cache[1] = 0.0
         return
@@ -1358,6 +1367,19 @@ async def _try_enter(clob, balance: float) -> None:
         _entry_confirmation["count"] = 0
         _entry_confirmation["edge"] = 0.0
         return
+
+    if BLOCK_REENTRY_AFTER_REASONS:
+        last_reason = _last_exit_reason_by_dir.get((pm_state.condition_id, direction))
+        if last_reason in BLOCK_REENTRY_AFTER_REASONS:
+            log.info(
+                "Signal blocked by exit-reason reentry guard  dir=%s  last_exit_reason=%s",
+                direction, last_reason,
+            )
+            _entry_confirmation["condition_id"] = ""
+            _entry_confirmation["action"] = ""
+            _entry_confirmation["count"] = 0
+            _entry_confirmation["edge"] = 0.0
+            return
 
     if BLOCK_REENTRY_IF_BID_DROP_GT > 0:
         last_exit_bid = _last_exit_bid_by_dir.get((pm_state.condition_id, direction))
@@ -1808,6 +1830,9 @@ async def main() -> None:
             stale_bid_keys = [key for key in _last_exit_bid_by_dir if key[0] != pm_state.condition_id]
             for key in stale_bid_keys:
                 _last_exit_bid_by_dir.pop(key, None)
+            stale_reason_keys = [key for key in _last_exit_reason_by_dir if key[0] != pm_state.condition_id]
+            for key in stale_reason_keys:
+                _last_exit_reason_by_dir.pop(key, None)
 
         elapsed = time.time() - tick_start
         remaining = max(0, EVAL_INTERVAL_SECS - elapsed)
