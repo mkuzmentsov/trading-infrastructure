@@ -110,6 +110,86 @@ _last_exit_bid_by_dir: dict[tuple[str, str], float] = {}
 _last_exit_reason_by_dir: dict[tuple[str, str], str] = {}
 _sell_cancel_cooldown_until: float = 0.0
 
+# ── Logging-only state (Phase 5 data infra 2026-04-25) ─────────────────────
+# Bid history ring buffer for velocity features in training snapshots.
+# Holds (ts, up_bid, down_bid) tuples; pruned to last ~15s on each write.
+from collections import deque
+_bid_history_for_log: "deque[tuple[float, float, float]]" = deque()
+# Realized close history for rolling-PnL regime features.
+# Holds (ts, pnl) tuples; pruned to last 30 minutes.
+_close_history_for_log: "deque[tuple[float, float]]" = deque()
+_session_pnl_total: float = 0.0
+_BID_HISTORY_WINDOW_SECS = 15.0
+_REGIME_WINDOW_SECS = 1800.0  # 30 minutes
+
+
+def _push_bid_history(ts: float) -> None:
+    if pm_state.up_bid > 0 and pm_state.down_bid > 0:
+        _bid_history_for_log.append((ts, pm_state.up_bid, pm_state.down_bid))
+    cutoff = ts - _BID_HISTORY_WINDOW_SECS
+    while _bid_history_for_log and _bid_history_for_log[0][0] < cutoff:
+        _bid_history_for_log.popleft()
+
+
+def _bid_at_lookback(direction: str, secs_ago: float, now: float) -> float | None:
+    target_ts = now - secs_ago
+    closest = None
+    for ts, up_b, dn_b in _bid_history_for_log:
+        if ts <= target_ts:
+            closest = (up_b if direction == "UP" else dn_b)
+        else:
+            break
+    return closest
+
+
+def _record_close_for_regime(ts: float, pnl: float) -> None:
+    global _session_pnl_total
+    _session_pnl_total += pnl
+    _close_history_for_log.append((ts, pnl))
+    cutoff = ts - _REGIME_WINDOW_SECS
+    while _close_history_for_log and _close_history_for_log[0][0] < cutoff:
+        _close_history_for_log.popleft()
+
+
+def _regime_metrics(now: float) -> dict:
+    cutoff = now - _REGIME_WINDOW_SECS
+    recent = [(t, p) for t, p in _close_history_for_log if t >= cutoff]
+    n = len(recent)
+    pnl_30m = sum(p for _, p in recent)
+    wins_30m = sum(1 for _, p in recent if p > 0)
+    return {
+        "session_pnl": round(_session_pnl_total, 2),
+        "pnl_30min": round(pnl_30m, 2),
+        "closes_30min": n,
+        "wr_30min": round(wins_30m / n, 3) if n > 0 else None,
+    }
+
+
+def _close_event_extras() -> dict:
+    """Snapshot of market+regime state at close — attached to position_closed
+    events so each event is self-contained for label generation."""
+    now = time.time()
+    bp = _binance_price_if_fresh()
+    return {
+        "btc_at_close": {
+            "current_price": round(btc_state.current_price, 4),
+            "bar_open": round(btc_state.bar_open, 4),
+            "binance_price": round(bp, 4) if bp > 0 else None,
+            "ret_30s": round(btc_state.ret_since(30), 6),
+            "ret_60s": round(btc_state.ret_since(60), 6),
+            "sigma_5m": round(btc_state.sigma_5m(), 6),
+        },
+        "pm_at_close": {
+            "up_bid": round(pm_state.up_bid, 4),
+            "up_ask": round(pm_state.up_ask, 4),
+            "down_bid": round(pm_state.down_bid, 4),
+            "down_ask": round(pm_state.down_ask, 4),
+            "up_bid_size": round(pm_state.up_bid_size, 4),
+            "down_bid_size": round(pm_state.down_bid_size, 4),
+        },
+        "regime_at_close": _regime_metrics(now),
+    }
+
 # Fast-retry signal: set by handlers (e.g. FAK kill) to wake the main loop
 # before the normal EVAL_INTERVAL_SECS sleep elapses. Initialized in main().
 _retry_now_event: "asyncio.Event | None" = None
@@ -256,12 +336,42 @@ def _write_training_snapshot(
     ml_p_up: float | None,
     decision=None,
     current_bid: float | None = None,
+    is_decision_tick: bool = True,
 ) -> None:
     if not TRAINING_LOG_PATH:
         return
 
     pos = pos_store.position
     bp = _binance_price_if_fresh()
+    now_ts = time.time()
+    _push_bid_history(now_ts)
+
+    # Position-extras: pre-computed features that downstream analyzers would
+    # otherwise have to recompute via cid joins.
+    position_extras = None
+    if pos:
+        time_held = now_ts - pos.entry_time if pos.entry_time else None
+        adverse_btc = None
+        if pos.entry_bar_open and btc_state.current_price > 0:
+            log_dist = math.log(btc_state.current_price / pos.entry_bar_open)
+            adverse_btc = -log_dist if pos.direction == "UP" else log_dist
+        position_extras = {
+            "entry_btc_price": round(pos.entry_btc_price, 4) if pos.entry_btc_price else None,
+            "entry_bar_open": round(pos.entry_bar_open, 4) if pos.entry_bar_open else None,
+            "entry_ts": round(pos.entry_time, 3) if pos.entry_time else None,
+            "time_held": round(time_held, 2) if time_held is not None else None,
+            "adverse_btc": round(adverse_btc, 6) if adverse_btc is not None else None,
+        }
+
+    bid_history_view = None
+    if pos:
+        bid_history_view = {
+            "up_bid_3s_ago": _bid_at_lookback("UP", 3.0, now_ts),
+            "up_bid_10s_ago": _bid_at_lookback("UP", 10.0, now_ts),
+            "down_bid_3s_ago": _bid_at_lookback("DOWN", 3.0, now_ts),
+            "down_bid_10s_ago": _bid_at_lookback("DOWN", 10.0, now_ts),
+        }
+
     record = {
         "ts": round(time.time(), 3),
         "context": context,
@@ -317,6 +427,10 @@ def _write_training_snapshot(
             "current_bid": round(current_bid, 4) if current_bid is not None else None,
             "unrealized": round(current_bid - pos.entry_price, 4) if current_bid is not None and pos else None,
         } if decision is not None or current_bid is not None else None,
+        "position_extras": position_extras,
+        "bid_history": bid_history_view,
+        "regime": _regime_metrics(now_ts),
+        "tick_meta": {"is_decision_tick": bool(is_decision_tick)},
         "position": {
             "direction": pos.direction if pos else None,
             "shares": pos.shares if pos else 0,
@@ -792,6 +906,8 @@ def _confirm_fill(pb, shares: int, entry_price: float) -> None:
         entry_edge=pb.edge,
         entry_p_up=pb.p_up,
         entry_seconds_left=pb.seconds_left,
+        entry_btc_price=btc_state.current_price,
+        entry_bar_open=btc_state.bar_open,
     )
     # Latency arb strategy: hold to expiry. The edge is at entry time,
     # not from active exit management. Let the binary resolve.
@@ -884,7 +1000,9 @@ async def _manage_position(clob) -> None:
                     reason="market_rotated_filled",
                     order_id=pos.sell_order_id,
                     dry_run=False,
+                    **_close_event_extras(),
                 )
+                _record_close_for_regime(time.time(), pnl)
                 if pos.exit_reason == "stop_loss":
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
@@ -986,7 +1104,9 @@ async def _manage_position(clob) -> None:
                     reason=pos.exit_reason or "sell_filled",
                     order_id=pos.sell_order_id,
                     dry_run=False,
+                    **_close_event_extras(),
                 )
+                _record_close_for_regime(time.time(), pnl)
                 if pos.exit_reason == "stop_loss":
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
@@ -1170,7 +1290,9 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             pnl=round(pnl, 2),
             reason=reason or "dry_run_exit",
             dry_run=True,
+            **_close_event_extras(),
         )
+        _record_close_for_regime(time.time(), pnl)
         if reason == "stop_loss":
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
@@ -1284,7 +1406,9 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             reason=reason or "fak_sell_filled",
             order_id=order_id,
             dry_run=False,
+            **_close_event_extras(),
         )
+        _record_close_for_regime(time.time(), pnl)
         if reason == "stop_loss":
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
@@ -1512,6 +1636,8 @@ async def _try_enter(clob, balance: float) -> None:
             entry_edge=signal.edge,
             entry_p_up=signal.p_up,
             entry_seconds_left=seconds_left,
+            entry_btc_price=btc_state.current_price,
+            entry_bar_open=btc_state.bar_open,
         )
         if _strategy.entry_hold_to_expiry() and pos_store.position:
             pos_store.position.hold_to_expiry = True
@@ -1653,6 +1779,8 @@ async def _try_enter(clob, balance: float) -> None:
             entry_edge=signal.edge,
             entry_p_up=signal.p_up,
             entry_seconds_left=seconds_left,
+            entry_btc_price=btc_state.current_price,
+            entry_bar_open=btc_state.bar_open,
         )
         if _strategy.entry_hold_to_expiry() and pos_store.position:
             pos_store.position.hold_to_expiry = True

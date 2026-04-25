@@ -25,6 +25,8 @@ class Position:
     entry_edge: float = 0.0
     entry_p_up: float = 0.5
     entry_seconds_left: int = 0
+    entry_btc_price: float = 0.0
+    entry_bar_open: float = 0.0
     peak_bid: float = 0.0
 
     # Take-profit profit-lock state
@@ -76,6 +78,8 @@ class PositionStore:
         entry_edge: float = 0.0,
         entry_p_up: float = 0.5,
         entry_seconds_left: int = 0,
+        entry_btc_price: float = 0.0,
+        entry_bar_open: float = 0.0,
     ) -> None:
         self.position = Position(
             condition_id=condition_id,
@@ -87,6 +91,8 @@ class PositionStore:
             entry_edge=entry_edge,
             entry_p_up=entry_p_up,
             entry_seconds_left=entry_seconds_left,
+            entry_btc_price=entry_btc_price,
+            entry_bar_open=entry_bar_open,
             peak_bid=entry_price,
         )
 
