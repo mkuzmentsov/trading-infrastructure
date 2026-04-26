@@ -177,6 +177,7 @@ def _close_event_extras() -> dict:
             "binance_price": round(bp, 4) if bp > 0 else None,
             "ret_30s": round(btc_state.ret_since(30), 6),
             "ret_60s": round(btc_state.ret_since(60), 6),
+            "ret_30m": round(btc_state.ret_since(1800), 6),
             "sigma_5m": round(btc_state.sigma_5m(), 6),
         },
         "pm_at_close": {
@@ -289,6 +290,7 @@ def _build_ml_snapshot(seconds_left: int) -> dict:
             "current_price": btc_state.current_price,
             "ret_30s": btc_state.ret_since(30),
             "ret_60s": btc_state.ret_since(60),
+            "ret_30m": btc_state.ret_since(1800),
             "sigma_5m": btc_state.sigma_5m(),
         },
         "pm": {
@@ -388,6 +390,7 @@ def _write_training_snapshot(
             "binance_age": round(binance_state.age(), 2) if binance_state.ready else None,
             "ret_30s": round(btc_state.ret_since(30), 6),
             "ret_60s": round(btc_state.ret_since(60), 6),
+            "ret_30m": round(btc_state.ret_since(1800), 6),
             "sigma_5m": round(btc_state.sigma_5m(), 6),
             "last_updated_at": btc_state.last_updated_at,
             "last_round_id": btc_state.last_round_id,
@@ -464,6 +467,7 @@ def _build_strategy_context(cash_amount: float, seconds_left: int, ml_p_up: floa
         current_price=btc_state.current_price,
         ret_30s=btc_state.ret_since(30),
         ret_60s=btc_state.ret_since(60),
+        ret_30m=btc_state.ret_since(1800),
         sigma_5m=btc_state.sigma_5m(),
         up_bid=pm_state.up_bid,
         up_ask=pm_state.up_ask,

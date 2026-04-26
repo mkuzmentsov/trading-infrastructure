@@ -15,6 +15,7 @@ class StrategyContext:
     current_price: float
     ret_30s: float
     ret_60s: float
+    ret_30m: float
     sigma_5m: float
     up_bid: float
     up_ask: float

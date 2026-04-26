@@ -488,6 +488,21 @@ class BundleBacktestRunner:
         pm = snap.get("pm", {})
         feeds = snap.get("feeds", {})
         staleness = feeds.get("staleness", {})
+        # ret_30m may be missing on legacy bundles; derive from global BTC
+        # timeline built once at run() entry. prior_snapshots is per-market and
+        # only spans ~5 min, so doesn't cover the 30-min window.
+        ret_30m_val = btc.get("ret_30m")
+        if ret_30m_val is None and getattr(self, "_btc_timeline", None):
+            import bisect as _bisect
+            now_ts = float(snap.get("ts") or 0.0)
+            now_p = float(btc.get("current_price") or 0.0)
+            tl = self._btc_timeline
+            if now_ts > 0 and now_p > 0 and tl:
+                cutoff = now_ts - 1800.0
+                idx = _bisect.bisect_right(tl, (cutoff, float("inf"))) - 1
+                if idx >= 0:
+                    import math as _math
+                    ret_30m_val = _math.log(now_p) - tl[idx][1]
         return StrategyContext(
             cash_amount=float(cash_amount),
             seconds_left=int(snap.get("seconds_left") or 0),
@@ -495,6 +510,7 @@ class BundleBacktestRunner:
             current_price=float(btc.get("current_price") or 0.0),
             ret_30s=float(btc.get("ret_30s") or 0.0),
             ret_60s=float(btc.get("ret_60s") or 0.0),
+            ret_30m=float(ret_30m_val or 0.0),
             sigma_5m=float(btc.get("sigma_5m") or 0.0),
             up_bid=float(pm.get("up_bid") or 0.0),
             up_ask=float(pm.get("up_ask") or 0.0),
@@ -540,6 +556,18 @@ class BundleBacktestRunner:
         """
         snapshots, bars = self.load_bundle(log_dir)
         completed_market_bars = _build_completed_market_bars(snapshots)
+        # Global BTC price timeline for legacy bundles missing ret_30m on each
+        # snapshot. Sorted (ts, log_price) tuples so _build_strategy_context can
+        # derive ret_30m via bisect when the field isn't present.
+        import math as _math
+        _tl: list[tuple[float, float]] = []
+        for _s in snapshots:
+            _ts = float(_s.get("ts") or 0.0)
+            _p = float((_s.get("btc") or {}).get("current_price") or 0.0)
+            if _ts > 0 and _p > 0:
+                _tl.append((_ts, _math.log(_p)))
+        _tl.sort()
+        self._btc_timeline = _tl
         strategy = build_strategy(self.cfg["STRATEGY_NAME"])
 
         entry_confirmation_ticks = int(self.cfg.get("ENTRY_CONFIRMATION_TICKS", 1))

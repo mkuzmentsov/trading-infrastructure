@@ -151,9 +151,16 @@ SMART_SKIP_MIDFAIR_LATE_SECS = int(_os.getenv("SMART_SKIP_MIDFAIR_LATE_SECS", "6
 # Override: if |z| >= this, don't skip even in mid-fair-late zone (strong signal).
 # Matches SMART_LATE_OVERRIDE_Z semantics from the price-band override.
 SMART_MIDFAIR_LATE_OVERRIDE_Z = float(_os.getenv("SMART_MIDFAIR_LATE_OVERRIDE_Z", "0"))
-# Contra-momentum skip: reject if |ret_30s| > threshold AND move direction
-# matches bet direction (chasing a played-out move). 0 disables.
-SMART_SKIP_CONTRA_MOMENTUM_RET = float(_os.getenv("SMART_SKIP_CONTRA_MOMENTUM_RET", "0"))
+# Chase skip: reject if |ret_30s| > threshold AND recent move direction
+# matches bet direction (chasing a played-out short-window move). 0 disables.
+SMART_SKIP_CHASE_RET = float(_os.getenv("SMART_SKIP_CHASE_RET", "0"))
+# Trend-fight skip: reject if |ret_30m| > threshold AND recent move direction
+# is OPPOSITE bet direction (fighting a sustained trend; the math model is
+# usually contrarian via mean-reversion, so this catches the case where BTC
+# trends past the bar threshold and the model keeps insisting on a reversal).
+# 30-min window is calibrated to the typical regime-drift timescale; shorter
+# windows (5m) miss slow rallies that wreck contrarian DOWN bets. 0 disables.
+SMART_SKIP_TRENDFIGHT_RET30M = float(_os.getenv("SMART_SKIP_TRENDFIGHT_RET30M", "0"))
 # Late-bar min edge: require net edge >= LATE_MIN_EDGE when seconds_left <
 # LATE_EDGE_SECS. Countervails the strategy's looser _min_z_for() late-bar
 # threshold. 0 disables.
@@ -288,14 +295,25 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
             edge=edge, **dbg,
         )
 
-    if SMART_SKIP_CONTRA_MOMENTUM_RET > 0:
+    if SMART_SKIP_CHASE_RET > 0:
         ret30 = getattr(ctx, "ret_30s", 0.0) or 0.0
-        if abs(ret30) > SMART_SKIP_CONTRA_MOMENTUM_RET:
+        if abs(ret30) > SMART_SKIP_CHASE_RET:
             move_sign = 1.0 if ret30 > 0 else -1.0
             # Chasing: bet direction matches the recent move (betting it continues)
             if move_sign * direction_sign > 0:
                 return _nope(
-                    f"Contra-momentum skip ret30={ret30:+.4f} dir={action}",
+                    f"Chase skip ret30={ret30:+.4f} dir={action}",
+                    edge=edge, **dbg,
+                )
+
+    if SMART_SKIP_TRENDFIGHT_RET30M > 0:
+        ret30m = getattr(ctx, "ret_30m", 0.0) or 0.0
+        if abs(ret30m) > SMART_SKIP_TRENDFIGHT_RET30M:
+            move_sign = 1.0 if ret30m > 0 else -1.0
+            # Trend-fight: bet direction OPPOSES the recent 30-min move
+            if move_sign * direction_sign < 0:
+                return _nope(
+                    f"Trend-fight skip ret30m={ret30m:+.4f} dir={action}",
                     edge=edge, **dbg,
                 )
 

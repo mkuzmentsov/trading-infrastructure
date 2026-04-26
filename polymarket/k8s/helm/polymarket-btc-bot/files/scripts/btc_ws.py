@@ -44,7 +44,7 @@ class BTCState:
         self.last_rtds_close_reason: str = ""
         self.last_rtds_error: str = ""
 
-        self._prices: deque[tuple[int, float]] = deque(maxlen=600)
+        self._prices: deque[tuple[int, float]] = deque(maxlen=2000)
         self._lock = asyncio.Lock()
 
     def _record(self, ts: int, price: float) -> None:
