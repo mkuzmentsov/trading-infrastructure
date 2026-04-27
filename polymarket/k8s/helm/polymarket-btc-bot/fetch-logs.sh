@@ -17,8 +17,13 @@ LOKI_NS="${LOKI_NS:-monitoring}"
 LOKI_SVC="${LOKI_SVC:-loki-stack}"
 LOKI_PORT="${LOKI_PORT:-3100}"
 LOKI_ADDR="http://localhost:$LOKI_PORT"
-LIMIT="${LIMIT:-500000}"
-BATCH="${BATCH:-1000}"
+LIMIT="${LIMIT:-5000000}"
+BATCH="${BATCH:-5000}"
+# Cap the loki query to the most recent N hours regardless of pod uptime —
+# avoids hitting LIMIT on long-running pods (the cap returns *oldest* lines
+# first with --forward, so the trade window gets dropped). Override to 0 to
+# use full pod uptime.
+LOKI_HOURS="${LOKI_HOURS:-12}"
 
 # --- Dependencies ---------------------------------------------------------
 for cmd in kubectl logcli date; do
@@ -72,6 +77,17 @@ for SELECTOR in "${SELECTORS[@]}"; do
   echo "============================================================"
 
   # --- Copy JSONL training logs from container ---------------------------
+  # Why not `kubectl exec ... cat`: the SPDY stream silently truncates large
+  # outputs (~10MB+ depending on cluster load). Confirmed truncation on
+  # bundle 20260427_101449 at exactly 7.67MB mid-line.
+  # Why not `kubectl cp`: requires `tar` in the container; the bot image is
+  # python:3.11-slim which has no tar.
+  # Solution: stream through base64 — text-only output the SPDY multiplexer
+  # doesn't truncate, and it's in coreutils on every distro.
+  # Validation: don't compare byte counts (the file is being actively
+  # appended, so they'll never match). Instead require the last byte to be
+  # a newline — JSONL writer always ends each record with "\n", so any
+  # mid-line cut is a transfer truncation.
   echo "==> Copying /app/logs/*.jsonl from pod..."
   copy_remote_file() {
     local pod="$1"
@@ -81,8 +97,15 @@ for SELECTOR in "${SELECTORS[@]}"; do
     local max_tries=3
     while [[ $tries -lt $max_tries ]]; do
       tries=$((tries + 1))
-      if kubectl -n "$NAMESPACE" exec "$pod" -- sh -c "cat '$remote_path'" > "$local_path"; then
-        return 0
+      if kubectl -n "$NAMESPACE" exec "$pod" -- \
+           sh -c "base64 -w0 '$remote_path'" 2>/dev/null \
+           | base64 -d > "$local_path"; then
+        local last_byte
+        last_byte=$(tail -c1 "$local_path" 2>/dev/null | od -An -c | tr -d ' ')
+        if [[ "$last_byte" == '\n' ]]; then
+          return 0
+        fi
+        echo "    warn: file ends mid-line (last byte=$last_byte), retrying"
       fi
       sleep 1
     done
@@ -101,19 +124,62 @@ for SELECTOR in "${SELECTORS[@]}"; do
   done
 
   # --- Loki logs ---------------------------------------------------------
+  # Split into hour-sized chunks — most Loki deployments have a server-side
+  # max_entries_limit_per_query (often ~35K) that quietly truncates the
+  # response regardless of --limit. A single full-pod query stops at the cap;
+  # hourly chunks keep each query under it. LOKI_HOURS=0 means full pod uptime.
   QUERY="{namespace=\"$NAMESPACE\", pod=\"$POD_NAME\"}"
+  if [[ "$LOKI_HOURS" -gt 0 ]]; then
+    if date -u -v-1H +%Y-%m-%dT%H:%M:%SZ &>/dev/null; then
+      LOKI_FROM=$(date -u -v-${LOKI_HOURS}H +%Y-%m-%dT%H:%M:%SZ)
+    else
+      LOKI_FROM=$(date -u -d "${LOKI_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ)
+    fi
+    if [[ "$LOKI_FROM" < "$START_TIME" ]]; then
+      LOKI_FROM="$START_TIME"
+    fi
+  else
+    LOKI_FROM="$START_TIME"
+  fi
   echo "==> Loki query: $QUERY"
-  echo "==> Range     : $START_TIME -> $TO"
+  echo "==> Range     : $LOKI_FROM -> $TO  (pod started $START_TIME)"
 
-  logcli query "$QUERY" \
-    --addr="$LOKI_ADDR" \
-    --from="$START_TIME" \
-    --to="$TO" \
-    --limit="$LIMIT" \
-    --batch="$BATCH" \
-    --forward \
-    --output=raw \
-    > "$OUT_DIR/loki.log"
+  iso_to_epoch() {
+    if date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s &>/dev/null; then
+      date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s
+    else
+      date -u -d "$1" +%s
+    fi
+  }
+  epoch_to_iso() {
+    if date -j -u -r "$1" +%Y-%m-%dT%H:%M:%SZ &>/dev/null; then
+      date -j -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+    else
+      date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ
+    fi
+  }
+  CHUNK=3600
+  FROM_EP=$(iso_to_epoch "$LOKI_FROM")
+  TO_EP=$(iso_to_epoch "$TO")
+  : > "$OUT_DIR/loki.log"
+  cur=$FROM_EP
+  while [[ "$cur" -lt "$TO_EP" ]]; do
+    nxt=$(( cur + CHUNK ))
+    [[ "$nxt" -gt "$TO_EP" ]] && nxt="$TO_EP"
+    chunk_from=$(epoch_to_iso "$cur")
+    chunk_to=$(epoch_to_iso "$nxt")
+    logcli query "$QUERY" \
+      --addr="$LOKI_ADDR" \
+      --from="$chunk_from" \
+      --to="$chunk_to" \
+      --limit="$LIMIT" \
+      --batch="$BATCH" \
+      --forward \
+      --output=raw \
+      --quiet \
+      >> "$OUT_DIR/loki.log" 2>/dev/null || true
+    cur="$nxt"
+  done
 
   LINES=$(wc -l < "$OUT_DIR/loki.log" | tr -d ' ')
   echo "==> Done. Loki lines: $LINES"
