@@ -27,6 +27,9 @@ if [[ ! -f "$VALUES" ]]; then
   exit 1
 fi
 
+echo "▶ Applying model ConfigMap (managed outside Helm — chart would exceed 1 MiB release-Secret limit otherwise) ..."
+"$CHART/apply-model-configmap.sh" "$RELEASE"
+
 echo "▶ Deploying '$RELEASE' (namespace: $NAMESPACE) ..."
 helm upgrade --install "$RELEASE" "$CHART" \
   -f "$VALUES" \

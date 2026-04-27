@@ -11,3 +11,8 @@ files/scripts/__pycache__/
 ANALYSIS_WORKFLOW.md
 
 pm-btc-logs_*
+
+# Model files are managed by apply-model-configmap.sh, NOT shipped in the
+# chart — keeps the Helm release Secret under the 1 MiB Kubernetes cap.
+files/model/
+manifests/

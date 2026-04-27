@@ -42,11 +42,9 @@ spec:
               mountPath: /app/scripts
             - name: logs
               mountPath: /app/logs
-            {{- if .Files.Glob "files/model/*" }}
             - name: model
               mountPath: /app/model
               readOnly: true
-            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
@@ -64,8 +62,8 @@ spec:
               {{- end }}
         - name: logs
           emptyDir: {}
-        {{- if .Files.Glob "files/model/*" }}
+        # The model ConfigMap is managed outside Helm (apply-model-configmap.sh)
+        # so the Helm release Secret stays under the 1 MiB Kubernetes cap.
         - name: model
           configMap:
             name: {{ include "polymarket-btc-bot.name" . }}-model
-        {{- end }}
