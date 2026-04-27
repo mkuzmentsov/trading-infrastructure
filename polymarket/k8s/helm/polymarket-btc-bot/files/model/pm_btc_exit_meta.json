@@ -1,0 +1,149 @@
+{
+  "version": "exit_v1",
+  "n_rows": 49965,
+  "n_groups": 232,
+  "feature_columns": [
+    "seconds_left",
+    "time_held",
+    "time_frac",
+    "current_bid",
+    "bid_above_entry",
+    "peak_minus_current",
+    "unrealized_per_share",
+    "bid_drift_3s",
+    "bid_drift_10s",
+    "own_spread",
+    "own_bid_size_log",
+    "own_ask_size_log",
+    "opp_spread",
+    "book_imbalance",
+    "btc_ret_30s",
+    "btc_ret_60s",
+    "btc_ret_30m",
+    "sigma_5m",
+    "btc_distance_from_entry",
+    "adverse_btc",
+    "binance_chainlink_divergence",
+    "direction_up"
+  ],
+  "label_definition": "1 iff (current_bid - eventual_exit_price) >= label_drop (default 0.05)",
+  "oof_auc": 0.6767481755653763,
+  "oof_brier": 0.19191717682949794,
+  "fold_aucs": [
+    0.6337632486272506,
+    0.6991410889888956,
+    0.6059396686113099,
+    0.7684784049906588,
+    0.707968247479658
+  ],
+  "fold_briers": [
+    0.20818708916421852,
+    0.19713904938012017,
+    0.18133646177336485,
+    0.17091978389147328,
+    0.20200571629593472
+  ],
+  "params": {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.9,
+    "bagging_fraction": 0.9,
+    "bagging_freq": 5,
+    "min_data_in_leaf": 50,
+    "verbose": -1,
+    "seed": 42
+  },
+  "num_boost_round_final": 200,
+  "feature_importance_gain": [
+    {
+      "feature": "sigma_5m",
+      "gain": 88345.69332885742
+    },
+    {
+      "feature": "current_bid",
+      "gain": 73532.90773963928
+    },
+    {
+      "feature": "adverse_btc",
+      "gain": 55469.02302312851
+    },
+    {
+      "feature": "btc_distance_from_entry",
+      "gain": 54474.88992500305
+    },
+    {
+      "feature": "unrealized_per_share",
+      "gain": 28882.852074623108
+    },
+    {
+      "feature": "seconds_left",
+      "gain": 28190.79774427414
+    },
+    {
+      "feature": "binance_chainlink_divergence",
+      "gain": 25921.80948114395
+    },
+    {
+      "feature": "bid_above_entry",
+      "gain": 20637.03478527069
+    },
+    {
+      "feature": "btc_ret_60s",
+      "gain": 16211.007315635681
+    },
+    {
+      "feature": "time_held",
+      "gain": 14292.861551761627
+    },
+    {
+      "feature": "peak_minus_current",
+      "gain": 13328.231388092041
+    },
+    {
+      "feature": "btc_ret_30m",
+      "gain": 12749.48645401001
+    },
+    {
+      "feature": "btc_ret_30s",
+      "gain": 9142.472831726074
+    },
+    {
+      "feature": "own_ask_size_log",
+      "gain": 4320.335917472839
+    },
+    {
+      "feature": "time_frac",
+      "gain": 3617.216338634491
+    },
+    {
+      "feature": "bid_drift_10s",
+      "gain": 1390.4005584716797
+    },
+    {
+      "feature": "direction_up",
+      "gain": 613.6208028793335
+    },
+    {
+      "feature": "bid_drift_3s",
+      "gain": 585.2561984062195
+    },
+    {
+      "feature": "own_bid_size_log",
+      "gain": 93.30346202850342
+    },
+    {
+      "feature": "opp_spread",
+      "gain": 61.687169551849365
+    },
+    {
+      "feature": "own_spread",
+      "gain": 0.0
+    },
+    {
+      "feature": "book_imbalance",
+      "gain": 0.0
+    }
+  ]
+}

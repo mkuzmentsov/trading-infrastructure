@@ -36,6 +36,7 @@ ai/*.csv
 ai/inputs
 ai/outputs
 ai/hf-models
+ai/pm_btc_exit/*.parquet
 /polymarket/k8s/helm/polymarket-btc-bot/update-log/
 /polymarket/k8s/helm/polymarket-btc-bot/pm-btc-logs_*
 /polymarket/k8s/helm/polymarket-portfolio-bot/pm-portfolio-logs_*

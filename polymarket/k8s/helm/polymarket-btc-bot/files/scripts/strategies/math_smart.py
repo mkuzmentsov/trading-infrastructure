@@ -46,6 +46,8 @@ from positions import Position
 
 from .base import PositionDecision, StrategyContext
 
+import exit_gate_ml as _exit_gate_ml
+
 import os as _os
 
 # ── Entry tuning ────────────────────────────────────────────────────────────
@@ -173,6 +175,15 @@ SMART_SKIP_STALE_CHASE_RET30M = float(_os.getenv("SMART_SKIP_STALE_CHASE_RET30M"
 # threshold. 0 disables.
 SMART_LATE_MIN_EDGE = float(_os.getenv("SMART_LATE_MIN_EDGE", "0"))
 SMART_LATE_EDGE_SECS = int(_os.getenv("SMART_LATE_EDGE_SECS", "180"))
+
+# Model-driven exit (Phase 5 2026-04-27). LightGBM classifier predicts
+# P(eventual exit beats current bid by >= 0.05). When prob > threshold AND
+# we're not in the force-close window, exit at the current bid rather than
+# wait for static late_bar_salvage to dump into a collapsed book. Default 0
+# disables; set 0.5-0.85 to enable. Training: ai/pm_btc_exit/.
+SMART_EXIT_MODEL_THRESHOLD = float(_os.getenv("SMART_EXIT_MODEL_THRESHOLD", "0"))
+SMART_EXIT_MODEL_MIN_SECS_LEFT = int(_os.getenv("SMART_EXIT_MODEL_MIN_SECS_LEFT", "30"))
+SMART_EXIT_MODEL_MIN_HELD_SECS = int(_os.getenv("SMART_EXIT_MODEL_MIN_HELD_SECS", "5"))
 
 
 def _min_z_for(seconds_left: int) -> float:
@@ -504,6 +515,29 @@ class MathSmartStrategy:
                     current_bid, pos.peak_bid, pos.entry_price,
                 )
                 return PositionDecision(exit_reason="profit_lock_trail")
+
+        # 3a. Model-driven exit (Phase 5 2026-04-27).
+        # Run BEFORE the static velocity/late salvage so the model can dump
+        # earlier when bid is still 0.40-0.50 instead of waiting for the static
+        # trigger at <45s left where bid has often collapsed to 0.05-0.20.
+        if (
+            SMART_EXIT_MODEL_THRESHOLD > 0
+            and not pos.sell_order_id
+            and ctx.seconds_left > SMART_EXIT_MODEL_MIN_SECS_LEFT
+        ):
+            entry_secs = int(getattr(pos, "entry_seconds_left", 300) or 300)
+            held = max(0, entry_secs - ctx.seconds_left)
+            if held >= SMART_EXIT_MODEL_MIN_HELD_SECS:
+                p_loss = _exit_gate_ml.predict_loss_prob(
+                    ctx, pos, current_bid, now, btc_distance, adverse_btc,
+                )
+                if p_loss is not None and p_loss > SMART_EXIT_MODEL_THRESHOLD:
+                    log.info(
+                        "SMART_MODEL_EXIT  p_loss=%.3f thr=%.2f bid=%.4f entry=%.4f secs=%d held=%ds",
+                        p_loss, SMART_EXIT_MODEL_THRESHOLD, current_bid,
+                        pos.entry_price, ctx.seconds_left, held,
+                    )
+                    return PositionDecision(exit_reason="model_exit")
 
         # 3b. Velocity-aware salvage (Phase 1 2026-04-24).
         # Runs regardless of seconds_left — catches collapsing books BEFORE the
