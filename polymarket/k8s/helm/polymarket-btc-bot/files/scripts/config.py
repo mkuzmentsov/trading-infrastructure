@@ -93,6 +93,12 @@ BLOCK_REENTRY_IF_BID_DROP_GT = float(os.getenv("BLOCK_REENTRY_IF_BID_DROP_GT", "
 BLOCK_REENTRY_AFTER_REASONS = {
     r.strip() for r in os.getenv("BLOCK_REENTRY_AFTER_REASONS", "").split(",") if r.strip()
 }
+# Global (cross-market) cooldown after a close with one of the matching reasons
+# in BLOCK_REENTRY_AFTER_REASONS. Per-market guard above only blocks re-entry
+# on the same (cid, direction); doesn't catch consecutive cross-market salvage
+# cascades like bundle 20260427_075827 (Sun 19:24/29/34 lost $32 in 10 min on
+# three sequential market bars, each a fresh cid). 0 disables.
+BLOCK_GLOBAL_AFTER_REASONS_SECS = int(os.getenv("BLOCK_GLOBAL_AFTER_REASONS_SECS", "0"))
 SL_ARM_DELAY_SECS = int(os.getenv("SL_ARM_DELAY_SECS", "60"))
 ULTRA_CHEAP_SL_DELAY_SECS = int(os.getenv("ULTRA_CHEAP_SL_DELAY_SECS", "120"))
 SL_MIN_ADVERSE_BTC = float(os.getenv("SL_MIN_ADVERSE_BTC", "0.0015"))

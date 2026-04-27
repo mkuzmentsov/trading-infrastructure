@@ -161,6 +161,13 @@ SMART_SKIP_CHASE_RET = float(_os.getenv("SMART_SKIP_CHASE_RET", "0"))
 # 30-min window is calibrated to the typical regime-drift timescale; shorter
 # windows (5m) miss slow rallies that wreck contrarian DOWN bets. 0 disables.
 SMART_SKIP_TRENDFIGHT_RET30M = float(_os.getenv("SMART_SKIP_TRENDFIGHT_RET30M", "0"))
+# Stale-chase skip: reject if |ret_30m| > threshold AND move direction MATCHES
+# bet direction (chasing an exhausted multi-minute move). Distinct from the
+# short-window chase gate (ret_30s tick spike): this catches "BTC trended DOWN
+# 30+ bps over 30 min, model still says DOWN, but the move is played out and
+# usually reverses." Bundle 20260427_075827 lost ~$32 on three such entries
+# (ret_30m −36 / −50 / −20 bp, all DOWN bets). 0 disables.
+SMART_SKIP_STALE_CHASE_RET30M = float(_os.getenv("SMART_SKIP_STALE_CHASE_RET30M", "0"))
 # Late-bar min edge: require net edge >= LATE_MIN_EDGE when seconds_left <
 # LATE_EDGE_SECS. Countervails the strategy's looser _min_z_for() late-bar
 # threshold. 0 disables.
@@ -306,14 +313,29 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
                     edge=edge, **dbg,
                 )
 
-    if SMART_SKIP_TRENDFIGHT_RET30M > 0:
+    if SMART_SKIP_TRENDFIGHT_RET30M > 0 or SMART_SKIP_STALE_CHASE_RET30M > 0:
         ret30m = getattr(ctx, "ret_30m", 0.0) or 0.0
-        if abs(ret30m) > SMART_SKIP_TRENDFIGHT_RET30M:
+        abs_ret30m = abs(ret30m)
+        if abs_ret30m > 0:
             move_sign = 1.0 if ret30m > 0 else -1.0
             # Trend-fight: bet direction OPPOSES the recent 30-min move
-            if move_sign * direction_sign < 0:
+            if (
+                SMART_SKIP_TRENDFIGHT_RET30M > 0
+                and abs_ret30m > SMART_SKIP_TRENDFIGHT_RET30M
+                and move_sign * direction_sign < 0
+            ):
                 return _nope(
                     f"Trend-fight skip ret30m={ret30m:+.4f} dir={action}",
+                    edge=edge, **dbg,
+                )
+            # Stale-chase: bet direction MATCHES a played-out 30-min move
+            if (
+                SMART_SKIP_STALE_CHASE_RET30M > 0
+                and abs_ret30m > SMART_SKIP_STALE_CHASE_RET30M
+                and move_sign * direction_sign > 0
+            ):
+                return _nope(
+                    f"Stale-chase skip ret30m={ret30m:+.4f} dir={action}",
                     edge=edge, **dbg,
                 )
 

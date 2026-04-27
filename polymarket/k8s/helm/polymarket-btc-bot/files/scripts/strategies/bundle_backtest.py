@@ -53,6 +53,8 @@ _MAX_ENTRIES_PER_MARKET = int(os.getenv("MAX_ENTRIES_PER_MARKET", "0"))
 _BLOCK_REENTRY_AFTER_REASONS = set(
     r.strip() for r in os.getenv("BLOCK_REENTRY_AFTER_REASONS", "").split(",") if r.strip()
 )
+# Global cross-market cooldown after a close with one of the matching reasons.
+_BLOCK_GLOBAL_AFTER_REASONS_SECS = int(os.getenv("BLOCK_GLOBAL_AFTER_REASONS_SECS", "0"))
 # Block re-entry if the last close on this (cid, direction) had pnl below this (e.g. -3 means
 # block if last loss > $3).
 _BLOCK_REENTRY_IF_LAST_LOSS_LT = float(os.getenv("BLOCK_REENTRY_IF_LAST_LOSS_LT", "0"))
@@ -629,6 +631,7 @@ class BundleBacktestRunner:
         last_exit_ts_by_market: dict[str, float] = {}
         # Per (cid, direction) trackers for conditional re-entry blocks
         last_exit_by_dir: dict[tuple[str, str], dict] = {}
+        global_block_until: float = 0.0
         first_entry_by_dir: dict[tuple[str, str], dict] = {}
         # Global last-exit ts (across markets) for slot lockout
         global_last_exit_ts: float = 0.0
@@ -821,6 +824,11 @@ class BundleBacktestRunner:
                             "exit_bid": current_bid,
                             "ts": ts,
                         }
+                        if (
+                            _BLOCK_GLOBAL_AFTER_REASONS_SECS > 0
+                            and exit_reason in _BLOCK_REENTRY_AFTER_REASONS
+                        ):
+                            global_block_until = ts + _BLOCK_GLOBAL_AFTER_REASONS_SECS
                         slot_free_at_ts = ts
                         position = None
                         pos_question = ""
@@ -890,6 +898,9 @@ class BundleBacktestRunner:
                             recent_max_bid = rb
                     if (recent_max_bid - cur_bid) > _ENTRY_BID_DRIFT_THRESH:
                         continue
+            # Global cross-market salvage cooldown.
+            if _BLOCK_GLOBAL_AFTER_REASONS_SECS > 0 and ts < global_block_until:
+                continue
             # Experiment: conditional re-entry blocks based on prior exit on (cid, direction).
             last_exit = last_exit_by_dir.get((cid, direction))
             first_entry = first_entry_by_dir.get((cid, direction))

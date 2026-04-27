@@ -65,6 +65,7 @@ from config import (
     ORDER_REPLACE_GAP,
     POLYMARKET_ADDRESS,
     POLYMARKET_PK,
+    BLOCK_GLOBAL_AFTER_REASONS_SECS,
     BLOCK_REENTRY_AFTER_REASONS,
     BLOCK_REENTRY_IF_BID_DROP_GT,
     REENTRY_EDGE_PENALTY,
@@ -108,6 +109,25 @@ _last_exit_bid_by_dir: dict[tuple[str, str], float] = {}
 # to refuse re-entry after a salvage/force_close on the same market+direction
 # (the cascade pattern that produced multi-entry losers in 20260424 bundle).
 _last_exit_reason_by_dir: dict[tuple[str, str], str] = {}
+# Global salvage-cooldown timestamp. Set when a close completes with an exit
+# reason in BLOCK_REENTRY_AFTER_REASONS *and* BLOCK_GLOBAL_AFTER_REASONS_SECS>0.
+# Blocks all entries (any market, any direction) until this ts.
+_global_block_until: float = 0.0
+
+
+def _arm_global_cooldown(reason: str) -> None:
+    """Arm the cross-market salvage cooldown if this exit reason is configured."""
+    global _global_block_until
+    if BLOCK_GLOBAL_AFTER_REASONS_SECS <= 0:
+        return
+    if reason and reason in BLOCK_REENTRY_AFTER_REASONS:
+        _global_block_until = time.time() + float(BLOCK_GLOBAL_AFTER_REASONS_SECS)
+        log.info(
+            "Global cooldown armed  reason=%s  secs=%d",
+            reason, BLOCK_GLOBAL_AFTER_REASONS_SECS,
+        )
+
+
 _sell_cancel_cooldown_until: float = 0.0
 
 # ── Logging-only state (Phase 5 data infra 2026-04-25) ─────────────────────
@@ -1011,7 +1031,9 @@ async def _manage_position(clob) -> None:
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
-                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = pos.exit_reason or "market_rotated_filled"
+                _exit_reason_recorded = pos.exit_reason or "market_rotated_filled"
+                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = _exit_reason_recorded
+                _arm_global_cooldown(_exit_reason_recorded)
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -1115,7 +1137,9 @@ async def _manage_position(clob) -> None:
                     _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
                     _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
                 _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
-                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = pos.exit_reason or "sell_filled"
+                _exit_reason_recorded = pos.exit_reason or "sell_filled"
+                _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = _exit_reason_recorded
+                _arm_global_cooldown(_exit_reason_recorded)
                 pos_store.close()
                 _balance_cache[1] = 0.0
                 return
@@ -1301,7 +1325,9 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
         _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(price)
-        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = reason or "dry_run_exit"
+        _exit_reason_recorded = reason or "dry_run_exit"
+        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = _exit_reason_recorded
+        _arm_global_cooldown(_exit_reason_recorded)
         pos_store.close()
         _balance_cache[1] = 0.0
         return
@@ -1417,7 +1443,9 @@ async def _post_sell_order(clob, pos, price: float, reason: str = "") -> None:
             _stop_loss_reentry_guard[(pos.condition_id, pos.direction)] = pos.entry_edge
             _market_stop_loss_count[pos.condition_id] = _market_stop_loss_count.get(pos.condition_id, 0) + 1
         _last_exit_bid_by_dir[(pos.condition_id, pos.direction)] = float(exit_price)
-        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = reason or "fak_sell_filled"
+        _exit_reason_recorded = reason or "fak_sell_filled"
+        _last_exit_reason_by_dir[(pos.condition_id, pos.direction)] = _exit_reason_recorded
+        _arm_global_cooldown(_exit_reason_recorded)
         pos_store.close()
         _balance_cache[1] = 0.0
         return
@@ -1512,6 +1540,17 @@ async def _try_enter(clob, balance: float) -> None:
             direction,
             signal.edge,
             reentry_floor + REENTRY_EDGE_PENALTY,
+        )
+        _entry_confirmation["condition_id"] = ""
+        _entry_confirmation["action"] = ""
+        _entry_confirmation["count"] = 0
+        _entry_confirmation["edge"] = 0.0
+        return
+
+    if BLOCK_GLOBAL_AFTER_REASONS_SECS > 0 and time.time() < _global_block_until:
+        log.info(
+            "Signal blocked by global salvage cooldown  dir=%s  remaining=%.1fs",
+            direction, _global_block_until - time.time(),
         )
         _entry_confirmation["condition_id"] = ""
         _entry_confirmation["action"] = ""
