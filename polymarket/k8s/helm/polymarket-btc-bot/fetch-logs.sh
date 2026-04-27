@@ -82,34 +82,34 @@ for SELECTOR in "${SELECTORS[@]}"; do
   # bundle 20260427_101449 at exactly 7.67MB mid-line.
   # Why not `kubectl cp`: requires `tar` in the container; the bot image is
   # python:3.11-slim which has no tar.
-  # Solution: stream through base64 — text-only output the SPDY multiplexer
-  # doesn't truncate, and it's in coreutils on every distro.
-  # Validation: don't compare byte counts (the file is being actively
-  # appended, so they'll never match). Instead require the last byte to be
-  # a newline — JSONL writer always ends each record with "\n", so any
-  # mid-line cut is a transfer truncation.
+  # Solution: stream through base64 (text-only, multiplexer-safe). The file
+  # is appended ~2/sec so the snapshot we copy is always slightly stale by
+  # design — that's fine. Trim any trailing partial line so downstream JSON
+  # parsers don't choke on a half-record at EOF.
   echo "==> Copying /app/logs/*.jsonl from pod..."
   copy_remote_file() {
     local pod="$1"
     local remote_path="$2"
     local local_path="$3"
-    local tries=0
-    local max_tries=3
-    while [[ $tries -lt $max_tries ]]; do
-      tries=$((tries + 1))
-      if kubectl -n "$NAMESPACE" exec "$pod" -- \
-           sh -c "base64 -w0 '$remote_path'" 2>/dev/null \
-           | base64 -d > "$local_path"; then
-        local last_byte
-        last_byte=$(tail -c1 "$local_path" 2>/dev/null | od -An -c | tr -d ' ')
-        if [[ "$last_byte" == '\n' ]]; then
-          return 0
-        fi
-        echo "    warn: file ends mid-line (last byte=$last_byte), retrying"
-      fi
-      sleep 1
-    done
-    return 1
+    if ! kubectl -n "$NAMESPACE" exec "$pod" -- \
+         sh -c "base64 -w0 '$remote_path'" 2>/dev/null \
+         | base64 -d > "$local_path"; then
+      return 1
+    fi
+    # Trim a trailing partial line if present (last byte != '\n').
+    local last_byte
+    last_byte=$(tail -c1 "$local_path" 2>/dev/null | od -An -c | tr -d ' ')
+    if [[ "$last_byte" != '\n' ]]; then
+      python3 - "$local_path" <<'PY'
+import sys
+p = sys.argv[1]
+with open(p, "rb") as f: data = f.read()
+nl = data.rfind(b"\n")
+if nl >= 0:
+    with open(p, "wb") as f: f.write(data[: nl + 1])
+PY
+    fi
+    return 0
   }
   for f in logs-training.jsonl logs-training-events.jsonl; do
     if kubectl -n "$NAMESPACE" exec "$POD_NAME" -- test -f "/app/logs/$f" 2>/dev/null; then
