@@ -2,7 +2,7 @@ botName: polymarket-btc-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot
-  tag: "0.6"
+  tag: "0.7"
   pullPolicy: IfNotPresent
 
 bot:

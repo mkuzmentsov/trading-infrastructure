@@ -1957,6 +1957,14 @@ async def main() -> None:
     log.info("  CONFIRMATION_TICKS=%d  ENTRY_MAKER_OFFSET=%.3f", ENTRY_CONFIRMATION_TICKS, ENTRY_MAKER_OFFSET)
     for detail in _strategy.startup_details():
         log.info("  %s", detail)
+    # Pre-load the exit-classifier model so loading errors (missing file,
+    # missing lightgbm, malformed) surface at boot rather than the first
+    # in-position tick. Cheap (~5-20ms) and noisy on success/failure.
+    try:
+        import exit_gate_ml as _exit_gate_preload
+        _exit_gate_preload._load()
+    except Exception as exc:
+        log.warning("Exit gate preload skipped: %s", exc)
     log.info("=" * 60)
 
     if not POLYMARKET_PK and not DRY_RUN:
