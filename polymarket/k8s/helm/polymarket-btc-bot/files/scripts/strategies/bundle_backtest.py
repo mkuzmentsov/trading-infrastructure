@@ -642,7 +642,17 @@ class BundleBacktestRunner:
         history_by_cid: dict[str, list[dict[str, Any]]] = {}
         prior_prob_cache: dict[int, float | None] = {}
 
-        try_enter_snaps = [s for s in snapshots if s.get("context") == "try_enter"]
+        # Include both try_enter and manage_position context rows. Entry logic
+        # is gated below to only run on try_enter (position == None means we're
+        # not holding so manage_position rows shouldn't be in that state, but
+        # we double-gate on context for safety). Including manage_position lets
+        # in-position decisions (model exit, velocity salvage, etc.) evaluate
+        # on every actual in-position tick — without this they only fire when
+        # the bot's eval cadence happened to align with try_enter writes.
+        try_enter_snaps = [
+            s for s in snapshots
+            if s.get("context") in ("try_enter", "manage_position")
+        ]
         try_enter_snaps.sort(key=lambda s: float(s.get("ts") or 0.0))
 
         def _combined_ml_p_up(snap: dict[str, Any], seconds_left: int) -> float | None:
@@ -839,6 +849,10 @@ class BundleBacktestRunner:
                     continue
 
             # ---------- Entry path ----------
+            # Only try_enter rows are valid entry candidates; manage_position
+            # rows are scanned only for in-position management above.
+            if snap.get("context") != "try_enter":
+                continue
             if ts < slot_free_at_ts:
                 continue
 
@@ -963,6 +977,8 @@ class BundleBacktestRunner:
                 entry_edge=float(signal.edge),
                 entry_p_up=float(signal.p_up),
                 entry_seconds_left=seconds_left,
+                entry_btc_price=float(snap.get("btc", {}).get("current_price") or 0.0),
+                entry_bar_open=float(snap.get("btc", {}).get("bar_open") or 0.0),
                 peak_bid=entry_price,
             )
             pos_question = str(snap.get("question") or "")
