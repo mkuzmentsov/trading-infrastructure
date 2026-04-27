@@ -34,10 +34,16 @@ done
 
 echo "▶ Applying ConfigMap '$CM_NAME' to namespace '$NAMESPACE' from $MODEL_DIR ..."
 ls "$MODEL_DIR" | sed 's/^/    /'
+# Use server-side apply: client-side apply stores the prior manifest in
+# the kubectl.kubernetes.io/last-applied-configuration annotation, which
+# has a 256 KiB cap — the model file alone is larger than that.
+# --force-conflicts is needed because kubectl create previously created
+# the ConfigMap with field manager "kubectl-create"; server-side apply
+# claims those fields under "kubectl-client-side-apply".
 kubectl create configmap "$CM_NAME" \
   --namespace "$NAMESPACE" \
   "${FROM_FILE_ARGS[@]}" \
   --dry-run=client -o yaml \
-  | kubectl apply -f -
+  | kubectl apply --server-side --force-conflicts -f -
 
 echo "✓ Done."
