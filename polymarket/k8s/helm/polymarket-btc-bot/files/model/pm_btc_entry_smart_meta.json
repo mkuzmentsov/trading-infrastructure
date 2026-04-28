@@ -1,0 +1,265 @@
+{
+  "version": "entry_smart_v1",
+  "n_rows": 239,
+  "n_groups": 236,
+  "feature_columns": [
+    "entry_edge",
+    "entry_p_up",
+    "entry_price",
+    "entry_seconds_left",
+    "direction_up",
+    "time_frac",
+    "own_bid",
+    "own_ask",
+    "own_spread",
+    "own_bid_size_log",
+    "own_ask_size_log",
+    "opp_bid",
+    "opp_spread",
+    "book_imbalance",
+    "implied_p_own",
+    "btc_ret_30s",
+    "btc_ret_60s",
+    "btc_ret_30m",
+    "sigma_5m",
+    "btc_distance_from_open",
+    "binance_chainlink_divergence",
+    "ret30s_align",
+    "ret60s_align",
+    "ret30m_align",
+    "session_pnl",
+    "closes_30min",
+    "pnl_30min",
+    "wr_30min_filled",
+    "wr_30min_known"
+  ],
+  "label_definition": "1 iff close pnl > 0",
+  "oof_auc": 0.6223766102185556,
+  "oof_brier": 0.22913822649822227,
+  "fold_aucs": [
+    0.6770833333333334,
+    0.5730550284629982,
+    0.7353535353535353,
+    0.5821428571428571,
+    0.5309090909090909
+  ],
+  "fold_briers": [
+    0.22996273106121715,
+    0.22534477550266666,
+    0.19823861201002724,
+    0.2426593476971972,
+    0.2499185904694028
+  ],
+  "fold_iters": [
+    31,
+    13,
+    25,
+    30,
+    7
+  ],
+  "params": {
+    "objective": "binary",
+    "metric": "binary_logloss",
+    "num_leaves": 15,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.85,
+    "bagging_fraction": 0.85,
+    "bagging_freq": 5,
+    "min_data_in_leaf": 15,
+    "verbose": -1,
+    "seed": 42
+  },
+  "num_boost_round_final": 25,
+  "feature_importance_gain": [
+    {
+      "feature": "entry_edge",
+      "gain": 170.43806064128876
+    },
+    {
+      "feature": "btc_ret_60s",
+      "gain": 100.97710958123207
+    },
+    {
+      "feature": "own_ask_size_log",
+      "gain": 83.17291963100433
+    },
+    {
+      "feature": "entry_p_up",
+      "gain": 82.98271000385284
+    },
+    {
+      "feature": "session_pnl",
+      "gain": 72.84238016605377
+    },
+    {
+      "feature": "btc_ret_30s",
+      "gain": 66.78813934326172
+    },
+    {
+      "feature": "pnl_30min",
+      "gain": 53.55458092689514
+    },
+    {
+      "feature": "own_bid_size_log",
+      "gain": 52.313600301742554
+    },
+    {
+      "feature": "binance_chainlink_divergence",
+      "gain": 49.55412006378174
+    },
+    {
+      "feature": "entry_seconds_left",
+      "gain": 45.03604030609131
+    },
+    {
+      "feature": "sigma_5m",
+      "gain": 44.559759855270386
+    },
+    {
+      "feature": "book_imbalance",
+      "gain": 41.46515965461731
+    },
+    {
+      "feature": "time_frac",
+      "gain": 38.413920402526855
+    },
+    {
+      "feature": "wr_30min_filled",
+      "gain": 28.26649010181427
+    },
+    {
+      "feature": "btc_distance_from_open",
+      "gain": 26.28730034828186
+    },
+    {
+      "feature": "own_bid",
+      "gain": 23.298920154571533
+    },
+    {
+      "feature": "entry_price",
+      "gain": 20.89618968963623
+    },
+    {
+      "feature": "ret30s_align",
+      "gain": 16.872910022735596
+    },
+    {
+      "feature": "ret60s_align",
+      "gain": 14.12876483798027
+    },
+    {
+      "feature": "closes_30min",
+      "gain": 9.693099975585938
+    },
+    {
+      "feature": "opp_bid",
+      "gain": 8.999020099639893
+    },
+    {
+      "feature": "own_ask",
+      "gain": 4.7631001472473145
+    },
+    {
+      "feature": "direction_up",
+      "gain": 0.0
+    },
+    {
+      "feature": "own_spread",
+      "gain": 0.0
+    },
+    {
+      "feature": "opp_spread",
+      "gain": 0.0
+    },
+    {
+      "feature": "implied_p_own",
+      "gain": 0.0
+    },
+    {
+      "feature": "btc_ret_30m",
+      "gain": 0.0
+    },
+    {
+      "feature": "ret30m_align",
+      "gain": 0.0
+    },
+    {
+      "feature": "wr_30min_known",
+      "gain": 0.0
+    }
+  ],
+  "threshold_sweep_oof": [
+    {
+      "thr": 0.3,
+      "n_kept": 236,
+      "kept_frac": 0.9874476987447699,
+      "kept_pnl": 125.19999999999999,
+      "skipped_pnl": -21.759999999999998,
+      "kept_winrate": 0.597457627118644,
+      "kept_avg_pnl": 0.5305084745762711
+    },
+    {
+      "thr": 0.4,
+      "n_kept": 219,
+      "kept_frac": 0.9163179916317992,
+      "kept_pnl": 127.16000000000003,
+      "skipped_pnl": -23.720000000000006,
+      "kept_winrate": 0.6164383561643836,
+      "kept_avg_pnl": 0.5806392694063928
+    },
+    {
+      "thr": 0.45,
+      "n_kept": 204,
+      "kept_frac": 0.8535564853556485,
+      "kept_pnl": 92.32,
+      "skipped_pnl": 11.12,
+      "kept_winrate": 0.6127450980392157,
+      "kept_avg_pnl": 0.4525490196078431
+    },
+    {
+      "thr": 0.5,
+      "n_kept": 183,
+      "kept_frac": 0.7656903765690377,
+      "kept_pnl": 111.70999999999998,
+      "skipped_pnl": -8.270000000000003,
+      "kept_winrate": 0.639344262295082,
+      "kept_avg_pnl": 0.6104371584699453
+    },
+    {
+      "thr": 0.55,
+      "n_kept": 151,
+      "kept_frac": 0.6317991631799164,
+      "kept_pnl": 52.17999999999999,
+      "skipped_pnl": 51.25999999999999,
+      "kept_winrate": 0.6490066225165563,
+      "kept_avg_pnl": 0.3455629139072847
+    },
+    {
+      "thr": 0.6,
+      "n_kept": 117,
+      "kept_frac": 0.4895397489539749,
+      "kept_pnl": 67.44,
+      "skipped_pnl": 35.999999999999986,
+      "kept_winrate": 0.6581196581196581,
+      "kept_avg_pnl": 0.5764102564102563
+    },
+    {
+      "thr": 0.65,
+      "n_kept": 79,
+      "kept_frac": 0.3305439330543933,
+      "kept_pnl": 37.059999999999995,
+      "skipped_pnl": 66.38,
+      "kept_winrate": 0.7088607594936709,
+      "kept_avg_pnl": 0.46911392405063285
+    },
+    {
+      "thr": 0.7,
+      "n_kept": 39,
+      "kept_frac": 0.16317991631799164,
+      "kept_pnl": 51.28000000000001,
+      "skipped_pnl": 52.160000000000004,
+      "kept_winrate": 0.7692307692307693,
+      "kept_avg_pnl": 1.3148717948717952
+    }
+  ]
+}
