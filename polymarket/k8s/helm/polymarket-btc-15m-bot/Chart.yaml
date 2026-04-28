@@ -1,0 +1,6 @@
+apiVersion: v2
+name: polymarket-btc-15m-bot
+description: Polymarket BTC 15m up/down bot — Binance-fed, AI-disabled
+type: application
+version: 0.1.0
+appVersion: "latest"

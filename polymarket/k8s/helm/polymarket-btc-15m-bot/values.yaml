@@ -1,0 +1,128 @@
+botName: polymarket-btc-15m-bot
+
+image:
+  repository: mkuzmentsov/pm-btc-bot
+  tag: "0.7"
+  pullPolicy: IfNotPresent
+
+bot:
+  appLogLevel: "INFO"
+  dryRun: "true"
+  loopIntervalSecs: "900"
+  barDurationSecs: "900"
+
+  # ── Latency arb signal ──────────────────────────────────────────────────────
+  minEdge: "0.04"
+  costBuffer: "0.02"
+  kellyScale: "0.5"
+  betSizeMin: "0.50"
+  betSizeMax: "5.00"
+  maxBudgetFraction: "0.05"   # halved vs 5m bot — wallet is shared between bots
+  takerFeeBps: "0"
+  entryMinSecondsLeft: "90"   # ~3x of 5m's 30s
+  maxEntrySpread: "0.04"
+  minEntryPrice: "0.05"
+  maxEntryPrice: "0.60"
+  sourceMismatchBuffer: "0.015"
+  strategyName: "math_smart"
+  modelProbShrink: "0.65"
+  modelProbFloor: "0.05"
+  modelProbCeil: "0.95"
+  signalModel: "math"
+
+  # ── AI explicitly disabled (no model files shipped) ─────────────────────────
+  mlBlendWeight: "0"
+  btcNextBarBlendWeight: "0"
+  entryGateThreshold: "0"
+  smartExitModelThreshold: "0"
+
+  # ── Entry windows (scaled for 15m bar) ──────────────────────────────────────
+  maxAbsDrift: "0.004"
+  minPositionShares: "6"
+  entryConfirmationTicks: "1"
+  filterContrarianEntries: "false"
+  contrarianTailMaxPrice: "0.25"
+  contrarianMoveFilter: "0.0015"
+  cheapTailEdgeBonus: "0.05"
+  lateBarEdgeBonus: "0.04"
+  lateBarWindowSecs: "225"    # 5m: 75
+  minBtcDistance: "0.0004"
+  minBookDivergence: "0.04"
+  lateEntrySecs: "270"        # 5m: 90
+  lateEntryEdgeDiscount: "0.30"
+  driftA1: "1.8"
+  driftA2: "1.2"
+  driftA3: "0.0003"
+  driftA4: "0.8"
+
+  # ── Binance feed + hold-to-expiry ──────────────────────────────────────────
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  binanceStaleSecs: "5.0"
+  holdToExpiryDefault: "true"
+
+  # ── Position management ────────────────────────────────────────────────────
+  evalIntervalMs: "1000"
+  entryMakerOffset: "0.0"
+  takeProfit: "0.15"
+  stopLoss: "0.08"
+  stopLossMarketLimit: "1"
+  slArmDelaySecs: "180"        # 5m: 60
+  ultraCheapSlDelaySecs: "360" # 5m: 120
+  slMinAdverseBtc: "0.0015"
+  averagingMinSecondsLeft: "450"  # 5m: 150
+  averagingMaxBtcMove: "0.003"
+  thesisMinBtcDistance: "0.002"
+  signalExitEdge: "0.05"
+  minExitBid: "0.03"
+  orderReplaceGap: "0.05"
+  aggressiveExitSlippage: "0.02"
+  trailingArmGain: "0.20"
+  trailingStopGap: "0.03"
+
+  # ── math_smart knobs (time windows scaled ~3x) ─────────────────────────────
+  smartLateBarSecs: "135"       # 5m: 45
+  smartEntryMinSecondsLeft: "60"  # 5m: 20
+  smartLateSkimSecs: "270"      # 5m: 90
+  smartSalvageSecs: "135"       # 5m: 45
+  smartThesisBreakSecs: "180"   # 5m: 60
+  smartForceExitSecs: "30"      # 5m: 10
+  smartLateEdgeSecs: "540"      # 5m: 180
+  smartSkipMidfairLateSecs: "180"  # 5m: 60
+
+  # ── Misc ───────────────────────────────────────────────────────────────────
+  polygonRpcUrl: "https://rpc.ankr.com/polygon"
+  # RTDS / Chainlink feed disabled — 15m market resolves on Binance
+  polymarketRtdsWs: ""
+  polymarketRtdsSymbol: ""
+  trainingLogPath: "/app/logs/logs-training.jsonl"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  marketRefreshSecs: "60"
+  wsHeartbeatSecs: "30"
+  feedStaleSecs: "20"
+
+credentials:
+  polymarketPrivateKey: ""
+  polymarketAddress: ""
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  polymarketSignatureType: "0"
+  polymarketFunder: ""
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: false
+
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 512Mi
+    cpu: 2000m
