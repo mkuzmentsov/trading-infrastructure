@@ -7,7 +7,7 @@
 # Usage:
 #   ./fetch-logs.sh                                   # fetch all pm-btc-* deployments
 #   ./fetch-logs.sh pm-btc-5m-smart                   # one selector
-#   ./fetch-logs.sh pm-btc-5m-smart pm-btc-15m-smart  # multiple
+#   ./fetch-logs.sh pm-btc-5m-smart pm-btc-15m-smart pm-btc-1h-smart  # multiple
 #
 # A selector is matched as a substring against pod names in the namespace.
 set -euo pipefail
@@ -67,6 +67,7 @@ for SELECTOR in "${SELECTORS[@]}"; do
   fi
 
   case "$SELECTOR" in
+    *-1h-*)  SUBDIR="1h"  ;;
     *-15m-*) SUBDIR="15m" ;;
     *)       SUBDIR="5m"  ;;
   esac

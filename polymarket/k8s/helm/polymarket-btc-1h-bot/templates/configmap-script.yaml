@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "polymarket-btc-1h-bot.name" . }}-script
+  labels:
+    {{- include "polymarket-btc-1h-bot.labels" . | nindent 4 }}
+data:
+  {{- range $path, $content := .Files.Glob "files/scripts/*.py" }}
+  {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}: |
+{{ $content | toString | indent 4 }}
+  {{- end }}
+  {{- range $path, $content := .Files.Glob "files/scripts/**/*.py" }}
+  {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}: |
+{{ $content | toString | indent 4 }}
+  {{- end }}
