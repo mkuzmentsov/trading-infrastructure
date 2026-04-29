@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Deploy a Polymarket BTC bot instance.
+# Deploy a Polymarket BTC 5m bot instance.
 # Usage: ./deploy-btc.sh <name>
-# Example: ./deploy-btc.sh pm_btc_1
+# Example: ./deploy-btc.sh pm_btc_5m_smart
 set -euo pipefail
 
 NAMESPACE="polymarket"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CHART="$SCRIPT_DIR/polymarket-btc-bot"
+CHART="$SCRIPT_DIR/polymarket-btc-5m-bot"
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <name>"
-  echo "  Example: $0 pm_btc_1"
+  echo "  Example: $0 pm_btc_5m_smart"
   echo ""
-  echo "Available bots:"
-  ls "$SCRIPT_DIR/bots/"pm_btc*.yaml 2>/dev/null | xargs -n1 basename | sed 's/\.yaml$//' | sed 's/^/  /' || echo "  (none — copy pm_btc_1.yaml.example to pm_btc_1.yaml and fill in credentials)"
+  echo "Available 5m bots:"
+  ls "$SCRIPT_DIR/bots/"pm_btc_5m*.yaml 2>/dev/null | xargs -n1 basename | sed 's/\.yaml$//' | sed 's/^/  /' || echo "  (none — copy pm_btc_1.yaml.example to bots/<name>.yaml and fill in credentials)"
   exit 1
 fi
 

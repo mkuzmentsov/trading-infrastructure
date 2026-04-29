@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# Fetch logs for pm-btc pods since they were started:
+# Fetch logs for pm-btc-* pods since they were started:
 #   - Loki logs (via kubectl port-forward + logcli) -> loki.log
 #   - /app/logs/logs-training.jsonl
 #   - /app/logs/logs-training-events.jsonl
 #
 # Usage:
-#   ./fetch-logs.sh              # fetch both bots
-#   ./fetch-logs.sh 1            # fetch pm-btc-1 only
-#   ./fetch-logs.sh 2            # fetch pm-btc-2 only
+#   ./fetch-logs.sh                                   # fetch all pm-btc-* deployments
+#   ./fetch-logs.sh pm-btc-5m-smart                   # one selector
+#   ./fetch-logs.sh pm-btc-5m-smart pm-btc-15m-smart  # multiple
+#
+# A selector is matched as a substring against pod names in the namespace.
 set -euo pipefail
+
+# --- Paths ----------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# polymarket/k8s/helm/fetch-logs.sh -> polymarket/logs (gitignored)
+LOG_BASE_DIR="${LOG_BASE_DIR:-$SCRIPT_DIR/../../logs}"
 
 # --- Config ---------------------------------------------------------------
 NAMESPACE="${NAMESPACE:-polymarket}"
-BOT_NUM="${1:-}"                              # 1, 2, or empty for both
 LOKI_NS="${LOKI_NS:-monitoring}"
 LOKI_SVC="${LOKI_SVC:-loki-stack}"
 LOKI_PORT="${LOKI_PORT:-3100}"
@@ -25,11 +31,18 @@ for cmd in kubectl logcli date; do
   command -v "$cmd" &>/dev/null || { echo "Error: '$cmd' not found"; exit 1; }
 done
 
-# --- Build pod list -------------------------------------------------------
-if [[ -n "$BOT_NUM" ]]; then
-  SELECTORS=("pm-btc-$BOT_NUM")
+# --- Build selector list --------------------------------------------------
+if [[ $# -gt 0 ]]; then
+  SELECTORS=("$@")
 else
-  SELECTORS=("pm-btc-1" "pm-btc-2")
+  mapfile -t SELECTORS < <(kubectl -n "$NAMESPACE" get deploy -o name 2>/dev/null \
+    | sed 's|deployment.apps/||' | grep '^pm-btc-' || true)
+  if [[ ${#SELECTORS[@]} -eq 0 ]]; then
+    echo "Error: no pm-btc-* deployments in namespace '$NAMESPACE'."
+    echo "Tip: pass selectors explicitly, e.g. $0 pm-btc-5m-smart pm-btc-15m-smart"
+    exit 1
+  fi
+  echo "==> Auto-discovered: ${SELECTORS[*]}"
 fi
 
 # --- Start Loki port-forward once -----------------------------------------
@@ -53,7 +66,11 @@ for SELECTOR in "${SELECTORS[@]}"; do
     continue
   fi
 
-  OUT_DIR="./pm-btc-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
+  case "$SELECTOR" in
+    *-15m-*) SUBDIR="15m" ;;
+    *)       SUBDIR="5m"  ;;
+  esac
+  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/pm-btc-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
 
   START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
     -o jsonpath='{.status.startTime}')
