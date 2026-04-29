@@ -89,6 +89,9 @@ bot:
   smartLateEdgeSecs: "540"      # 5m: 180
   smartSkipMidfairLateSecs: "180"  # 5m: 60
 
+  # Salvage stops, peak-flat guard, sigma-aware thesis-break — strategy tuning,
+  # owned by per-bot overlay (polymarket/k8s/helm/bots/pm_btc_15m_smart.yaml).
+
   # ── Misc ───────────────────────────────────────────────────────────────────
   polygonRpcUrl: "https://rpc.ankr.com/polygon"
   # RTDS / Chainlink feed disabled — 15m market resolves on Binance

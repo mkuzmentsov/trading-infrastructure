@@ -121,6 +121,11 @@ SMART_SALVAGE_BID_FLOOR = float(_os.getenv("SMART_SALVAGE_BID_FLOOR", "0"))
 # AND position is losing. 0 disables.
 SMART_SALVAGE_BID_VELOCITY_DROP = float(_os.getenv("SMART_SALVAGE_BID_VELOCITY_DROP", "0"))
 SMART_SALVAGE_BID_VELOCITY_WINDOW = float(_os.getenv("SMART_SALVAGE_BID_VELOCITY_WINDOW", "3"))
+# Only fire salvage_floor / salvage_velocity if peak_bid never rose more than
+# this above entry — i.e. the position was never meaningfully profitable. Avoids
+# stopping out deep-ITM positions on transient bid spikes that revert. 0 disables
+# the guard (current behavior).
+SMART_SALVAGE_REQUIRE_PEAK_FLAT_MAX = float(_os.getenv("SMART_SALVAGE_REQUIRE_PEAK_FLAT_MAX", "0"))
 
 # In-bar bid history, keyed by (condition_id, direction). Populated on every
 # evaluate_position call; pruned beyond the velocity window.
@@ -545,10 +550,15 @@ class MathSmartStrategy:
         # existing late-bar salvage at sec<45, which was exiting at 0.05-0.30.
         # Gated on `not thesis_alive` (same as late_bar_salvage) to avoid cutting
         # winners whose bid briefly dips while BTC still supports the position.
+        peak_flat = (
+            SMART_SALVAGE_REQUIRE_PEAK_FLAT_MAX <= 0
+            or (pos.peak_bid - pos.entry_price) <= SMART_SALVAGE_REQUIRE_PEAK_FLAT_MAX
+        )
         if (
             (SMART_SALVAGE_BID_FLOOR > 0 or SMART_SALVAGE_BID_VELOCITY_DROP > 0)
             and not thesis_alive
             and unrealized < SMART_SALVAGE_MIN_LOSS
+            and peak_flat
             and not pos.sell_order_id
         ):
             key = (pos.condition_id, pos.direction)
