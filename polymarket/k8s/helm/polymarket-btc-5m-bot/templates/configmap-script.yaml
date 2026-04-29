@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "polymarket-btc-bot.name" . }}-script
+  name: {{ include "polymarket-btc-5m-bot.name" . }}-script
   labels:
-    {{- include "polymarket-btc-bot.labels" . | nindent 4 }}
+    {{- include "polymarket-btc-5m-bot.labels" . | nindent 4 }}
 data:
   {{- range $path, $content := .Files.Glob "files/scripts/*.py" }}
   {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}: |

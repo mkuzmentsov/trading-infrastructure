@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "polymarket-btc-bot.name" . }}
+  name: {{ include "polymarket-btc-5m-bot.name" . }}
   labels:
-    {{- include "polymarket-btc-bot.labels" . | nindent 4 }}
+    {{- include "polymarket-btc-5m-bot.labels" . | nindent 4 }}
 spec:
   replicas: 1
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "polymarket-btc-bot.selectorLabels" . | nindent 6 }}
+      {{- include "polymarket-btc-5m-bot.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "polymarket-btc-bot.selectorLabels" . | nindent 8 }}
+        {{- include "polymarket-btc-5m-bot.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
@@ -36,7 +36,7 @@ spec:
               value: /app/scripts
           envFrom:
             - secretRef:
-                name: {{ include "polymarket-btc-bot.name" . }}-secret
+                name: {{ include "polymarket-btc-5m-bot.name" . }}-secret
           volumeMounts:
             - name: script
               mountPath: /app/scripts
@@ -50,7 +50,7 @@ spec:
       volumes:
         - name: script
           configMap:
-            name: {{ include "polymarket-btc-bot.name" . }}-script
+            name: {{ include "polymarket-btc-5m-bot.name" . }}-script
             items:
               {{- range $path, $_ := .Files.Glob "files/scripts/*.py" }}
               - key: {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}
@@ -66,4 +66,4 @@ spec:
         # so the Helm release Secret stays under the 1 MiB Kubernetes cap.
         - name: model
           configMap:
-            name: {{ include "polymarket-btc-bot.name" . }}-model
+            name: {{ include "polymarket-btc-5m-bot.name" . }}-model

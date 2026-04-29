@@ -1,4 +1,4 @@
-botName: polymarket-btc-bot
+botName: polymarket-btc-5m-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot

@@ -1,5 +1,5 @@
 apiVersion: v2
-name: polymarket-btc-bot
+name: polymarket-btc-5m-bot
 description: Polymarket BTC direction betting bot aligned to the Chainlink BTC/USD settlement feed
 type: application
 version: 0.1.0
