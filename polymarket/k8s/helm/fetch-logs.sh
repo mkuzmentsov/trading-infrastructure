@@ -5,9 +5,9 @@
 #   - /app/logs/logs-training-events.jsonl
 #
 # Usage:
-#   ./fetch-logs.sh                                   # fetch all pm-btc-* deployments
+#   ./fetch-logs.sh                                   # fetch all pm-* deployments
 #   ./fetch-logs.sh pm-btc-5m-smart                   # one selector
-#   ./fetch-logs.sh pm-btc-5m-smart pm-btc-15m-smart pm-btc-1h-smart  # multiple
+#   ./fetch-logs.sh pm-btc-1h-smart pm-eth-1h-smart   # multiple
 #
 # A selector is matched as a substring against pod names in the namespace.
 set -euo pipefail
@@ -36,10 +36,10 @@ if [[ $# -gt 0 ]]; then
   SELECTORS=("$@")
 else
   mapfile -t SELECTORS < <(kubectl -n "$NAMESPACE" get deploy -o name 2>/dev/null \
-    | sed 's|deployment.apps/||' | grep '^pm-btc-' || true)
+    | sed 's|deployment.apps/||' | grep '^pm-' || true)
   if [[ ${#SELECTORS[@]} -eq 0 ]]; then
-    echo "Error: no pm-btc-* deployments in namespace '$NAMESPACE'."
-    echo "Tip: pass selectors explicitly, e.g. $0 pm-btc-5m-smart pm-btc-15m-smart"
+    echo "Error: no pm-* deployments in namespace '$NAMESPACE'."
+    echo "Tip: pass selectors explicitly, e.g. $0 pm-btc-1h-smart pm-eth-1h-smart"
     exit 1
   fi
   echo "==> Auto-discovered: ${SELECTORS[*]}"
@@ -71,7 +71,7 @@ for SELECTOR in "${SELECTORS[@]}"; do
     *-15m-*) SUBDIR="15m" ;;
     *)       SUBDIR="5m"  ;;
   esac
-  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/pm-btc-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
+  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/pm-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
 
   START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
     -o jsonpath='{.status.startTime}')

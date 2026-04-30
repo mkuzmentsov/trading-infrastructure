@@ -1,0 +1,139 @@
+botName: polymarket-1h-bot
+
+image:
+  repository: mkuzmentsov/pm-btc-bot
+  tag: "0.7"
+  pullPolicy: IfNotPresent
+
+bot:
+  appLogLevel: "INFO"
+  dryRun: "true"
+  loopIntervalSecs: "3600"
+  barDurationSecs: "3600"
+
+  # ── Asset selection (overridden per asset by bots/pm_<asset>_1h_smart.yaml) ─
+  # Polymarket hourly Up/Down markets resolve on Binance {ASSET}/USDT. The
+  # slug prefix and Binance feed must match — the chart defaults to BTC so a
+  # bare deploy still works, but real deployments come through the per-asset
+  # overlay.
+  marketSlugPrefix: "bitcoin-up-or-down"
+  assetLabel: "BTC"
+
+  # ── Latency arb signal ──────────────────────────────────────────────────────
+  minEdge: "0.04"
+  costBuffer: "0.02"
+  kellyScale: "0.5"
+  betSizeMin: "0.50"
+  betSizeMax: "5.00"
+  maxBudgetFraction: "0.05"
+  takerFeeBps: "0"
+  entryMinSecondsLeft: "360"     # 15m: 90 — ×4
+  maxEntrySpread: "0.04"
+  minEntryPrice: "0.05"
+  maxEntryPrice: "0.60"
+  sourceMismatchBuffer: "0.015"
+  strategyName: "math_smart"
+  modelProbShrink: "0.65"
+  modelProbFloor: "0.05"
+  modelProbCeil: "0.95"
+  signalModel: "math"
+
+  # ── AI explicitly disabled (no model files shipped on this chart) ───────────
+  mlBlendWeight: "0"
+  btcNextBarBlendWeight: "0"
+  entryGateThreshold: "0"
+  smartExitModelThreshold: "0"
+
+  # ── Entry windows (scaled for 1h bar; absolute BTC distances ≈ ×2 since σ ∝ √t)
+  maxAbsDrift: "0.008"            # 15m: 0.004 — ×2
+  minPositionShares: "6"
+  entryConfirmationTicks: "1"
+  filterContrarianEntries: "false"
+  contrarianTailMaxPrice: "0.25"
+  contrarianMoveFilter: "0.003"   # 15m: 0.0015 — ×2
+  cheapTailEdgeBonus: "0.05"
+  lateBarEdgeBonus: "0.04"
+  lateBarWindowSecs: "900"        # 15m: 225 — ×4
+  minBtcDistance: "0.0008"        # 15m: 0.0004 — ×2
+  minBookDivergence: "0.04"
+  lateEntrySecs: "1080"           # 15m: 270 — ×4
+  lateEntryEdgeDiscount: "0.30"
+  driftA1: "1.8"
+  driftA2: "1.2"
+  driftA3: "0.0006"               # 15m: 0.0003 — ×2
+  driftA4: "0.8"
+
+  # ── Binance feed + hold-to-expiry ──────────────────────────────────────────
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  binanceStaleSecs: "5.0"
+  holdToExpiryDefault: "true"
+
+  # ── Position management ────────────────────────────────────────────────────
+  evalIntervalMs: "1000"
+  entryMakerOffset: "0.0"
+  takeProfit: "0.15"
+  stopLoss: "0.08"
+  stopLossMarketLimit: "1"
+  slArmDelaySecs: "720"           # 15m: 180 — ×4
+  ultraCheapSlDelaySecs: "1440"   # 15m: 360 — ×4
+  slMinAdverseBtc: "0.003"        # 15m: 0.0015 — ×2
+  averagingMinSecondsLeft: "1800" # 15m: 450 — ×4
+  averagingMaxBtcMove: "0.006"    # 15m: 0.003 — ×2
+  thesisMinBtcDistance: "0.004"   # 15m: 0.002 — ×2
+  signalExitEdge: "0.05"
+  minExitBid: "0.03"
+  orderReplaceGap: "0.05"
+  aggressiveExitSlippage: "0.02"
+  trailingArmGain: "0.20"
+  trailingStopGap: "0.03"
+
+  # ── math_smart knobs (time windows ×4 from 15m baseline) ───────────────────
+  smartLateBarSecs: "540"         # 15m: 135
+  smartEntryMinSecondsLeft: "240" # 15m: 60
+  smartLateSkimSecs: "1080"       # 15m: 270
+  smartSalvageSecs: "540"         # 15m: 135
+  smartThesisBreakSecs: "720"     # 15m: 180
+  smartForceExitSecs: "120"       # 15m: 30
+  smartLateEdgeSecs: "2160"       # 15m: 540
+  smartSkipMidfairLateSecs: "720" # 15m: 180
+
+  # Salvage stops, peak-flat guard, sigma-aware thesis-break — strategy tuning
+  # owned by the per-bot overlay (polymarket/k8s/helm/bots/pm_btc_1h_smart.yaml).
+
+  # ── Misc ───────────────────────────────────────────────────────────────────
+  polygonRpcUrl: "https://rpc.ankr.com/polygon"
+  # RTDS / Chainlink feed disabled — 1h market resolves on Binance
+  polymarketRtdsWs: ""
+  polymarketRtdsSymbol: ""
+  trainingLogPath: "/app/logs/logs-training.jsonl"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  marketRefreshSecs: "60"
+  wsHeartbeatSecs: "30"
+  feedStaleSecs: "20"
+
+credentials:
+  polymarketPrivateKey: ""
+  polymarketAddress: ""
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  polymarketSignatureType: "0"
+  polymarketFunder: ""
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: false
+
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 512Mi
+    cpu: 2000m
