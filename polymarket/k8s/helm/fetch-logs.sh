@@ -71,7 +71,10 @@ for SELECTOR in "${SELECTORS[@]}"; do
     *-15m-*) SUBDIR="15m" ;;
     *)       SUBDIR="5m"  ;;
   esac
-  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/pm-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
+  # Coin = second dash-segment of selector (pm-<coin>-<duration>-smart -> <coin>).
+  # Falls back to "misc" if the pattern doesn't match.
+  COIN="$(echo "$SELECTOR" | awk -F- '{print ($2 == "" ? "misc" : $2)}')"
+  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/$COIN/pm-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
 
   START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
     -o jsonpath='{.status.startTime}')
