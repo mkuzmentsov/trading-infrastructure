@@ -50,8 +50,8 @@ def _load_credentials(yaml_path: Path) -> None:
 
 
 def _derive_api_creds() -> dict[str, str]:
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
+    # 2026-05-06: migrated to v2 SDK after Polymarket CLOB v2 cutover.
+    from py_clob_client_v2 import ClobClient, ApiCreds
 
     pk = os.environ.get("POLYMARKET_PK", "")
     funder = os.environ.get("POLYMARKET_FUNDER", "") or None
@@ -71,7 +71,7 @@ def _derive_api_creds() -> dict[str, str]:
         funder=funder,
     )
     if not api_key:
-        creds_obj = client.create_or_derive_api_creds()
+        creds_obj = client.create_or_derive_api_key()
         client.set_api_creds(creds_obj)
         api_key = creds_obj.api_key
         api_secret = creds_obj.api_secret

@@ -24,8 +24,11 @@ from config import (
 
 
 def build_clob_client():
-    from py_clob_client.client import ClobClient
-    from py_clob_client.clob_types import ApiCreds
+    # 2026-05-06: migrated to py_clob_client_v2 after Polymarket's CLOB v2 cutover
+    # (~2026-04-30). The legacy py_clob_client v0.34.6 hardcodes EIP-712
+    # CLOB_VERSION="1"; v2 server rejects every signature with
+    # `order_version_mismatch`. See Polymarket/py-clob-client issues #335-337.
+    from py_clob_client_v2 import ClobClient, ApiCreds
 
     creds = None
     if POLYMARKET_API_KEY:
@@ -43,12 +46,13 @@ def build_clob_client():
         funder=POLYMARKET_FUNDER or None,
     )
     if not POLYMARKET_API_KEY:
-        client.set_api_creds(client.create_or_derive_api_creds())
+        # v2 renamed create_or_derive_api_creds → create_or_derive_api_key.
+        client.set_api_creds(client.create_or_derive_api_key())
     return client
 
 
 def ensure_approvals(clob) -> None:
-    from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+    from py_clob_client_v2 import AssetType, BalanceAllowanceParams
 
     try:
         data = clob.get_balance_allowance(
@@ -68,7 +72,7 @@ def ensure_approvals(clob) -> None:
 
 
 def ensure_ctf_approval(clob, token_id: str) -> None:
-    from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+    from py_clob_client_v2 import AssetType, BalanceAllowanceParams
 
     try:
         log.info("Setting CTF conditional token approval (token=%s) ...", token_id[:16])
@@ -86,7 +90,7 @@ def fetch_usdc_balance(clob=None) -> float:
     if DRY_RUN:
         return float(os.getenv("DRY_RUN_BALANCE", "100.0"))
     try:
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        from py_clob_client_v2 import AssetType, BalanceAllowanceParams
 
         client = clob or build_clob_client()
         data = client.get_balance_allowance(
@@ -108,15 +112,15 @@ def place_bet(
     condition_id: str = "",
     fee_rate_bps: int = 0,
 ) -> Optional[str]:
-    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client_v2 import OrderArgs, OrderType
 
     try:
+        # v2 OrderArgsV2 dropped fee_rate_bps + nonce + taker — fees are server-side now.
         order_args = OrderArgs(
             token_id=token_id,
             price=price,
             size=shares,
             side="BUY",
-            fee_rate_bps=fee_rate_bps,
             expiration=0,
         )
         log.debug(
@@ -145,15 +149,16 @@ def sign_buy_order(
     """Build + sign a buy order without posting it. CPU-bound (~100-300ms EIP-712).
 
     Returned signed order is single-use; each price level / size combo needs its own.
+    `fee_rate_bps` kept in signature for compatibility with callers; v2 OrderArgsV2
+    handles fees server-side, so the parameter is now ignored.
     """
-    from py_clob_client.clob_types import OrderArgs
+    from py_clob_client_v2 import OrderArgs
 
     order_args = OrderArgs(
         token_id=token_id,
         price=price,
         size=shares,
         side="BUY",
-        fee_rate_bps=fee_rate_bps,
         expiration=0,
     )
     log.debug(
@@ -166,7 +171,7 @@ def sign_buy_order(
 
 
 def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool]:
-    from py_clob_client.clob_types import OrderType
+    from py_clob_client_v2 import OrderType
 
     try:
         resp = clob.post_order(signed, OrderType.FAK)
@@ -212,15 +217,15 @@ def place_limit_sell(
     is_immediately_matched=True when Polymarket's response shows status='matched',
     meaning the sell was fully committed off-chain and settlement is in progress.
     """
-    from py_clob_client.clob_types import OrderArgs, OrderType
+    from py_clob_client_v2 import OrderArgs, OrderType
 
     try:
+        # v2: fee_rate_bps no longer on OrderArgsV2 (server-side fees).
         order_args = OrderArgs(
             token_id=token_id,
             price=price,
             size=shares,
             side="SELL",
-            fee_rate_bps=fee_rate_bps,
         )
         log.debug("CLOB create_order SELL REQUEST  token=%s  price=%s  shares=%s", token_id, price, shares)
         signed = clob.create_order(order_args)
@@ -248,15 +253,15 @@ def sign_sell_order(
 
     `price` is the MIN acceptable fill for FAK — walks bid book top-down to this floor.
     Raises "not enough balance" if CLOB-side reservation check fails.
+    `fee_rate_bps` kept in signature for caller compatibility; v2 handles fees server-side.
     """
-    from py_clob_client.clob_types import OrderArgs
+    from py_clob_client_v2 import OrderArgs
 
     order_args = OrderArgs(
         token_id=token_id,
         price=price,
         size=shares,
         side="SELL",
-        fee_rate_bps=fee_rate_bps,
     )
     log.debug(
         "CLOB create_order SELL REQUEST  token=%s  price=%s  shares=%s",
@@ -268,7 +273,7 @@ def sign_sell_order(
 
 
 def post_signed_sell_fak(clob, signed) -> tuple[Optional[str], bool]:
-    from py_clob_client.clob_types import OrderType
+    from py_clob_client_v2 import OrderType
 
     try:
         resp = clob.post_order(signed, OrderType.FAK)
@@ -308,9 +313,12 @@ def place_market_sell(
 
 
 def cancel_order(clob, order_id: str) -> bool:
+    # v2 renamed cancel(order_id) → cancel_order(OrderPayload(orderID=...)).
+    from py_clob_client_v2 import OrderPayload
+
     try:
         log.info("CLOB cancel_order REQUEST  order_id=%s", order_id)
-        resp = clob.cancel(order_id)
+        resp = clob.cancel_order(OrderPayload(orderID=order_id))
         log.info("CLOB cancel_order RESPONSE  %s", resp)
         if isinstance(resp, dict):
             canceled = resp.get("canceled") or []

@@ -2,7 +2,10 @@ botName: polymarket-1h-bot
 
 image:
   repository: mkuzmentsov/pm-btc-bot
-  tag: "0.7"
+  # 0.7 → 0.8 on 2026-05-06: bundles py-clob-client-v2 1.0.0 alongside legacy
+  # v0.34.6, required after Polymarket CLOB v2 cutover (~Apr 30) broke v1
+  # signatures with order_version_mismatch.
+  tag: "0.8"
   pullPolicy: IfNotPresent
 
 bot:

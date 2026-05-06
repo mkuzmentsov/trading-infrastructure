@@ -39,7 +39,7 @@ USER_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
 _FILLED_STATUSES = {"matched", "mined", "confirmed"}
 _CANCELED_STATUSES = {"canceled", "cancelled", "expired", "unmatched"}
 
-# Runtime-provided creds (e.g. derived via ClobClient.create_or_derive_api_creds()).
+# Runtime-provided creds (e.g. derived via ClobClient.create_or_derive_api_key()).
 # Populated by main.py after _init_clob(); takes precedence over env vars when set.
 _runtime_creds: dict[str, str] | None = None
 

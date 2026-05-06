@@ -546,7 +546,7 @@ def _log_signal_debug(context: str, signal, cash_amount: float, seconds_left: in
 def _push_user_ws_creds(clob) -> None:
     """Hand the CLOB client's L2 API creds to user_ws so it can authenticate.
 
-    build_clob_client() already calls client.set_api_creds(create_or_derive_api_creds())
+    build_clob_client() already calls client.set_api_creds(create_or_derive_api_key())
     when env creds are empty, so clob.creds is always populated here."""
     creds = getattr(clob, "creds", None)
     if creds is None:
@@ -560,7 +560,7 @@ def _push_user_ws_creds(clob) -> None:
 
 async def _init_clob() -> object:
     clob = build_clob_client()
-    from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+    from py_clob_client_v2 import AssetType, BalanceAllowanceParams
 
     _push_user_ws_creds(clob)
 
