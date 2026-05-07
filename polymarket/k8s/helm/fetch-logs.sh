@@ -74,13 +74,24 @@ for SELECTOR in "${SELECTORS[@]}"; do
   # Coin = second dash-segment of selector (pm-<coin>-<duration>-smart -> <coin>).
   # Falls back to "misc" if the pattern doesn't match.
   COIN="$(echo "$SELECTOR" | awk -F- '{print ($2 == "" ? "misc" : $2)}')"
-  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/$COIN/pm-logs_${SELECTOR}_$(date +%Y%m%d_%H%M%S)"
 
   START_TIME=$(kubectl -n "$NAMESPACE" get pod "$POD_NAME" \
     -o jsonpath='{.status.startTime}')
   [[ -z "$START_TIME" ]] && { echo "Error: could not read startTime for $POD_NAME"; continue; }
 
   TO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Compute pod runtime in hours and format START_TIME for the dir name. Python
+  # keeps this portable across macOS/Linux without juggling `date -d` vs `-j -f`.
+  read -r START_STAMP RUNTIME_HOURS <<<"$(python3 -c "
+import datetime
+start = datetime.datetime.fromisoformat('$START_TIME'.replace('Z','+00:00'))
+now = datetime.datetime.now(datetime.timezone.utc)
+h = (now - start).total_seconds() / 3600
+print(start.strftime('%Y%m%d_%H%M%S'), f'{h:.1f}'.rstrip('0').rstrip('.'))
+")"
+
+  OUT_DIR="$LOG_BASE_DIR/$SUBDIR/$COIN/pm-logs_${SELECTOR}_${START_STAMP}_${RUNTIME_HOURS}h"
   mkdir -p "$OUT_DIR"
 
   echo ""
@@ -89,6 +100,7 @@ for SELECTOR in "${SELECTORS[@]}"; do
   echo "==> Pod       : $NAMESPACE/$POD_NAME"
   echo "==> Started   : $START_TIME"
   echo "==> Now (UTC) : $TO"
+  echo "==> Runtime   : ${RUNTIME_HOURS}h"
   echo "==> Output    : $OUT_DIR"
   echo "============================================================"
 

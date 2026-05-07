@@ -43,3 +43,5 @@ ai/pm_btc_exit/*.parquet
 /.codex-skill-staging/pm-btc-log-analysis/scripts/analyze_pm_btc_logs.py
 /.codex-skill-staging/pm-btc-log-analysis/agents/openai.yaml
 /.codex-skill-staging/pm-btc-log-analysis/SKILL.md
+
+.dev-env-source
