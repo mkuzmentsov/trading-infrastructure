@@ -83,6 +83,10 @@ SMART_SHRINKAGE = float(_os.getenv("SMART_SHRINKAGE", "0.92"))
 SMART_PUP_Z_CAP = float(_os.getenv("SMART_PUP_Z_CAP", "0"))
 # Hard cap on sigma_5m — above this, skip (high vol = unreliable signal). 0 disables.
 SMART_MAX_SIGMA = float(_os.getenv("SMART_MAX_SIGMA", "0"))
+# Empirical calibration: alpha-blend model p_up toward empirical WR by z-bucket.
+# 0 = disabled. 1.0 = fully replace model with empirical WR.
+# Empirical WRs from 5-bundle corpus (164 trades): z≥3→82.9%, z≥2.2→61.6%.
+SMART_CALIB_ALPHA = float(_os.getenv("SMART_CALIB_ALPHA", "0"))
 # If set, evaluate_position always returns empty (pure hold-to-expiry mode, for A/B testing).
 SMART_DISABLE_EXITS = _os.getenv("SMART_DISABLE_EXITS", "0") == "1"
 # Toggle each exit individually (for ablation). "1" = enabled.
@@ -262,6 +266,10 @@ def _compute_signal(ctx: StrategyContext, *, require_budget: bool) -> Signal:
     raw_p_up = _norm_cdf(_clip(z, -pup_z_clip, pup_z_clip))
     p_up = 0.5 + SMART_SHRINKAGE * (raw_p_up - 0.5)
     p_up = _clip(p_up, 0.05, 0.95)
+    if SMART_CALIB_ALPHA > 0:
+        empirical_wr = 0.829 if abs(z) >= 3.0 else 0.616
+        p_up = (1.0 - SMART_CALIB_ALPHA) * p_up + SMART_CALIB_ALPHA * empirical_wr
+        p_up = _clip(p_up, 0.05, 0.95)
     p_down = 1.0 - p_up
     implied = _book_implied_p_up(ctx.up_bid, ctx.up_ask, ctx.down_bid, ctx.down_ask)
     divergence_signed = p_up - implied  # + means we want UP, - means DOWN
