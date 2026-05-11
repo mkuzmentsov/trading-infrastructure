@@ -90,6 +90,35 @@ Captured AFTER training. Live: **−$12.88** (33% WR). Model θ=0.30 replay: **+
 
 **Combined OOS (bundles 5 + 6, 91 positions, 95h):** actual −$110.11 → model +$142.65, **Δ +$252.76**.
 
+## Ablation: session_pnl removed (v2, 2026-05-11)
+
+Hypothesis: `session_pnl` (top feature by gain in v1) was leaking future regime info. Retrained without it.
+
+| metric | v1 (with session_pnl) | v2 (no session_pnl) |
+|---|--:|--:|
+| CV AUC | **0.760** | 0.721 |
+| OOS AUC (bundle 5) | **0.667** | 0.640 |
+| Bundle 5 best Δ | **+$229.06** | +$152.50 |
+| Bundle 5 winners cut | **2** | 4 |
+| Bundle 6 best Δ | **+$23.70** | +$16.11 |
+
+**v1 wins on every OOS metric. Ablation REJECTED.** session_pnl carries real signal about regime, not leakage. Artifacts kept at `ai/pm_btc_1h_exit/pm_btc_1h_exit_model_v2_no_session_pnl.{txt,json}` for reference; not deployed.
+
+## Live deploy & post-deploy behavior (2026-05-11)
+
+- Initial deploy 12:44 fired model_exit 6× on consecutive late-bar re-entries (same May-11-8AM-ET market). Net +$0.97 but burned FAK fees. Root cause: `model_exit` not in `BLOCK_REENTRY_AFTER_REASONS`.
+- Fix shipped 12:55: added `model_exit` to `blockReentryAfterReasons` in `pm_btc_1h_smart.yaml`.
+- Post-fix bundle (20260511_125510): 1 position opened, model fired with p_loss=1.000 at 30s held, closed +$0.21. Global cooldown armed correctly, 54 subsequent entries blocked.
+
+The model's predictions are bimodal (cluster near 0 or 1); higher θ sweeps (0.60 → 0.95) show ≤5% PnL variance because so few predictions sit in between. Currently deployed `SMART_EXIT_MODEL_THRESHOLD=0.70`.
+
+## Open question (needs ≥10 live model_exits to answer)
+
+OOS fire rate was 28/82 (34%) on bundle 5. Live should match if v1 generalizes. Watch fire rate + aggregate PnL of model_exits over next 12–24h:
+- Fire rate ~30–40% + positive aggregate → v1 is working
+- Fire rate > 60% → regime shift, retrain with newer bundles
+- Avg model_exit PnL << $0 → too many false positives, raise θ or retrain
+
 ## How to apply
 
 - Before deploying: re-train with `session_pnl` excluded as ablation. If OOS holds → ship. If degrades → investigate leakage hypothesis.
