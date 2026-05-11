@@ -41,6 +41,8 @@ util/           # Python utilities (hl_leaderboard.py - Hyperliquid leaderboard 
 - [PM BTC 1h SMART_CALIB_ALPHA rejected 2026-05-11](project_pm_btc_1h_calibration_alpha_2026_05_11.md) — Alpha-blend calibration (0→1.0) hurts monotonically: +$227→−$9 at alpha=1.0. 111h skim engine depends on z≥2.2 bucket; blending toward 0.616 kills skim edge. SMART_CALIB_ALPHA wired in math_smart.py but disabled by default (0). Don't set > 0.
 - [PM BTC 1h strategic diagnosis 2026-05-11](project_pm_btc_1h_strategic_diagnosis_2026_05_11.md) — 327 live trades / 240h: skim-winners and salvage-losers have IDENTICAL entry signatures. Salvage = 0% WR by construction (−$948). Entry tuning is exhausted. Trend-fight gate has wrong sign. Plan: train 1h per-tick exit classifier + flip trend-fight into chase gate.
 - [PM BTC 1h exit classifier v1 2026-05-11](project_pm_btc_1h_exit_model_v1_2026_05_11.md) — LightGBM trained on 4 bundles (245 pos / 577K ticks), OOS bundle 5: PnL −$97 → +$132 at θ=0.30 (Δ +$229). Pipeline at `ai/pm_btc_1h_exit/`, model at `polymarket/k8s/helm/polymarket-1h-bot/files/model/`. Not wired into bot yet. CV AUC 0.76, OOS 0.67. session_pnl is top feature — needs ablation.
+- [PM BTC 1h exit model live bundle 20260511_125510](project_pm_btc_1h_exit_model_live_bundle_20260511_125510.md) — first 5.4h live with ML gate θ=0.70: 5 trades, all model_exit at 27-29s, net −$1.84. **Model degenerate: p_win ≈ 0 on every tick of every position, no winner/loser discrimination.** Replay uninformative (closes precede 30s min_hold). v2 (no-session_pnl) also degenerate in OPPOSITE direction (p_win 0.75-0.99). session_pnl isn't root cause; both models saturate.
+- [PM BTC 1h exit classifier v3 2026-05-11](project_pm_btc_1h_exit_model_v3_2026_05_11.md) — **Fixes v1 saturation.** Label smoothing (ε=0.05) + cross_entropy + tighter regularization. 7-bundle corpus (884K ticks, 341 positions). Strictly better than v1: OOS AUC 0.667→0.688 on bundle 5, replay Δ +$229→+$306 (+$77), p_win range no longer saturated. On bundle 7 (v1-degenerate): graded outputs [0.03,0.29], catches all 3 losers at min_p<0.20. Not yet deployed. Files: `ai/pm_btc_1h_exit/pm_btc_1h_exit_model_v3*.txt`, dataset `exit_dataset_v3.parquet`, trainer `train_exit_model_v3.py`.
 
 ## Critical Gitignored Files (must create manually)
 - `hummingbot/inventory.ini` - Ansible inventory
@@ -50,6 +52,9 @@ util/           # Python utilities (hl_leaderboard.py - Hyperliquid leaderboard 
 - `hetzner-k3s/kubeconfig` - K3s cluster kubeconfig
 - `freqtrade/k8s/helm/bots/*.yaml` - Freqtrade bot credentials (use .example as template)
 - `hummingbot/k8s/helm/bots/*.yaml` - Arbitrage bot credentials (use .example as template)
+
+## Active Scope
+- [Scope is BTC 1h bot only](feedback_scope_btc_1h_only.md) — work only touches `polymarket-1h-bot` BTC instance. 5m/15m/ETH/XRP/SOL are out of scope unless user reopens.
 
 ## User Preferences
 - Always save knowledge to memory inside the project at `.claude/memory/`
