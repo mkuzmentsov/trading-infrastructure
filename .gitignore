@@ -37,6 +37,7 @@ ai/inputs
 ai/outputs
 ai/hf-models
 ai/pm_btc_exit/*.parquet
+ai/pm_btc_1h_exit
 /polymarket/logs/
 /polymarket/k8s/helm/polymarket-btc-5m-bot/update-log/
 /polymarket/k8s/helm/polymarket-portfolio-bot/pm-portfolio-logs_*
