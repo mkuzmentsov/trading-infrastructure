@@ -31,6 +31,17 @@ if [[ ! -f "$VALUES" ]]; then
 fi
 
 echo "▶ Deploying '$RELEASE' (chart: polymarket-1h-bot, namespace: $NAMESPACE) ..."
+
+# Apply the model ConfigMap (managed outside Helm because the model file
+# exceeds the 1 MiB last-applied-config annotation cap; large files are
+# gzipped on the fly). No-op when files/model/ is empty.
+if ls "$CHART/files/model"/* &>/dev/null; then
+  "$CHART/apply-model-configmap.sh" "$RELEASE"
+  echo ""
+else
+  echo "  (no files/model/* — skipping model ConfigMap apply)"
+fi
+
 helm upgrade --install "$RELEASE" "$CHART" \
   -f "$VALUES" \
   --namespace "$NAMESPACE" --create-namespace
