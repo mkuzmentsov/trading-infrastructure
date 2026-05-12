@@ -75,6 +75,10 @@ Replay PnL at θ=0.20, min_hold=5s: **+$1.58** vs actual −$1.84.
 4. **session_pnl still #1 feature by gain.** Smoothing + regularization tames it but doesn't eliminate dependence. Future iterations could try dropping session_pnl + smoothing (combined v2+v3).
 5. **6 force_close winners get cut** on bundle 5 OOS at θ=0.60 (~−$54 in lost wins). Net is still +$77 over v1 but not free.
 
+## ⚠️ Update 2026-05-12 — full-strategy harness disagrees
+
+All the "+$229 / +$306 / +$77" numbers above come from `replay_exit_model.py` — a tick-walk that prices exits at `unrealized` (= "exit at current bid") and ignores the rest of the strategy. The **full-strategy harness** (`replay.py`, runs the real `math_smart.py` with the yaml config + a top-of-book fill model) on bundle `20260511_125510_19.8h` shows **v3@0.50 (−$1.44) ≈ v1@0.70 (+$0.03), marginally worse**. v3's apparent edge does not survive the realistic harness on the latest bundle. Treat the tick-walk numbers as an upper bound. See [[project_pm_btc_1h_exit_v3_NOT_deployed_2026_05_11]]. **v3 was never deployed** despite an earlier memo saying so.
+
 ## Deployment recommendation (not yet shipped)
 
 If shipping v3:
