@@ -1,0 +1,60 @@
+# ~$200 BTC + ETH + LINK basket (auto-sized).
+# Three Kraken/USDT spot legs + three HL perp shorts. Equal weights = the
+# usable balance pool gets split into thirds; the bot picks notional + L
+# per coin from each slice. LINK gets a tighter L=2 cap (it's more volatile
+# than the majors — capping leverage keeps liq-room ample).
+#
+# Capital plan: ~$140 USDT on Kraken + ~$70 USDC on HL subaccount = ~$210
+#   usable kraken : $135  (140 - $5 spot_buffer) ÷ 3 = $45/coin
+#   usable hl     : $56   (70 × 0.8 hl_buffer)  ÷ 3 = $18.67/coin
+# At max_leverage=3 with these slices: each pair opens at ~$45 notional
+# (LINK ~$37 due to L=2 cap). Total notional ≈ $130. Blended APR per the
+# v2 backtest: roughly +10% (BTC +8%, ETH +8%, LINK +12%).
+#
+# Note: $45 notional per coin is close to min_open_notional ($25). For
+# >3 coins or smoother sizing, fund to $500+ total.
+
+botConfig:
+  dry_run: true
+  loop_seconds: 60
+  log_level: INFO
+
+  sizing_mode: auto
+  max_leverage: 3.0
+  min_open_notional: 25.0
+  hl_margin_buffer: 0.20
+  spot_buffer_usd: 5.0
+
+  assets:
+    - coin: BTC
+      weight: 1.0
+    - coin: ETH
+      weight: 1.0
+    - coin: LINK
+      weight: 1.0
+      max_leverage: 2.0    # tighter cap for higher-vol alt
+
+  deleverage_liq_room: 0.15
+  emergency_liq_room: 0.05
+  delta_rebalance_pct: 0.08
+
+  funding_smooth_hours: 24
+  funding_exit_apr: 0.0
+  funding_exit_persist_hours: 48
+  funding_reentry_apr: 0.03
+
+  max_consecutive_errors: 10
+  hl_slippage_bps: 30
+
+  hyperliquid:
+    base_url: "https://api.hyperliquid.xyz"
+    account_address: "0xYOUR_HL_ACCOUNT_OR_SUBACCOUNT_ADDRESS"
+    secret_key:      "0xYOUR_HL_API_WALLET_PRIVATE_KEY"
+  kraken:
+    api_key:    "YOUR_KRAKEN_API_KEY"
+    api_secret: "YOUR_KRAKEN_API_SECRET"
+    quote:      "USDT"
+
+persistence:
+  enabled: true
+  size: 100Mi

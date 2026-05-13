@@ -1,0 +1,80 @@
+# ~$200 BTC live execution test (auto-sized).
+# Deposit ~$140 USD on Kraken + ~$70 USDC on the HL subaccount and the bot
+# auto-derives notional ≈ $140 at L ≈ 2 (= ceil(140/(70×0.8))). Expected
+# funding income at that size: cents/month — the goal is to validate
+# plumbing, not income.
+#
+# 1. Copy:        cp fc_btc_200.yaml.example fc_btc_200.yaml   (gitignored)
+# 2. Fill creds:  the four credential lines below
+# 3. Fund:        ~$140 USD on Kraken + ~$70 USDC on HL subaccount
+# 4. Deploy DRY:  ../deploy.sh fc_btc_200   (botConfig.dry_run: true below)
+# 5. Watch:       kubectl logs -f deploy/fc-btc-200 -n funding-carry
+#                 STATE lines should show your real balances. The dry-run
+#                 OPEN line will print the auto-picked notional + L.
+# 6. Flip live:   edit dry_run: false here, re-run ../deploy.sh fc_btc_200
+#                 (the checksum/secret annotation re-rolls the pod)
+
+botConfig:
+  # Start DRY. Flip to false only after the STATE log lines look right
+  # (correct mark prices, correct funding APR, correct balance reads).
+  dry_run: true
+  loop_seconds: 60
+  log_level: INFO
+
+  # Auto-sized: bot picks notional + leverage from your Kraken USD + HL USDC
+  # at each open. Max L is capped at 3 (HL rounds to integers). 20% of HL
+  # margin is reserved as a safety pad; $5 stays on Kraken for fee/slippage.
+  sizing_mode: auto
+  max_leverage: 3.0
+  min_open_notional: 25.0
+  hl_margin_buffer: 0.20
+  spot_buffer_usd: 5.0
+
+  assets:
+    - coin: BTC
+      weight: 1.0
+      # If you'd rather fix the size, set sizing_mode: fixed above and
+      # uncomment notional_usd below (+ set `leverage:` further down).
+      # notional_usd: 130
+
+  leverage: 2.0                  # unused when sizing_mode: auto
+  deleverage_liq_room: 0.15
+  emergency_liq_room: 0.05
+  delta_rebalance_pct: 0.08
+
+  funding_smooth_hours: 24
+  funding_exit_apr: 0.0
+  funding_exit_persist_hours: 48
+  funding_reentry_apr: 0.03
+
+  max_consecutive_errors: 10
+  hl_slippage_bps: 30
+
+  hyperliquid:
+    base_url: "https://api.hyperliquid.xyz"
+    # Use an HL **API wallet** (app.hyperliquid.xyz → Settings → API), NOT
+    # your main private key. `account_address` is the HL ACCOUNT the API
+    # wallet acts on — either your main account OR a subaccount. If using
+    # a subaccount: (a) put the subaccount's address here, (b) authorize
+    # the API wallet ON THE SUBACCOUNT in the HL UI (the agent-authorize
+    # dropdown lets you choose), (c) fund USDC on the subaccount (balances
+    # are isolated from main). `secret_key` is always the API wallet's
+    # private key, regardless of main vs. sub.
+    #
+    # QUOTE the values. Unquoted YAML parses `0xabc...` as an integer (hex
+    # literal); the loader recovers from that, but quoting is the right
+    # habit and avoids ambiguity with addresses that happen to have leading
+    # zeros (which integer parsing strips).
+    account_address: "0xYOUR_HL_ACCOUNT_OR_SUBACCOUNT_ADDRESS"
+    secret_key:      "0xYOUR_HL_API_WALLET_PRIVATE_KEY"
+  kraken:
+    api_key:    "YOUR_KRAKEN_API_KEY"
+    api_secret: "YOUR_KRAKEN_API_SECRET"
+    # Quote currency for spot pairs (BTC/USDT, ETH/USDT, ...). USDT is the
+    # cleaner default for a multi-asset basket; USD also works for the
+    # majors but liquidity on alt/USD pairs is thinner than alt/USDT.
+    quote:      "USDT"
+
+persistence:
+  enabled: true
+  size: 100Mi

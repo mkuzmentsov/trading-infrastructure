@@ -1,0 +1,6 @@
+apiVersion: v2
+name: funding-carry-bot
+description: Delta-neutral funding carry — long Kraken spot + short Hyperliquid perp
+type: application
+version: 0.1.0
+appVersion: "0.1"

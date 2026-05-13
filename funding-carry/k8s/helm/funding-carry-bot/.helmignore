@@ -1,0 +1,9 @@
+# Local artifacts
+__pycache__/
+files/bot/__pycache__/
+*.pyc
+.DS_Store
+
+# Per-pod state must never ship in the chart
+fc_state.json
+config.yaml

@@ -1,0 +1,4 @@
+ccxt>=4.3.0
+hyperliquid-python-sdk>=0.9.0
+eth-account>=0.11.0
+PyYAML>=6.0

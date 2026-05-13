@@ -46,3 +46,14 @@ ai/pm_btc_1h_exit
 /.codex-skill-staging/pm-btc-log-analysis/SKILL.md
 
 .dev-env-source
+
+# funding-carry bot
+funding-carry/data/
+funding-carry/bot/config.yaml
+funding-carry/bot/fc_state.json
+# Per-release Helm overlays carry credentials — keep examples committed only.
+funding-carry/k8s/helm/bots/*
+!funding-carry/k8s/helm/bots/*.yaml.example
+# The chart's files/bot/ is populated by deploy.sh from funding-carry/bot/.
+funding-carry/k8s/helm/funding-carry-bot/files/bot/*.py
+ai/pm_btc_1h_ml_policy/*.parquet

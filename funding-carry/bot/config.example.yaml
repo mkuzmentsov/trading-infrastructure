@@ -1,0 +1,68 @@
+# Funding-carry bot config. Copy to config.yaml (gitignored) and fill in.
+# Strategy: long Kraken spot + short Hyperliquid perp, collect HL funding.
+# "Hold, don't time" — no entry/exit timing; just open the basket and hold,
+# with deleverage-on-margin-stress + regime-flip + kill-switch protection.
+
+dry_run: true            # true = compute & log actions, place NO orders. Run 1-2 weeks first.
+loop_seconds: 60         # main loop interval
+log_level: INFO
+
+# Sizing mode:
+#   fixed (back-compat) — open each coin at `notional_usd` with `leverage`.
+#   auto              — bot derives notional + leverage per coin from your
+#                       actual Kraken/HL deposits at open time. Use `weight`
+#                       to control multi-coin allocation; leave `notional_usd`
+#                       and `leverage` unset.
+sizing_mode: auto
+max_leverage: 3.0        # cap for auto mode (HL accepts integer L, so we round UP)
+min_open_notional: 25.0  # don't open pairs smaller than this $ amount
+hl_margin_buffer: 0.20   # reserve 20% of HL margin as safety pad (use 80%)
+spot_buffer_usd: 5.0     # leave $5 on Kraken for fee/slippage headroom
+
+# Per-coin allocation. In `fixed` mode set `notional_usd`; in `auto` set `weight`
+# (relative slice of the usable balances). `weight` defaults to 1.0 (equal split).
+assets:
+  - coin: BTC
+    weight: 1.0
+    # notional_usd: 1000     # used only in sizing_mode: fixed
+  - coin: ETH
+    weight: 1.0
+  # - coin: HYPE             # higher carry (~14%/yr) but more volatile
+  #   weight: 0.5
+
+leverage: 2.0            # used in sizing_mode: fixed; ignored in auto
+# Liquidation-room thresholds, both expressed as (liq_px - mark_px) / mark_px for
+# the HL short. Larger = safer; smaller = stressed. At L=2 a fresh position has
+# ~50% liq-room, so 0.15 leaves a lot of head-room before any action fires.
+deleverage_liq_room: 0.15       # liq-room below this -> reduce position 50% + sell matching spot
+emergency_liq_room: 0.05        # liq-room below this -> close the leg entirely
+delta_rebalance_pct: 0.08       # if |spot_notional - perp_notional| / perp_notional exceeds
+                                # this, rebalance the spot leg to match (drift from fills/rounding).
+
+# Regime-flip protection: if a coin's funding (smoothed over `funding_smooth_hours`)
+# has been below `funding_exit_apr` for `funding_exit_persist_hours`, close that leg.
+# Re-open when smoothed funding recovers above `funding_reentry_apr`.
+funding_smooth_hours: 24
+funding_exit_apr: 0.0           # close if smoothed annualized funding <= this for...
+funding_exit_persist_hours: 48  # ...this many hours
+funding_reentry_apr: 0.03       # re-open when smoothed annualized funding >= this
+
+# Kill switch
+max_consecutive_errors: 10      # this many failed loops in a row -> attempt to flatten everything & alert
+max_basis_alert_bps: 50         # |perp - index| premium beyond this -> ALERT only (do NOT auto-unwind; bad timing)
+
+# Order execution: HL leg uses post-only maker by default (carry isn't time-sensitive),
+# falling back to IOC-taker if the maker order doesn't fill within `maker_wait_seconds`.
+maker_wait_seconds: 120
+hl_slippage_bps: 30             # max slippage for the IOC taker fallback
+
+# Endpoints / credentials (fill the credential fields in config.yaml, never commit)
+hyperliquid:
+  base_url: "https://api.hyperliquid.xyz"
+  account_address: ""           # your HL account / sub-account address (0x...)
+  secret_key: ""                # the API wallet private key (0x...). Use an API wallet, not your main key.
+kraken:
+  api_key: ""
+  api_secret: ""
+  # quote currency for the spot legs ("USD" or "USDT"); BTC/USD, ETH/USD, ...
+  quote: "USD"

@@ -1,0 +1,79 @@
+# Defaults for funding-carry-bot. Per-bot overlays in helm/bots/<name>.yaml
+# (gitignored, except *.yaml.example) override credentials + sizing.
+
+botName: funding-carry-bot
+
+image:
+  repository: mkuzmentsov/funding-carry-bot
+  tag: "0.1"
+  pullPolicy: IfNotPresent
+
+# `botConfig` is rendered verbatim into /app/config/config.yaml (as a mounted
+# Secret). Schema mirrors funding-carry/bot/config.example.yaml — anything you
+# can put there, you can put here. Per-bot overlays should typically only
+# override `assets`, `leverage`, `dry_run`, and the credentials blocks.
+botConfig:
+  dry_run: true
+  loop_seconds: 60
+  log_level: INFO
+
+  # Sizing mode: 'auto' derives notional+leverage from your actual Kraken+HL
+  # balances at open time (capped by max_leverage). 'fixed' uses notional_usd
+  # + leverage per coin (back-compat). Override in the per-bot overlay.
+  sizing_mode: auto
+  max_leverage: 3.0
+  min_open_notional: 25.0
+  hl_margin_buffer: 0.20
+  spot_buffer_usd: 5.0
+
+  # 0 = open every listed coin (legacy / basket mode).
+  # >0 = sticky top-N: pick the N highest-funding coins to OPEN. Already-open
+  # positions stay (no rotation churn). Re-pick on regime-exit.
+  select_top_n: 0
+
+  assets:
+    - coin: BTC
+      weight: 1.0
+      # notional_usd: 130       # only used when sizing_mode: fixed
+
+  leverage: 2.0                 # only used when sizing_mode: fixed
+  deleverage_liq_room: 0.15
+  emergency_liq_room: 0.05
+  delta_rebalance_pct: 0.08
+
+  funding_smooth_hours: 24
+  funding_exit_apr: 0.0
+  funding_exit_persist_hours: 48
+  funding_reentry_apr: 0.03
+
+  max_consecutive_errors: 10
+  max_basis_alert_bps: 50
+
+  maker_wait_seconds: 120
+  hl_slippage_bps: 30
+
+  hyperliquid:
+    base_url: "https://api.hyperliquid.xyz"
+    account_address: ""
+    secret_key: ""
+  kraken:
+    api_key: ""
+    api_secret: ""
+    quote: "USD"
+
+# fc_state.json holds the `regime_exited` flags. Must survive pod restarts
+# — without it a flipped-regime coin gets re-opened on every restart.
+persistence:
+  enabled: true
+  size: 100Mi
+  storageClass: ""
+
+nodeSelector: {}
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 512Mi
+    cpu: 500m

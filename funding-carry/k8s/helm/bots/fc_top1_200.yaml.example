@@ -1,0 +1,77 @@
+# ~$200, one coin at a time — sticky top-1.
+#
+# Watch a basket of candidates and OPEN only the single highest-smoothed-APR
+# coin. Once open, hold it under all the standard rules (regime-flip / deleverage /
+# delta-rebalance). Re-pick only when the position closes (regime-exit).
+#
+# Why sticky, not rotating: the v1 backtest explicitly tested rotation-style
+# timing and always-hold beat every variant. Once you're in a coin, basis-spike
+# risk on unwind eats any "switch to a higher-APR coin" alpha.
+#
+# Capital plan: ~$140 USDT on Kraken + ~$70 USDC on HL subaccount = ~$210.
+# At top_n=1 the SELECTED coin gets the full slice → ~$135 notional at L=2.
+# All other listed coins remain idle ($0 slice) but their funding is logged
+# so you can see who's about to take the next slot.
+#
+# To switch to top-2 (split capital across the two best at ~$67 each), set
+# select_top_n: 2. For full basket (all coins active), set select_top_n: 0.
+
+botConfig:
+  dry_run: true
+  loop_seconds: 60
+  log_level: INFO
+
+  sizing_mode: auto
+  max_leverage: 3.0
+  min_open_notional: 25.0
+  hl_margin_buffer: 0.20
+  spot_buffer_usd: 5.0
+
+  # Trade ONE coin at a time. Sticky: an open position holds its slot — the
+  # bot won't close one to chase another. Slots refill from APR rank only
+  # when a regime-exit closes the current pick.
+  select_top_n: 1
+
+  # Watchlist. The bot ranks these by smoothed funding APR each loop and
+  # picks the top `select_top_n` to open. Higher-vol alts get a tighter
+  # leverage cap. LINK has the highest expected APR per the v2 backtest;
+  # BTC/ETH are the safe baseline.
+  assets:
+    - coin: LINK
+      weight: 1.0
+      max_leverage: 2.0
+    - coin: BTC
+      weight: 1.0
+    - coin: ETH
+      weight: 1.0
+    - coin: DOGE
+      weight: 1.0
+      max_leverage: 2.0
+    - coin: AVAX
+      weight: 1.0
+      max_leverage: 2.0
+
+  deleverage_liq_room: 0.15
+  emergency_liq_room: 0.05
+  delta_rebalance_pct: 0.08
+
+  funding_smooth_hours: 24
+  funding_exit_apr: 0.0
+  funding_exit_persist_hours: 48
+  funding_reentry_apr: 0.03
+
+  max_consecutive_errors: 10
+  hl_slippage_bps: 30
+
+  hyperliquid:
+    base_url: "https://api.hyperliquid.xyz"
+    account_address: "0xYOUR_HL_ACCOUNT_OR_SUBACCOUNT_ADDRESS"
+    secret_key:      "0xYOUR_HL_API_WALLET_PRIVATE_KEY"
+  kraken:
+    api_key:    "YOUR_KRAKEN_API_KEY"
+    api_secret: "YOUR_KRAKEN_API_SECRET"
+    quote:      "USDT"
+
+persistence:
+  enabled: true
+  size: 100Mi
