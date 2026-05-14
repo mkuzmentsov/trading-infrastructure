@@ -1,0 +1,21 @@
+services:
+  trading-mcp:
+    build: .
+    image: trading-mcp:0.1.0
+    container_name: trading-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8765"
+      LOG_LEVEL: INFO
+    ports:
+      # Bind only to localhost so the MCP isn't reachable from the LAN.
+      - "127.0.0.1:8765:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8765)); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
