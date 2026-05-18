@@ -75,6 +75,24 @@ Registered 6  tools from … aggregator
 - **Hyperliquid** SDK methods `query_vault_details`, `user_funding_history`, `user_vault_equities` — SDK 0.23.0 exposes these but names may have drifted; aggregator's HLP-APR enrichment is wrapped in try/except.
 - **`get_total_nav` pricing fallback** — coins without a USDT pair on Binance go into `unpriced` rather than estimated.
 
+## Startup validation (added 2026-05-14)
+
+Each exchange module exposes `validate()` — a cheap authed call run from `server._register_all` after a successful `register()`. Failures log WARNING and surface in the `Startup summary:` block but do **not** unregister tools or crash the server. Validators in use:
+
+- Binance: `client.get_account()` — verifies key/secret/IP/Read perm in one shot.
+- Kraken: signed `/0/private/Balance` — catches HMAC / nonce / perm.
+- WhiteBIT: signed `/api/v4/main-account/balance` — catches `nonceWindow` / sig / scope.
+- Hyperliquid: 3-layer — (1) `user_state(master)` resolves, (2) eth_account derives agent, (3) `/info` `extraAgents` lists agent on master. If `HYPERLIQUID_VAULT_ADDRESS` is set, also verifies it via `/info` `subAccounts` and that it's owned by the master.
+
+## Hyperliquid sub-account routing (added 2026-05-14)
+
+`HYPERLIQUID_ACCOUNT_ADDRESS` always holds the **master** (the wallet that approved the agent). Optional `HYPERLIQUID_VAULT_ADDRESS` routes reads + signed trades to a sub-account: master's agent signs, payload includes `vaultAddress=<sub>`, HL executes on the sub. No separate agent approval on the sub. Verified live: user's master is near-empty (dust); funds sit in subs; validation correctly shows master agent + sub balance side-by-side. Implementation: `_master_address()`, `_vault_address()`, `_target_address()` helpers in `hyperliquid.py`; `Exchange(wallet, base, account_address=master, vault_address=vault)`.
+
+## Why: How to apply (additions)
+
+- Always set `HYPERLIQUID_ACCOUNT_ADDRESS` to the master. Use `HYPERLIQUID_VAULT_ADDRESS` to target a sub — never swap the master for a sub directly (the agent isn't approved there).
+- When a future tool needs *per-call* vault selection (e.g. iterating subs for consolidation), add a `vault_address: str | None = None` parameter to the tool and pass it through to a one-shot `Exchange(..., vault_address=…)` instance instead of the cached `_exchange()` singleton.
+
 ## Why: How to apply
 
 - **Daily "where's the money sitting?" check** → `get_total_nav()`. Idle list directly tells you what to move.

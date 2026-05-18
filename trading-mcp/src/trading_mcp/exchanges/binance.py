@@ -435,6 +435,25 @@ def register(mcp: FastMCP) -> int:
         return _client().get_simple_earn_locked_product_position()
 
     @mcp.tool()
+    def binance_get_dual_investment_positions(
+        status: str = "PURCHASE_SUCCESS",
+    ) -> dict[str, Any]:
+        """Current Binance Dual Investment (Advanced Earn) positions.
+
+        Dual Investment is NOT part of Simple Earn — it has its own endpoint,
+        so it is invisible to ``binance_get_earn_*`` and any NAV roll-up that
+        only sums Spot + Simple Earn. Use this to capture USDT/coin locked in
+        DCI "Buy Low / Sell High" products.
+
+        status: PURCHASE_SUCCESS (active/holding, default) | PENDING |
+                SETTLED | PURCHASE_FAIL | REFUNDED. Pass "" for all statuses.
+        """
+        params: dict[str, Any] = {}
+        if status:
+            params["status"] = status
+        return _client().margin_v1_get_dci_product_positions(**params)
+
+    @mcp.tool()
     def binance_subscribe_earn_flexible(
         product_id: str, amount: float, auto_subscribe: bool = True
     ) -> dict[str, Any]:
@@ -601,6 +620,119 @@ def register(mcp: FastMCP) -> int:
             results[name] = items
         return results
 
+    # ----- Dust & Convert ------------------------------------------------
+
+    @mcp.tool()
+    def binance_get_dust_assets() -> dict[str, Any]:
+        """List Binance Spot balances eligible for dust → BNB conversion.
+
+        Returns each asset's free amount and the BTC/BNB it would convert to,
+        plus `totalTransferBtc`/`totalTransferBNB` for the whole batch. Feeds
+        ``binance_transfer_dust``.
+        """
+        return _client().get_dust_assets()
+
+    @mcp.tool()
+    def binance_transfer_dust(
+        assets: list[str], confirm: bool = False
+    ) -> dict[str, Any]:
+        """Convert one or more Binance Spot dust assets to BNB.
+
+        ``assets``: list of symbols from ``binance_get_dust_assets`` (e.g.
+        ["XRP", "ADA"]). Sent to ``POST /sapi/v1/asset/dust`` as a
+        comma-joined ``asset`` param — Binance accepts the batch form.
+
+        Safety: ``confirm`` must be ``True`` to submit. Otherwise a dry-run
+        echoes the planned conversion so a human can verify the asset list.
+        """
+        asset_param = ",".join(a.upper() for a in assets)
+        if not confirm:
+            return {
+                "dry_run": True,
+                "warning": "Set confirm=True to actually convert these to BNB.",
+                "assets": [a.upper() for a in assets],
+                "asset_param": asset_param,
+                "note": (
+                    "Call binance_get_dust_assets() first to see expected BNB. "
+                    "Conversion is one-shot per day per asset on Binance's side."
+                ),
+            }
+        return _client().transfer_dust(asset=asset_param)
+
+    @mcp.tool()
+    def binance_get_margin_dust_assets() -> dict[str, Any]:
+        """List Binance Cross-Margin balances eligible for dust → BNB
+        conversion. Feeds ``binance_transfer_margin_dust``."""
+        return _client().get_margin_dust_assets()
+
+    @mcp.tool()
+    def binance_transfer_margin_dust(
+        assets: list[str], confirm: bool = False
+    ) -> dict[str, Any]:
+        """Convert one or more Binance Cross-Margin dust assets to BNB.
+
+        Same shape as ``binance_transfer_dust`` but for the margin wallet.
+        """
+        asset_param = ",".join(a.upper() for a in assets)
+        if not confirm:
+            return {
+                "dry_run": True,
+                "warning": "Set confirm=True to actually convert these to BNB.",
+                "assets": [a.upper() for a in assets],
+                "asset_param": asset_param,
+                "wallet": "cross_margin",
+            }
+        return _client().transfer_margin_dust(asset=asset_param)
+
+    @mcp.tool()
+    def binance_convert_quote(
+        from_asset: str,
+        to_asset: str,
+        from_amount: float | None = None,
+        to_amount: float | None = None,
+    ) -> dict[str, Any]:
+        """Request a Binance Convert quote for an arbitrary asset pair.
+
+        Pass EITHER ``from_amount`` (debit side) OR ``to_amount`` (credit
+        side), not both. Returns a ``quoteId`` valid for ~10 seconds that you
+        accept via ``binance_convert_accept(quote_id)``.
+
+        Use this when dust-to-BNB isn't enough — e.g. converting accumulated
+        BNB back to USDT, or moving a stranded altcoin to a stablecoin.
+        """
+        if (from_amount is None) == (to_amount is None):
+            return {
+                "error": "pass exactly one of from_amount / to_amount",
+            }
+        params: dict[str, Any] = {
+            "fromAsset": from_asset.upper(),
+            "toAsset": to_asset.upper(),
+        }
+        if from_amount is not None:
+            params["fromAmount"] = from_amount
+        else:
+            params["toAmount"] = to_amount
+        return _client().convert_request_quote(**params)
+
+    @mcp.tool()
+    def binance_convert_accept(
+        quote_id: str, confirm: bool = False
+    ) -> dict[str, Any]:
+        """Accept a Binance Convert quote by ``quote_id`` from
+        ``binance_convert_quote``.
+
+        Safety: ``confirm`` must be ``True`` to submit. Quote expires fast
+        (~10s) — fetch a fresh one if the dry-run delays you.
+        """
+        if not confirm:
+            return {
+                "dry_run": True,
+                "warning": "Set confirm=True to execute this conversion.",
+                "quote_id": quote_id,
+                "note": "Quotes expire ~10s after issuance — re-quote if stale.",
+            }
+        return _client().convert_accept_quote(quoteId=quote_id)
+
     # ----- Transfers -----------------------------------------------------
 
     @mcp.tool()
@@ -692,4 +824,4 @@ def register(mcp: FastMCP) -> int:
             kwargs["withdrawOrderId"] = withdraw_order_id
         return _client().withdraw(**kwargs)
 
-    return 33  # number of tools registered above
+    return 39  # number of tools registered above

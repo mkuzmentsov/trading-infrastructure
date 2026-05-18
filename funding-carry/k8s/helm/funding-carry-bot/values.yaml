@@ -54,7 +54,8 @@ botConfig:
 
   hyperliquid:
     base_url: "https://api.hyperliquid.xyz"
-    account_address: ""
+    account_address: ""   # MASTER address (the account that approved the API wallet)
+    vault_address: ""     # optional sub-account / vault to trade; blank = trade the master
     secret_key: ""
   kraken:
     api_key: ""

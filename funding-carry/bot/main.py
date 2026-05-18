@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from exchanges import HyperliquidPerp, KrakenSpot, MarketData
+from exchanges import HLOrderError, HyperliquidPerp, KrakenSpot, MarketData
 from strategy import Cfg, CoinState, decide
 
 HRS_YR = 24 * 365
@@ -48,6 +48,8 @@ def load_cfg(path: str) -> dict:
         hl["account_address"] = f"0x{hl['account_address']:040x}"
     if isinstance(hl.get("secret_key"), int):
         hl["secret_key"] = f"0x{hl['secret_key']:064x}"
+    if isinstance(hl.get("vault_address"), int):
+        hl["vault_address"] = f"0x{hl['vault_address']:040x}"
     return cfg
 
 
@@ -62,7 +64,10 @@ def validate_credentials(cfg: dict, *, dry_run: bool) -> None:
 
     Blank fields are always OK (the bot mocks reads when creds are absent —
     useful for chart smoke-tests). Non-blank fields must look real:
-      - hyperliquid.account_address : 0x + 40 hex chars
+      - hyperliquid.account_address : 0x + 40 hex chars (MASTER — the account
+                                      that approved the API wallet)
+      - hyperliquid.vault_address   : 0x + 40 hex chars (optional sub-account /
+                                      vault to act on; blank = trade the master)
       - hyperliquid.secret_key       : 0x + 64 hex chars (API wallet, NOT main)
       - kraken.{api_key,api_secret}  : no "YOUR_" placeholder, length ≥ 20
 
@@ -79,6 +84,14 @@ def validate_credentials(cfg: dict, *, dry_run: bool) -> None:
         errs.append(
             f"hyperliquid.account_address looks invalid: {addr!r} — "
             "expected 0x + 40 hex chars (or empty)."
+        )
+    vault = (hl.get("vault_address") or "").strip()
+    if vault and not _ADDR_RE.fullmatch(vault):
+        errs.append(
+            f"hyperliquid.vault_address looks invalid: {vault!r} — "
+            "expected 0x + 40 hex chars (or empty). This is the sub-account / "
+            "vault address; account_address must be the MASTER that approved "
+            "the API wallet."
         )
     sk = (hl.get("secret_key") or "").strip()
     if sk and not _PRIVKEY_RE.fullmatch(sk):
@@ -203,8 +216,15 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
                 hl.set_leverage(coin, lev)
             except Exception as e:  # noqa: BLE001
                 log.warning("set_leverage %s=%dx before open failed: %s", coin, lev, e)
-        # short HL perp (IOC taker for v1; maker-with-fallback is a TODO)
-        hl.open_short(coin, notional, px, limit_px=px * (1 - slip), tif="Ioc")
+        # short HL perp (IOC taker for v1; maker-with-fallback is a TODO).
+        # Hedge-leg ordering matters: only buy the Kraken spot if the HL short
+        # actually opened — otherwise a rejected short would leave a naked long.
+        try:
+            hl.open_short(coin, notional, px, limit_px=px * (1 - slip), tif="Ioc")
+        except HLOrderError as e:
+            log.error("ABORT open %s: HL short rejected, skipping Kraken buy — %s",
+                      coin, e)
+            return
         # buy Kraken spot
         kr.buy(coin, notional / px)
         return
@@ -256,7 +276,9 @@ def main() -> int:
     hl_cfg, kr_cfg = cfg["hyperliquid"], cfg["kraken"]
     md = MarketData(hl_cfg["base_url"])
     hl = HyperliquidPerp(hl_cfg["base_url"], hl_cfg.get("account_address", ""),
-                         hl_cfg.get("secret_key", ""), dry_run=dry)
+                         hl_cfg.get("secret_key", ""),
+                         vault_address=hl_cfg.get("vault_address", ""),
+                         dry_run=dry)
     kr = KrakenSpot(kr_cfg.get("api_key", ""), kr_cfg.get("api_secret", ""),
                     quote=kr_cfg.get("quote", "USD"), dry_run=dry)
 

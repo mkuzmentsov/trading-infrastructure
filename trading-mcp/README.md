@@ -10,9 +10,10 @@ Multi-exchange MCP server. Each exchange's tools live in their own module under 
 | WhiteBIT     | ✅ implemented | `whitebit_*`    |
 
 Plus a **cross-venue aggregator** (no prefix) that fans out to every configured
-exchange — `find_best_yield_anywhere`, `find_cheapest_borrow`,
-`compare_perp_funding`, `get_total_nav`, `funding_carry_screener`,
-`find_best_promotions`.
+exchange — yield / borrow / funding / NAV / promotions, plus a one-call
+**daily snapshot**, **dust-cleanup plan**, **smart promotions filter**, and a
+**buy/sell helper** that compares price+fee across venues and (optionally)
+routes the order.
 
 Runs locally as a Docker Compose service over streamable-HTTP. Claude Desktop attaches via the `mcp-remote` bridge.
 
@@ -51,11 +52,11 @@ docker compose logs -f trading-mcp
 It binds to `127.0.0.1:8765` (loopback only — not reachable from the LAN). On startup it logs which exchanges were registered:
 
 ```
-INFO trading-mcp: Registered 33 tools from trading_mcp.exchanges.binance
+INFO trading-mcp: Registered 39 tools from trading_mcp.exchanges.binance
 INFO trading-mcp: Registered 6 tools from trading_mcp.exchanges.kraken
 INFO trading-mcp: Registered 18 tools from trading_mcp.exchanges.hyperliquid
 INFO trading-mcp: Registered 5 tools from trading_mcp.exchanges.whitebit
-INFO trading-mcp: Registered 6 tools from trading_mcp.exchanges.aggregator
+INFO trading-mcp: Registered 13 tools from trading_mcp.exchanges.aggregator
 ```
 
 Unconfigured exchanges register 0 tools and log `Skipped …`. The aggregator
@@ -82,7 +83,7 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 ## 4. Tools by exchange
 
-### Binance (33)
+### Binance (39)
 
 **Portfolio:** `binance_get_portfolio_overview`
 
@@ -97,6 +98,8 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 **Margin:** `binance_get_margin_account`, `binance_margin_borrow`, `binance_margin_repay`, `binance_place_margin_order`
 
 **Simple Earn:** `binance_list_earn_flexible_offers`, `binance_list_earn_locked_offers`, `binance_find_best_earn_rates`, `binance_get_earn_flexible_positions`, `binance_get_earn_locked_positions`, `binance_subscribe_earn_flexible`, `binance_subscribe_earn_locked`, `binance_redeem_earn_flexible`, `binance_redeem_earn_locked`
+
+**Dust & Convert:** `binance_get_dust_assets`, `binance_transfer_dust` (dry-run unless `confirm=True`), `binance_get_margin_dust_assets`, `binance_transfer_margin_dust` (dry-run unless `confirm=True`), `binance_convert_quote`, `binance_convert_accept` (dry-run unless `confirm=True`)
 
 **Transfers:** `binance_universal_transfer`, `binance_get_transfer_history`
 
@@ -132,16 +135,28 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Smart Staking:** `whitebit_smart_staking_info` (returns a link — no REST API exists)
 
-### Aggregator (6)
+### Aggregator (13)
 
 Cross-venue tools that pick up whichever exchanges have credentials and merge the answer:
 
+**Discovery:**
 - `find_best_yield_anywhere(asset, top_n)` — best APR across Binance Simple Earn (flex+lock), Kraken Earn, Hyperliquid HLP.
 - `find_cheapest_borrow(asset)` — Binance Cross-Margin daily borrow rate (annualized). More venues land here when added.
-- `compare_perp_funding(coin)` — current funding APR side-by-side: Hyperliquid + Binance USDⓈ-M. Reports the max-spread funding pair.
-- `get_total_nav(idle_threshold_usd)` — best-effort USD NAV summed across every venue + stablecoin balances ≥ threshold that are sitting *outside* any Earn product.
-- `funding_carry_screener(top_n, min_oi_usd)` — ranks Hyperliquid perps by `|funding APR| × liquidity` for funding-carry basket candidates.
-- `find_best_promotions(keywords)` — sweeps Binance announcement feed for airdrops / Launchpool / Megadrop / competitions.
+- `compare_perp_funding(coin)` — current funding APR side-by-side: Hyperliquid + Binance USDⓈ-M.
+- `funding_carry_screener(top_n, min_oi_usd)` — ranks Hyperliquid perps by `|funding APR| × liquidity`.
+- `find_best_promotions(keywords)` — raw sweep of the Binance announcement feed.
+
+**State + planning:**
+- `get_total_nav(idle_threshold_usd)` — USD NAV summed across every venue + idle stablecoins.
+- `aggregator_get_daily_snapshot(idle_threshold_usd, dust_threshold_usd)` — one call: NAV + positions + open orders + dust + idle yield recs + relevant promos.
+- `aggregator_find_all_dust(threshold_usd=5)` — sub-threshold balances across all venues, tagged by cleanup method.
+- `aggregator_dust_cleanup_plan(threshold_usd=5, confirm=False)` — ordered plan; `confirm=True` executes the Binance + HL-USDC legs.
+- `aggregator_relevant_promotions(min_value_usd=10)` — Binance announcements filtered to held assets and tagged (airdrop / Launchpool / Megadrop / hold-to-earn / trade-to-earn).
+
+**Execution helpers:**
+- `aggregator_compare_buy_sell_prices(coin, side, amount_usd)` — best effective fill price (taker-fee adjusted) across Binance / Kraken / WhiteBIT / HL spot books.
+- `aggregator_get_market_summary(coin)` — price + 24h + funding APR + best Earn APR + Binance depth probe at $1k / $10k.
+- `aggregator_route_order(coin, side, amount_usd, max_slippage_bps, confirm=False)` — dry-run venue choice; `confirm=True` executes (Binance spot only for v1).
 
 ## 5. Adding a new exchange
 

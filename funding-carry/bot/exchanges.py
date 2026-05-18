@@ -20,6 +20,12 @@ from typing import Optional
 log = logging.getLogger("funding-carry.exch")
 
 
+class HLOrderError(RuntimeError):
+    """A Hyperliquid order/action was rejected (margin, agent not approved for
+    the vault, IOC no-match, …). Raised so callers never treat a swallowed
+    rejection as a fill and leg into a one-sided position."""
+
+
 @dataclass
 class PerpPosition:
     coin: str
@@ -74,9 +80,17 @@ class MarketData:
 
 class HyperliquidPerp:
     def __init__(self, base_url: str, account_address: str, secret_key: str,
-                 dry_run: bool = True):
+                 vault_address: str = "", dry_run: bool = True):
         self.dry_run = dry_run
-        self.address = account_address
+        # account_address = MASTER (the account that approved the API wallet —
+        # all signing is rooted here). vault_address = optional sub-account /
+        # vault to ACT ON. HL routes an order to the sub only when the signed
+        # action carries vaultAddress; account_address alone never does this.
+        self.master_address = account_address
+        self.vault_address = (vault_address or "").strip() or None
+        # The address we read positions / margin for: the sub-account when we
+        # operate on one, else the master.
+        self.address = self.vault_address or account_address
         from hyperliquid.info import Info
         self._info = Info(base_url, skip_ws=True)
         self._exch = None
@@ -84,7 +98,15 @@ class HyperliquidPerp:
             from hyperliquid.exchange import Exchange
             from eth_account import Account
             wallet = Account.from_key(secret_key)
-            self._exch = Exchange(wallet, base_url, account_address=account_address)
+            if self.vault_address:
+                # Master's API wallet signs; HL executes on the sub because
+                # vault_address is included in the signed action payload.
+                self._exch = Exchange(wallet, base_url,
+                                      account_address=account_address,
+                                      vault_address=self.vault_address)
+            else:
+                self._exch = Exchange(wallet, base_url,
+                                      account_address=account_address)
         elif not dry_run:
             raise ValueError("Hyperliquid: secret_key/account_address required when dry_run=false")
         # cache sz decimals
@@ -94,6 +116,20 @@ class HyperliquidPerp:
     def _round_sz(self, coin: str, sz: float) -> float:
         d = self._sz_dec.get(coin, 4)
         return round(sz, d)
+
+    def _round_px(self, coin: str, px: float) -> float:
+        """Hyperliquid rejects prices that aren't on a valid tick. The rule:
+        ≤5 significant figures AND ≤ (6 − szDecimals) decimal places for perps
+        (integer prices are exempt from the sig-fig cap). Passing a raw float
+        like 9.453603849999999 yields 'Order has invalid price'."""
+        if px <= 0:
+            return px
+        sz_dec = self._sz_dec.get(coin, 4)
+        max_dec = 6 - sz_dec  # perps: MAX_DECIMALS(6) − szDecimals
+        # :.5g caps to 5 significant figures (and renders large prices like
+        # 105000.5 as 1.05e+05 → 105000.0, i.e. an integer, which HL exempts
+        # from the sig-fig rule); the round() then enforces the decimal cap.
+        return round(float(f"{px:.5g}"), max_dec)
 
     def user_state(self) -> dict:
         if not self.address:
@@ -123,16 +159,59 @@ class HyperliquidPerp:
         return float(self.user_state().get("marginSummary", {}).get("accountValue", 0.0))
 
     # --- order placement (skipped in dry_run) ---
+    @staticmethod
+    def _interpret(resp) -> tuple[bool, str]:
+        """(accepted, detail) from a Hyperliquid SDK response.
+
+        accepted is True only when HL took the order (filled or resting).
+        A per-order rejection lands in statuses[].error (e.g. insufficient
+        margin, agent not approved for the vault, IOC no-match); a top-level
+        failure is status != "ok". Non-order actions (set_leverage) have no
+        statuses array and are treated as accepted.
+        """
+        if not isinstance(resp, dict):
+            return False, f"non-dict response: {resp!r}"
+        if resp.get("status") != "ok":
+            return False, f"status={resp.get('status')!r} {resp.get('response')!r}"
+        try:
+            statuses = resp["response"]["data"]["statuses"]
+        except (KeyError, TypeError):
+            return True, "ok (non-order action)"
+        msgs: list[str] = []
+        accepted = False
+        for s in statuses:
+            if not isinstance(s, dict):
+                continue
+            if "error" in s:
+                msgs.append(f"error: {s['error']}")
+            elif "filled" in s:
+                f = s["filled"]
+                accepted = True
+                msgs.append(f"filled sz={f.get('totalSz')} @ {f.get('avgPx')}")
+            elif "resting" in s:
+                accepted = True
+                msgs.append(f"resting oid={s['resting'].get('oid')}")
+            else:
+                msgs.append(str(s))
+        return accepted, "; ".join(msgs) or "empty statuses"
+
     def _send(self, desc: str, fn):
         if self.dry_run:
             log.info("[DRY-RUN] HL would: %s", desc)
             return {"dry_run": True, "desc": desc}
         log.info("HL: %s", desc)
-        return fn()
+        resp = fn()
+        accepted, detail = self._interpret(resp)
+        if accepted:
+            log.info("HL OK: %s — %s", desc, detail)
+            return resp
+        log.error("HL REJECTED: %s — %s", desc, detail)
+        raise HLOrderError(f"{desc}: {detail}")
 
     def open_short(self, coin: str, notional_usd: float, mark_px: float,
                    limit_px: float, tif: str = "Alo") -> dict:
         sz = self._round_sz(coin, notional_usd / mark_px)
+        limit_px = self._round_px(coin, limit_px)
         return self._send(
             f"OPEN SHORT {coin} sz={sz} @ {limit_px} ({tif})",
             lambda: self._exch.order(coin, False, sz, limit_px, {"limit": {"tif": tif}}, reduce_only=False),
@@ -141,6 +220,7 @@ class HyperliquidPerp:
     def reduce_short(self, coin: str, reduce_notional_usd: float, mark_px: float,
                      limit_px: float, tif: str = "Ioc") -> dict:
         sz = self._round_sz(coin, reduce_notional_usd / mark_px)
+        limit_px = self._round_px(coin, limit_px)
         # reduce a short = buy
         return self._send(
             f"REDUCE SHORT {coin} buy sz={sz} @ {limit_px} ({tif}) reduce_only",
@@ -149,6 +229,7 @@ class HyperliquidPerp:
 
     def close_short(self, coin: str, pos: PerpPosition, limit_px: float, tif: str = "Ioc") -> dict:
         sz = self._round_sz(coin, abs(pos.size))
+        limit_px = self._round_px(coin, limit_px)
         return self._send(
             f"CLOSE SHORT {coin} buy sz={sz} @ {limit_px} ({tif}) reduce_only",
             lambda: self._exch.order(coin, True, sz, limit_px, {"limit": {"tif": tif}}, reduce_only=True),

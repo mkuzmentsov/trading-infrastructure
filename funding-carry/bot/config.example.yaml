@@ -59,7 +59,9 @@ hl_slippage_bps: 30             # max slippage for the IOC taker fallback
 # Endpoints / credentials (fill the credential fields in config.yaml, never commit)
 hyperliquid:
   base_url: "https://api.hyperliquid.xyz"
-  account_address: ""           # your HL account / sub-account address (0x...)
+  account_address: ""           # MASTER address (0x...) — the account that approved the API wallet. Signing roots here.
+  vault_address: ""             # OPTIONAL sub-account / vault address (0x...) to trade. Blank = trade the master directly.
+                                # When set, orders are routed to this sub (HL puts vaultAddress in the signed action).
   secret_key: ""                # the API wallet private key (0x...). Use an API wallet, not your main key.
 kraken:
   api_key: ""
