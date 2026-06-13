@@ -1,0 +1,55 @@
+# Pattern trading bot config. Copy to config.yaml (gitignored) and fill creds.
+# Strategy: detect double top / double bottom on candles; on a confirmed neckline
+# break, open a perp trade with a measured-move target + stop.
+# "dry_run: true" computes & logs everything but places NO orders — run it first.
+
+dry_run: true            # true = paper (log only). Flip to false ONLY after validating.
+exchange: hyperliquid    # hyperliquid | kraken_futures (kraken_futures is a stub)
+loop_seconds: 60         # main loop interval
+log_level: INFO
+
+interval: "1h"           # candle timeframe (1m,5m,15m,1h,4h,1d,...)
+candle_lookback: 400     # closed bars pulled each loop for detection
+# Focusing on BTC for now. (ETH also backtested positively; SOL/HYPE didn't.)
+# Re-add coins only after they backtest positively.
+coins: [BTC]
+
+paper_equity: 10000      # equity used for sizing when no live balance is available (dry_run / no creds)
+
+pattern:
+  pivot_lookback: 5          # bars each side required to qualify a swing high/low
+  peak_tolerance_pct: 0.01   # two peaks/troughs must be within 1% to count as "equal".
+                             # (3% was far too loose — it paired clear higher-highs as "double tops".)
+  min_bars_between: 5        # min bars between the two peaks/troughs
+  max_bars_between: 60       # max bars between the two peaks/troughs (older = not the same pattern)
+  max_break_bars: 12         # neckline break must come within 12 bars of the 2nd peak — rejects
+                             # STALE breaks that fire long after price has wandered off the pattern
+  min_trough_depth_pct: 0.03 # neckline must retrace >= 3% from the peaks
+  # --- quality filters (improve win rate; backtest-tuned) ---
+  trend_ma: 0                # 0=off. >0: short only below SMA(N), long only above. (vol filter made this redundant.)
+  vol_confirm_mult: 1.5      # require the breakout bar's volume >= 1.5× the pattern's avg volume
+
+risk:
+  risk_per_trade_pct: 0.005  # risk 0.5% of equity to the stop, per trade
+  max_leverage: 5            # cap notional at equity * max_leverage
+  stop_buffer_pct: 0.002     # used only when stop_height_frac=0 (stop beyond the 2nd peak/trough)
+  stop_height_frac: 0.5      # stop INSIDE the pattern, 0.5 of the height from the neckline → ≈2:1 RR
+  target_mode: measured_move # measured_move | fixed_rr | pct
+  fixed_rr: 2.0              # reward:risk when target_mode: fixed_rr
+  stop_loss_pct: 0.20        # hard stop % from entry (target_mode: pct)
+  take_profit_pct: 0.60      # hard take-profit % from entry (target_mode: pct)
+  max_hold_bars: 0          # 0 = no time stop; else force-close after N bars
+  min_notional: 10          # don't open positions smaller than this $
+  slippage_bps: 5           # per-side slippage (live IOC tolerance + backtest cost)
+  taker_fee_bps: 4.5        # per-side taker fee (backtest cost model)
+
+# --- credentials (fill in config.yaml, never commit) ---
+hyperliquid:
+  base_url: "https://api.hyperliquid.xyz"
+  account_address: ""   # MASTER address (the account that approved the API wallet)
+  vault_address: ""     # optional sub-account / vault to trade; blank = trade master
+  secret_key: ""        # API wallet private key (0x… 64 hex). Use an API wallet, NOT your main key.
+
+kraken_futures:         # used only when exchange: kraken_futures (not yet implemented)
+  api_key: ""
+  api_secret: ""

@@ -57,3 +57,9 @@ funding-carry/k8s/helm/bots/*
 # The chart's files/bot/ is populated by deploy.sh from funding-carry/bot/.
 funding-carry/k8s/helm/funding-carry-bot/files/bot/*.py
 ai/pm_btc_1h_ml_policy/*.parquet
+
+# pattern bot
+pattern-bot/data/
+pattern-bot/charts/
+pattern-bot/bot/config.yaml
+pattern-bot/bot/pattern_state.json
