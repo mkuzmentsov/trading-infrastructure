@@ -17,6 +17,11 @@ coins: [BTC]
 paper_equity: 10000      # equity used for sizing when no live balance is available (dry_run / no creds)
 
 pattern:
+  # Active pattern families, in priority order (first fresh confirmation per bar wins).
+  # BTC 1h: kept the families that backtested with an edge; dropped triple, flag, and
+  # head_shoulders (no edge / too rare). Each family's params are set in
+  # `pattern_overrides` below; the values here are global fallbacks.
+  pattern_types: [rectangle, double, wedge, triangle]
   pivot_lookback: 5          # bars each side required to qualify a swing high/low
   peak_tolerance_pct: 0.01   # two peaks/troughs must be within 1% to count as "equal".
                              # (3% was far too loose — it paired clear higher-highs as "double tops".)
@@ -42,6 +47,36 @@ risk:
   min_notional: 10          # don't open positions smaller than this $
   slippage_bps: 5           # per-side slippage (live IOC tolerance + backtest cost)
   taker_fee_bps: 4.5        # per-side taker fee (backtest cost model)
+
+# Per-family parameter overrides (win over the global pattern:/risk: defaults).
+# May carry BOTH pattern fields (tri_window, peak_tolerance_pct, …) and risk fields
+# (stop_height_frac, target_mode, …). Tuned in-sample on BTC 1h — re-validate
+# out-of-sample before trusting (see tune.py).
+pattern_overrides:
+  rectangle:                 # ⭐ best: ~50 trades, PF ~1.5
+    tri_window: 60
+    tri_flat_slope: 0.0008
+    min_trough_depth_pct: 0.02
+    vol_confirm_mult: 0
+    stop_height_frac: 0.0
+  double:                    # ~29 trades, PF ~1.37
+    peak_tolerance_pct: 0.02
+    min_trough_depth_pct: 0.02
+    max_break_bars: 12
+    vol_confirm_mult: 1.5
+    stop_height_frac: 0.5
+  wedge:                     # ~18 trades, PF ~1.41
+    tri_window: 40
+    tri_flat_slope: 0.0005
+    min_trough_depth_pct: 0.02
+    vol_confirm_mult: 0
+    stop_height_frac: 0.5
+  triangle:                  # marginal: ~13 trades, PF ~1.21
+    tri_window: 40
+    tri_flat_slope: 0.0005
+    min_trough_depth_pct: 0.02
+    vol_confirm_mult: 0
+    stop_height_frac: 0.0
 
 # --- credentials (fill in config.yaml, never commit) ---
 hyperliquid:

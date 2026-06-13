@@ -19,7 +19,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Optional
 
-from patterns import PatternSignal
+from patterns import PatternSignal, PatternCfg
+
+
+# Map a signal's kind back to its pattern family (for per-family config lookup).
+_FAMILY = {
+    "double_top": "double", "double_bottom": "double",
+    "head_shoulders": "head_shoulders", "inv_head_shoulders": "head_shoulders",
+    "triple_top": "triple", "triple_bottom": "triple",
+    "triangle": "triangle", "wedge": "wedge", "rectangle": "rectangle", "flag": "flag",
+}
+
+
+def family_of(kind: str) -> str:
+    return _FAMILY.get(kind, kind)
 
 
 @dataclass(frozen=True)
@@ -65,10 +78,12 @@ class Position:
     confirm_time: int    # the signal that opened this (dedup key)
     opened_time: int = 0  # ms timestamp of the entry bar
     bars_held: int = 0    # incremented by the caller each bar
-    # pattern anchors (for charting / inspection; 0 when not supplied)
-    p1_time: int = 0     # ms timestamp of the 1st peak/trough
-    p2_time: int = 0     # ms timestamp of the 2nd peak/trough
+    # pattern info (for charting / inspection; defaults when not supplied)
+    p1_time: int = 0     # ms timestamp of the 1st key pivot
+    p2_time: int = 0     # ms timestamp of the last key pivot
     neckline: float = 0.0
+    kind: str = ""       # pattern kind, e.g. "double_top", "head_shoulders"
+    anchors: tuple = ()  # ms timestamps of all the pattern's pivots
 
     @property
     def notional(self) -> float:
@@ -207,3 +222,24 @@ def decide(signal: Optional[PatternSignal], pos: Optional[Position],
                          "why": f"{signal.kind} confirmed but trade geometry invalid "
                                 f"(entered too late / size too small) — skipping"})
     return acts
+
+
+def resolve_detectors(cfg: dict) -> list[tuple[str, PatternCfg, RiskCfg]]:
+    """Build a (family, PatternCfg, RiskCfg) bundle for each active pattern family,
+    merging global `pattern`/`risk` config with per-family `pattern_overrides`.
+
+    Each family's override dict may carry BOTH pattern fields (e.g. tri_window) and
+    risk fields (e.g. stop_height_frac); PatternCfg/RiskCfg.from_dict each pick out
+    their own keys, so a single merged dict feeds both. Returned in config order —
+    the caller checks them in that order and the first fresh confirmation wins.
+    """
+    pat = dict(cfg.get("pattern", {}) or {})
+    risk = dict(cfg.get("risk", {}) or {})
+    overrides = cfg.get("pattern_overrides", {}) or {}
+    out: list[tuple[str, PatternCfg, RiskCfg]] = []
+    for fam in list(pat.get("pattern_types", ["double"])):
+        ov = overrides.get(fam, {}) or {}
+        pcfg = PatternCfg.from_dict({**pat, **ov, "pattern_types": [fam]})
+        rcfg = RiskCfg.from_dict({**risk, **ov})
+        out.append((fam, pcfg, rcfg))
+    return out

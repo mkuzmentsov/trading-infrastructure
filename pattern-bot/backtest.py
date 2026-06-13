@@ -29,71 +29,93 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "bot"))
 from patterns import PatternCfg, detect           # noqa: E402
-from strategy import Position, RiskCfg, check_exit, plan_trade  # noqa: E402
+from strategy import (Position, RiskCfg, check_exit, plan_trade,  # noqa: E402
+                      family_of, resolve_detectors)
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 START_EQUITY = 10_000.0
 
 
+# Each pattern family gets its OWN bright label colour (peaks + on-chart name).
+KIND_STYLE = {
+    "double_top":        ("Double Top",    "#2be0ff"),   # bright cyan
+    "double_bottom":     ("Double Bottom", "#2be0ff"),
+    "head_shoulders":    ("H&S",           "#ff6ec7"),    # bright magenta/pink
+    "inv_head_shoulders": ("Inv H&S",      "#ff6ec7"),
+    "triple_top":        ("Triple Top",    "#ffe14d"),    # bright yellow
+    "triple_bottom":     ("Triple Bottom", "#ffe14d"),
+    "triangle":          ("Triangle",      "#7cff5c"),    # bright lime
+    "wedge":             ("Wedge",         "#c08cff"),    # bright violet
+    "rectangle":         ("Rectangle",     "#ffae42"),    # bright orange
+    "flag":              ("Flag",          "#ff7a5c"),    # bright coral
+}
+
+
+def _kind_style(kind: str) -> tuple[str, str]:
+    return KIND_STYLE.get(kind, (kind or "pattern", "#dddddd"))
+
+
 def chart_coin(coin: str, candles: list[dict], trades: list[dict], interval: str,
                out_path: Path) -> None:
-    """Write an interactive HTML candlestick chart with each trade highlighted:
-    a shaded zone over the hold period (green=long, red=short), entry/exit markers,
-    and the stop/target levels — so trades can be eyeballed and verified."""
+    """Interactive HTML candlestick chart. Each trade is overlaid with its pattern
+    pivots (◆), neckline, stop/target, entry/exit markers, and — labelled on the
+    chart — the pattern's name in its own bright colour, so different pattern types
+    are easy to tell apart at a glance."""
     import plotly.graph_objects as go
 
     df = pd.DataFrame(candles)
     df["dt"] = pd.to_datetime(df["time"], unit="ms", utc=True)
+    hi = dict(zip(df["time"], df["high"]))
+    lo = dict(zip(df["time"], df["low"]))
 
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=df["dt"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-        name=coin, increasing_line_color="#26a69a", decreasing_line_color="#ef5350",
+        name=coin, increasing_line_color="#26d9b0", decreasing_line_color="#ff5b6e",
         showlegend=False,
     ))
 
-    # Shaded hold zones (one rectangle per trade, drawn beneath the candles).
+    # Shaded hold zones + faint formation boxes + on-chart pattern-name labels.
+    pk_x, pk_y, pk_c, pk_txt = [], [], [], []
+    neck_x, neck_y = [], []
     for tr in trades:
-        long = tr["side"] == "long"
-        fig.add_vrect(
-            x0=tr["entry_dt"], x1=tr["exit_dt"], layer="below", line_width=0,
-            fillcolor="#2ecc71" if long else "#e74c3c",
-            opacity=0.10 if tr["pnl"] >= 0 else 0.06,
-        )
-
-    # Pattern formation: the candles that BUILT each pattern (1st peak/trough →
-    # confirmation). Faint blue box over the formation span, the neckline segment,
-    # and diamonds on the two peaks/troughs so you can see exactly what fired.
-    hi = dict(zip(df["time"], df["high"]))
-    lo = dict(zip(df["time"], df["low"]))
-    neck_x, neck_y, pk_x, pk_y, pk_txt = [], [], [], [], []
-    for tr in trades:
-        if not tr.get("p1_time"):
-            continue
-        p1_dt = pd.to_datetime(tr["p1_time"], unit="ms", utc=True)
-        conf_dt = tr["entry_dt"]   # confirmation bar == entry bar
-        fig.add_vrect(x0=p1_dt, x1=conf_dt, layer="below", line_width=1,
-                      line_color="#5dade2", fillcolor="#5dade2", opacity=0.05)
-        neck_x += [p1_dt, conf_dt, None]
-        neck_y += [tr["neckline"], tr["neckline"], None]
-        for pt in (tr["p1_time"], tr["p2_time"]):
-            price = hi.get(pt) if tr["side"] == "short" else lo.get(pt)
-            if price is None:
+        short = tr["side"] == "short"
+        name, color = _kind_style(tr.get("kind", ""))
+        fig.add_vrect(x0=tr["entry_dt"], x1=tr["exit_dt"], layer="below", line_width=0,
+                      fillcolor="#2ecc71" if not short else "#ff5b6e",
+                      opacity=0.13 if tr["pnl"] >= 0 else 0.07)
+        anchors = tr.get("anchors") or [tr["p1_time"], tr["p2_time"]]
+        if anchors and anchors[0]:
+            fig.add_vrect(x0=pd.to_datetime(anchors[0], unit="ms", utc=True),
+                          x1=tr["entry_dt"], layer="below", line_width=1,
+                          line_color="#6cb6ff", fillcolor="#6cb6ff", opacity=0.05)
+            neck_x += [pd.to_datetime(anchors[0], unit="ms", utc=True), tr["entry_dt"], None]
+            neck_y += [tr["neckline"], tr["neckline"], None]
+        prices = []
+        for a in anchors:
+            p = hi.get(a) if short else lo.get(a)
+            if p is None:
                 continue
-            pk_x.append(pd.to_datetime(pt, unit="ms", utc=True))
-            pk_y.append(float(price))
-            pk_txt.append(f"{'peak' if tr['side'] == 'short' else 'trough'} {float(price):.6g}")
+            pk_x.append(pd.to_datetime(a, unit="ms", utc=True)); pk_y.append(float(p))
+            pk_c.append(color); pk_txt.append(f"{name} pivot {float(p):.6g}")
+            prices.append(float(p))
+        if prices:                                  # name label, beyond the extreme
+            ext = max(prices) if short else min(prices)
+            fig.add_annotation(x=tr["entry_dt"], y=ext * (1.015 if short else 0.985),
+                               text=f"<b>{name}</b>", showarrow=False,
+                               font=dict(color=color, size=12),
+                               bgcolor="rgba(10,11,18,0.7)", bordercolor=color, borderwidth=1,
+                               yanchor="bottom" if short else "top")
+
     if neck_x:
         fig.add_trace(go.Scatter(x=neck_x, y=neck_y, mode="lines", name="neckline",
-                                 line=dict(color="#f39c12", width=1.5)))
+                                 line=dict(color="#ffd24d", width=1.6)))
     if pk_x:
-        fig.add_trace(go.Scatter(x=pk_x, y=pk_y, mode="markers", name="pattern peaks/troughs",
-                                 marker=dict(symbol="diamond", size=9, color="#f1c40f",
-                                             line=dict(width=1, color="#222")),
+        fig.add_trace(go.Scatter(x=pk_x, y=pk_y, mode="markers", name="pattern pivots",
+                                 marker=dict(symbol="diamond", size=10, color=pk_c,
+                                             line=dict(width=1, color="#0e0f14")),
                                  text=pk_txt, hoverinfo="text"))
 
-    # Stop / target levels as dashed segments spanning each trade (single trace each,
-    # None-separated, so they're one legend toggle and cheap to render).
     def _segments(level_key):
         xs, ys = [], []
         for tr in trades:
@@ -101,14 +123,12 @@ def chart_coin(coin: str, candles: list[dict], trades: list[dict], interval: str
             ys += [tr[level_key], tr[level_key], None]
         return xs, ys
 
-    sx, sy = _segments("stop")
-    tx, ty = _segments("target")
+    sx, sy = _segments("stop"); tx, ty = _segments("target")
     fig.add_trace(go.Scatter(x=sx, y=sy, mode="lines", name="stop",
-                             line=dict(color="#c0392b", width=1, dash="dot")))
+                             line=dict(color="#ff5c5c", width=1.2, dash="dot")))
     fig.add_trace(go.Scatter(x=tx, y=ty, mode="lines", name="target",
-                             line=dict(color="#27ae60", width=1, dash="dot")))
+                             line=dict(color="#5cffa8", width=1.2, dash="dot")))
 
-    # Entry markers, split long/short. Exit markers, split win/loss.
     def _markers(pred, x_key, y_key, name, symbol, color, hover):
         sel = [tr for tr in trades if pred(tr)]
         if not sel:
@@ -116,13 +136,12 @@ def chart_coin(coin: str, candles: list[dict], trades: list[dict], interval: str
         fig.add_trace(go.Scatter(
             x=[tr[x_key] for tr in sel], y=[tr[y_key] for tr in sel],
             mode="markers", name=name,
-            marker=dict(symbol=symbol, size=10, color=color,
-                        line=dict(width=1, color="#222")),
-            text=[hover(tr) for tr in sel], hoverinfo="text",
-        ))
+            marker=dict(symbol=symbol, size=11, color=color, line=dict(width=1, color="#0e0f14")),
+            text=[hover(tr) for tr in sel], hoverinfo="text"))
 
     def _entry_hover(tr):
-        return (f"{tr['side'].upper()} entry @ {tr['entry']:.6g}<br>{tr['entry_dt']:%Y-%m-%d %H:%M}"
+        nm = _kind_style(tr.get("kind", ""))[0]
+        return (f"{nm} · {tr['side'].upper()} entry @ {tr['entry']:.6g}<br>{tr['entry_dt']:%Y-%m-%d %H:%M}"
                 f"<br>stop {tr['stop']:.6g} · target {tr['target']:.6g}")
 
     def _exit_hover(tr):
@@ -130,21 +149,25 @@ def chart_coin(coin: str, candles: list[dict], trades: list[dict], interval: str
                 f"<br>R={tr['R']:+.2f} · pnl=${tr['pnl']:+.2f} · held {tr['bars_held']}b")
 
     _markers(lambda t: t["side"] == "long", "entry_dt", "entry",
-             "long entry", "triangle-up", "#2ecc71", _entry_hover)
+             "long entry", "triangle-up", "#3dff7e", _entry_hover)
     _markers(lambda t: t["side"] == "short", "entry_dt", "entry",
-             "short entry", "triangle-down", "#e74c3c", _entry_hover)
+             "short entry", "triangle-down", "#ff5b6e", _entry_hover)
     _markers(lambda t: t["pnl"] >= 0, "exit_dt", "exit",
-             "exit (win)", "circle", "#1e8449", _exit_hover)
+             "exit (win)", "circle", "#00ff95", _exit_hover)
     _markers(lambda t: t["pnl"] < 0, "exit_dt", "exit",
-             "exit (loss)", "x", "#922b21", _exit_hover)
+             "exit (loss)", "x", "#ff3b5c", _exit_hover)
 
+    kinds = sorted({t.get("kind", "") for t in trades})
+    legend_bits = " · ".join(f"<span style='color:{_kind_style(k)[1]}'>{_kind_style(k)[0]}</span>"
+                             for k in kinds if k)
     n_long = sum(1 for t in trades if t["side"] == "long")
-    n_short = len(trades) - n_long
     fig.update_layout(
-        title=f"{coin} {interval} — {len(trades)} trades ({n_long} long, {n_short} short)  "
-              f"blue box=pattern · ◆=peaks/troughs · orange=neckline · ▲/▼ entry · ●/✕ exit · green/red=hold",
-        xaxis_rangeslider_visible=False, template="plotly_dark",
-        height=720, hovermode="closest",
+        title=f"{coin} {interval} — {len(trades)} trades ({n_long}L/{len(trades)-n_long}S)  ·  "
+              f"◆ pivots · neckline · ▲▼ entry · ●✕ exit   |   {legend_bits}",
+        template="plotly_dark", paper_bgcolor="#0e0f14", plot_bgcolor="#0e0f14",
+        xaxis_rangeslider_visible=False, height=760, hovermode="closest",
+        legend=dict(orientation="h", y=1.04, x=0, font=dict(size=10)),
+        margin=dict(l=10, r=60, t=70, b=30),
     )
     fig.write_html(str(out_path), include_plotlyjs="cdn")
 
@@ -157,14 +180,23 @@ def _max_drawdown_frac(curve: np.ndarray) -> float:
     return float(np.max(dd))
 
 
-def backtest_coin(candles: list[dict], coin: str, pcfg: PatternCfg, rcfg: RiskCfg,
-                  rt_cost_frac: float) -> dict:
-    """Run one coin's backtest. Returns stats + the list of trades."""
-    window = max(pcfg.max_bars_between + 2 * pcfg.pivot_lookback + 10, pcfg.trend_ma + 5)
+def _window_for(p: PatternCfg) -> int:
+    return max(p.max_bars_between + 2 * p.pivot_lookback + 10, p.trend_ma + 5,
+               p.tri_window + 2 * p.pivot_lookback + 5, p.flag_pole_bars + p.flag_max_bars + 5)
+
+
+def backtest_coin(candles: list[dict], coin: str,
+                  detectors: list[tuple], rt_cost_frac: float) -> dict:
+    """Backtest one coin over a list of (family, PatternCfg, RiskCfg) detectors —
+    each pattern family runs with its OWN params. Detectors are checked in order
+    each bar; the first fresh confirmation wins. Returns stats + the trade list."""
+    window = max(_window_for(p) for _, p, _ in detectors)
+    fam_rcfg = {fam: r for fam, _, r in detectors}
+    default_rcfg = detectors[0][2]
     equity = START_EQUITY
     curve = [equity]
     pos: Position | None = None
-    pending = None        # a detected signal awaiting fill at the NEXT bar's open
+    pending = None        # (signal, rcfg) awaiting fill at the NEXT bar's open
     last_ct: int | None = None
     trades: list[dict] = []
 
@@ -174,21 +206,24 @@ def backtest_coin(candles: list[dict], coin: str, pcfg: PatternCfg, rcfg: RiskCf
         #    This is the honest fill — you can't trade at a close that already printed —
         #    and it matches the live bot, which enters at the next available price.
         if pos is None and pending is not None:
-            last_ct = pending.confirm_time          # mark acted regardless, so we don't re-eval it
-            act = plan_trade(pending, bar["open"], equity, rcfg)
+            sig, prc = pending
+            last_ct = sig.confirm_time              # mark acted regardless, so we don't re-eval it
+            act = plan_trade(sig, bar["open"], equity, prc)
             if act is not None:
                 pos = Position(
                     coin=coin, side=act["side"], size=act["size"],
                     entry_px=act["entry"], stop_px=act["stop"], target_px=act["target"],
-                    confirm_time=pending.confirm_time, opened_time=bar["time"], bars_held=0,
-                    p1_time=pending.p1_time, p2_time=pending.p2_time, neckline=pending.neckline,
+                    confirm_time=sig.confirm_time, opened_time=bar["time"], bars_held=0,
+                    p1_time=sig.p1_time, p2_time=sig.p2_time, neckline=sig.neckline,
+                    kind=sig.kind, anchors=sig.anchors,
                 )
             pending = None
 
         # 2) manage an open position against THIS bar's range (may be the bar it opened on)
         if pos is not None:
+            rcfg_x = fam_rcfg.get(family_of(pos.kind), default_rcfg)
             pos.bars_held += 1
-            ex = check_exit(pos, bar["high"], bar["low"], rcfg)
+            ex = check_exit(pos, bar["high"], bar["low"], rcfg_x)
             if ex is not None:
                 reason, exit_px = ex
                 if reason == "timeout":
@@ -202,6 +237,7 @@ def backtest_coin(candles: list[dict], coin: str, pcfg: PatternCfg, rcfg: RiskCf
                     "entry": pos.entry_px, "exit": exit_px, "reason": reason,
                     "stop": pos.stop_px, "target": pos.target_px,
                     "p1_time": pos.p1_time, "p2_time": pos.p2_time, "neckline": pos.neckline,
+                    "kind": pos.kind, "anchors": list(pos.anchors),
                     "pnl": pnl, "R": pnl / risk_dollars if risk_dollars > 0 else 0.0,
                     "bars_held": pos.bars_held,
                     "entry_dt": pd.to_datetime(pos.opened_time, unit="ms", utc=True),
@@ -214,9 +250,11 @@ def backtest_coin(candles: list[dict], coin: str, pcfg: PatternCfg, rcfg: RiskCf
         #    signal is queued and filled at the next bar's open (step 1).
         if pos is None and pending is None:
             w = candles[max(0, t - window + 1): t + 1]
-            sig = detect(w, pcfg, coin=coin)
-            if sig is not None and sig.confirm_time != last_ct:
-                pending = sig
+            for _fam, _pcfg, _rcfg in detectors:
+                sig = detect(w, _pcfg, coin=coin)
+                if sig is not None and sig.confirm_time != last_ct:
+                    pending = (sig, _rcfg)
+                    break
 
     curve_arr = np.array(curve, dtype=float)
     pnls = np.array([tr["pnl"] for tr in trades], dtype=float)
@@ -239,17 +277,19 @@ def backtest_coin(candles: list[dict], coin: str, pcfg: PatternCfg, rcfg: RiskCf
 
 
 def _load_cfg(path: str | None) -> tuple[PatternCfg, RiskCfg, float]:
+    cfg, rt = _load_cfg_dict(path)
+    return PatternCfg.from_dict(cfg.get("pattern", {})), RiskCfg.from_dict(cfg.get("risk", {})), rt
+
+
+def _load_cfg_dict(path: str | None) -> tuple[dict, float]:
     if path and Path(path).exists():
         import yaml
         cfg = yaml.safe_load(Path(path).read_text()) or {}
     else:
         cfg = {}
-    pcfg = PatternCfg.from_dict(cfg.get("pattern", {}))
     risk = cfg.get("risk", {}) or {}
-    rcfg = RiskCfg.from_dict(risk)
-    fee = float(risk.get("taker_fee_bps", 4.5))
-    slip = float(risk.get("slippage_bps", 5.0))
-    return pcfg, rcfg, (fee + slip) / 1e4
+    rt = (float(risk.get("taker_fee_bps", 4.5)) + float(risk.get("slippage_bps", 5.0))) / 1e4
+    return cfg, rt
 
 
 def main() -> None:
@@ -274,46 +314,47 @@ def main() -> None:
     ap.add_argument("--max-break-bars", type=int, default=None, help="pattern: break must occur within N bars of the 2nd peak (0=off)")
     ap.add_argument("--entry-mode", choices=["neckline_break", "second_peak"], default=None, help="pattern: when to enter")
     ap.add_argument("--max-trough-depth", type=float, default=None, help="pattern: reject troughs deeper than this (0=off), e.g. 0.10")
+    ap.add_argument("--patterns", default=None, help="comma list of pattern families: double,head_shoulders,triple,...")
     ap.add_argument("--chart", action="store_true", help="write an interactive HTML chart per coin with trades highlighted")
     ap.add_argument("--chart-dir", default=str(Path(__file__).resolve().parent / "charts"))
     args = ap.parse_args()
 
     coins = [c.strip().upper() for c in args.coins.split(",") if c.strip()]
-    pcfg, rcfg, rt_cost_frac = _load_cfg(args.config)
-    import dataclasses
-    over = {}
-    if args.target_mode is not None: over["target_mode"] = args.target_mode
-    if args.stop_loss_pct is not None: over["stop_loss_pct"] = args.stop_loss_pct
-    if args.take_profit_pct is not None: over["take_profit_pct"] = args.take_profit_pct
-    if args.max_hold_bars is not None: over["max_hold_bars"] = args.max_hold_bars
-    if args.stop_height_frac is not None: over["stop_height_frac"] = args.stop_height_frac
-    if over:
-        rcfg = dataclasses.replace(rcfg, **over)
-    pover = {}
-    if args.trend_ma is not None: pover["trend_ma"] = args.trend_ma
-    if args.vol_confirm_mult is not None: pover["vol_confirm_mult"] = args.vol_confirm_mult
-    if args.trough_depth is not None: pover["min_trough_depth_pct"] = args.trough_depth
-    if args.peak_tol is not None: pover["peak_tolerance_pct"] = args.peak_tol
-    if args.pivot_lookback is not None: pover["pivot_lookback"] = args.pivot_lookback
-    if args.max_bars_between is not None: pover["max_bars_between"] = args.max_bars_between
-    if args.max_break_bars is not None: pover["max_break_bars"] = args.max_break_bars
-    if args.entry_mode is not None: pover["entry_mode"] = args.entry_mode
-    if args.max_trough_depth is not None: pover["max_trough_depth_pct"] = args.max_trough_depth
-    if pover:
-        pcfg = dataclasses.replace(pcfg, **pover)
+    cfg, rt_cost_frac = _load_cfg_dict(args.config)
+    cfg.setdefault("pattern", {}); cfg.setdefault("risk", {})
+    # CLI flags override the GLOBAL pattern/risk defaults (per-family pattern_overrides
+    # in the config still win on top, via resolve_detectors).
+    pat_ov, risk_ov = {}, {}
+    if args.target_mode is not None: risk_ov["target_mode"] = args.target_mode
+    if args.stop_loss_pct is not None: risk_ov["stop_loss_pct"] = args.stop_loss_pct
+    if args.take_profit_pct is not None: risk_ov["take_profit_pct"] = args.take_profit_pct
+    if args.max_hold_bars is not None: risk_ov["max_hold_bars"] = args.max_hold_bars
+    if args.stop_height_frac is not None: risk_ov["stop_height_frac"] = args.stop_height_frac
+    if args.trend_ma is not None: pat_ov["trend_ma"] = args.trend_ma
+    if args.vol_confirm_mult is not None: pat_ov["vol_confirm_mult"] = args.vol_confirm_mult
+    if args.trough_depth is not None: pat_ov["min_trough_depth_pct"] = args.trough_depth
+    if args.peak_tol is not None: pat_ov["peak_tolerance_pct"] = args.peak_tol
+    if args.pivot_lookback is not None: pat_ov["pivot_lookback"] = args.pivot_lookback
+    if args.max_bars_between is not None: pat_ov["max_bars_between"] = args.max_bars_between
+    if args.max_break_bars is not None: pat_ov["max_break_bars"] = args.max_break_bars
+    if args.entry_mode is not None: pat_ov["entry_mode"] = args.entry_mode
+    if args.max_trough_depth is not None: pat_ov["max_trough_depth_pct"] = args.max_trough_depth
+    if args.patterns is not None:
+        pat_ov["pattern_types"] = [p.strip() for p in args.patterns.split(",") if p.strip()]
+    cfg["pattern"] = {**cfg["pattern"], **pat_ov}
+    cfg["risk"] = {**cfg["risk"], **risk_ov}
 
-    tgt = rcfg.target_mode
-    if tgt == "pct":
-        tgt = f"pct(SL={rcfg.stop_loss_pct:.0%},TP={rcfg.take_profit_pct:.0%})"
-    elif tgt == "fixed_rr":
-        tgt = f"fixed_rr({rcfg.fixed_rr:g})"
-    print(f"[backtest] coins={coins} interval={args.interval}  "
-          f"rt_cost={rt_cost_frac*1e4:.1f}bps/side×2  target={tgt}")
-    print(f"           pattern: pivot_lookback={pcfg.pivot_lookback} tol={pcfg.peak_tolerance_pct:.0%} "
-          f"gap=[{pcfg.min_bars_between},{pcfg.max_bars_between}] depth>={pcfg.min_trough_depth_pct:.0%}"
-          f"  trend_ma={pcfg.trend_ma or 'off'} vol_mult={pcfg.vol_confirm_mult or 'off'}")
-    print(f"           risk: {rcfg.risk_per_trade_pct:.2%}/trade maxL={rcfg.max_leverage}x "
-          f"stop_buf={rcfg.stop_buffer_pct:.2%} max_hold={rcfg.max_hold_bars or '∞'}\n")
+    detectors = resolve_detectors(cfg)
+    print(f"[backtest] coins={coins} interval={args.interval}  rt_cost={rt_cost_frac*1e4:.1f}bps/side×2")
+    for fam, p, r in detectors:
+        extra = (f"tol={p.peak_tolerance_pct:.1%} brk={p.max_break_bars}"
+                 if fam in ("double", "head_shoulders", "triple") else
+                 f"tri_win={p.tri_window} flat={p.tri_flat_slope:g}"
+                 if fam in ("triangle", "wedge", "rectangle") else
+                 f"pole={p.flag_pole_bars} cons={p.flag_max_bars}" if fam == "flag" else "")
+        print(f"   {fam:<15} depth>={p.min_trough_depth_pct:.0%} vol={p.vol_confirm_mult or 'off'} "
+              f"stop_frac={r.stop_height_frac} target={r.target_mode}  {extra}")
+    print()
 
     print(f"{'coin':<6} {'trades':>6} {'win%':>6} {'avgR':>6} {'totRet%':>8} {'annRet%':>8} {'maxDD%':>7} {'PF':>6} {'avgHold':>8}")
     all_trades: list[dict] = []
@@ -329,7 +370,7 @@ def main() -> None:
         if len(candles) < 100:
             print(f"{coin:<6} (insufficient data: {len(candles)} bars)")
             continue
-        r = backtest_coin(candles, coin, pcfg, rcfg, rt_cost_frac)
+        r = backtest_coin(candles, coin, detectors, rt_cost_frac)
         results.append(r)
         all_trades.extend(r["trades"])
         pf = "inf" if r["profit_factor"] == float("inf") else f"{r['profit_factor']:.2f}"

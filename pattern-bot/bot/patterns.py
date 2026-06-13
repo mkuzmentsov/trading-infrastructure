@@ -49,6 +49,17 @@ class PatternCfg:
                                         # "second_peak": enter as soon as the 2nd peak/trough is
                                         # confirmed (~pivot_lookback bars after it) — don't wait for
                                         # the neckline. Better price; more false signals.
+    # which pattern families to detect (checked in order; first fresh confirmation wins)
+    pattern_types: tuple = ("double",)  # "double"|"head_shoulders"|"triple"|"triangle"|"wedge"|"rectangle"
+    # --- trendline family (triangles / wedges / rectangle) ---
+    tri_window: int = 50             # bars to fit the upper/lower trendlines over
+    tri_flat_slope: float = 0.0008   # |fractional slope per bar| below this = a "flat" line
+    # --- flags / pennants (impulse "flagpole" + tight consolidation + continuation) ---
+    flag_pole_bars: int = 8          # bars that make up the impulse leg
+    flag_min_bars: int = 4           # min consolidation length
+    flag_max_bars: int = 15          # max consolidation length
+    flag_pole_min_pct: float = 0.04  # pole must move at least this fraction
+    flag_max_retrace: float = 0.5    # consolidation range must be <= this × pole height (tight)
     # --- optional quality filters (0 = disabled) ---
     trend_ma: int = 0                # require regime alignment: only SHORT double-tops when
                                      # the close is below the SMA(trend_ma) and only LONG
@@ -68,6 +79,14 @@ class PatternCfg:
             min_trough_depth_pct=float(d.get("min_trough_depth_pct", 0.03)),
             max_trough_depth_pct=float(d.get("max_trough_depth_pct", 0.0)),
             entry_mode=str(d.get("entry_mode", "neckline_break")).lower(),
+            pattern_types=tuple(d.get("pattern_types", ["double"])),
+            tri_window=int(d.get("tri_window", 50)),
+            tri_flat_slope=float(d.get("tri_flat_slope", 0.0008)),
+            flag_pole_bars=int(d.get("flag_pole_bars", 8)),
+            flag_min_bars=int(d.get("flag_min_bars", 4)),
+            flag_max_bars=int(d.get("flag_max_bars", 15)),
+            flag_pole_min_pct=float(d.get("flag_pole_min_pct", 0.04)),
+            flag_max_retrace=float(d.get("flag_max_retrace", 0.5)),
             trend_ma=int(d.get("trend_ma", 0)),
             vol_confirm_mult=float(d.get("vol_confirm_mult", 0.0)),
         )
@@ -75,16 +94,17 @@ class PatternCfg:
 
 @dataclass(frozen=True)
 class PatternSignal:
-    kind: str            # "double_top" | "double_bottom"
+    kind: str            # "double_top"|"double_bottom"|"head_shoulders"|"inv_head_shoulders"|...
     direction: str       # "short" | "long"
     coin: str            # attached by the caller (detect() is coin-agnostic if blank)
     neckline: float      # the break level
-    extreme_level: float  # higher of the two peaks (top) / lower of the two troughs (bottom)
+    extreme_level: float  # the structural extreme (peak/head for shorts, trough/head for longs)
     height: float        # |extreme_level - neckline| → drives the measured-move target
     entry_ref: float     # close of the confirmation bar (reference entry price)
     confirm_time: int    # ms timestamp of the confirmation candle (stable dedup key)
-    p1_time: int         # ms timestamp of the first peak/trough
-    p2_time: int         # ms timestamp of the second peak/trough
+    p1_time: int         # ms timestamp of the first key pivot
+    p2_time: int         # ms timestamp of the last key pivot
+    anchors: tuple = ()  # ms timestamps of ALL the pattern's pivots (for charting)
 
 
 def _swing_highs(highs: Sequence[float], k: int) -> list[int]:
@@ -124,6 +144,42 @@ def _pick_pair(pivots: list[int], cfg: PatternCfg) -> Optional[tuple[int, int]]:
             return None  # pivots only get older from here
         return p1, p2
     return None
+
+
+def _pick_triple(pivots: list[int], cfg: PatternCfg) -> Optional[tuple[int, int, int]]:
+    """Pick the three most recent pivots (p1<p2<p3) with each consecutive gap in
+    [min_bars_between, max_bars_between]. For head & shoulders / triple patterns."""
+    if len(pivots) < 3:
+        return None
+    p3 = pivots[-1]
+    for i in range(len(pivots) - 2, 0, -1):
+        p2, g = pivots[i], p3 - pivots[i]
+        if g < cfg.min_bars_between:
+            continue
+        if g > cfg.max_bars_between:
+            return None
+        for j in range(i - 1, -1, -1):
+            p1, g2 = pivots[j], p2 - pivots[j]
+            if g2 < cfg.min_bars_between:
+                continue
+            if g2 > cfg.max_bars_between:
+                return None
+            return p1, p2, p3
+        return None
+    return None
+
+
+def _fit_line(xs: list[int], ys: list[float]) -> tuple[float, float]:
+    """Least-squares line y = slope*x + intercept through (xs, ys)."""
+    n = len(xs)
+    sx, sy = sum(xs), sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    d = n * sxx - sx * sx
+    if d == 0:
+        return 0.0, sy / n
+    slope = (n * sxy - sx * sy) / d
+    return slope, (sy - slope * sx) / n
 
 
 def detect(candles: Sequence[Mapping], cfg: PatternCfg, coin: str = "") -> Optional[PatternSignal]:
@@ -167,53 +223,212 @@ def detect(candles: Sequence[Mapping], cfg: PatternCfg, coin: str = "") -> Optio
             return True  # no volume data → don't block
         return vols[cur] >= cfg.vol_confirm_mult * avg
 
-    # ---- double top (short): two ≈equal peaks, break BELOW the neckline ----
-    top = _pick_pair(_swing_highs(highs, k), cfg)
-    if top is not None:
-        p1, p2 = top
-        h1, h2 = highs[p1], highs[p2]
-        neckline = min(lows[p1 : p2 + 1])          # intervening trough
-        peak = max(h1, h2)
-        depth = (peak - neckline) / neckline if neckline > 0 else 0.0
-        equal = abs(h2 - h1) / h1 <= cfg.peak_tolerance_pct if h1 > 0 else False
-        deep = depth >= cfg.min_trough_depth_pct and (cfg.max_trough_depth_pct <= 0
-                                                       or depth <= cfg.max_trough_depth_pct)
-        if cfg.entry_mode == "second_peak":
-            fired = cur == p2 + k  # enter as soon as the 2nd peak is confirmed
-        else:
-            not_stale = cfg.max_break_bars <= 0 or (cur - p2) <= cfg.max_break_bars
-            fired = (closes[cur] < neckline <= closes[prev]) and cur > p2 and not_stale
-        if (equal and deep and fired and _trend_ok("short") and _vol_ok(p1, p2)):
-            return PatternSignal(
-                kind="double_top", direction="short", coin=coin,
-                neckline=neckline, extreme_level=peak, height=peak - neckline,
-                entry_ref=closes[cur], confirm_time=times[cur],
-                p1_time=times[p1], p2_time=times[p2],
-            )
+    types = cfg.pattern_types or ("double",)
 
-    # ---- double bottom (long): two ≈equal troughs, break ABOVE the neckline ----
-    bot = _pick_pair(_swing_lows(lows, k), cfg)
-    if bot is not None:
-        p1, p2 = bot
-        l1, l2 = lows[p1], lows[p2]
-        neckline = max(highs[p1 : p2 + 1])          # intervening peak
-        trough = min(l1, l2)
-        depth = (neckline - trough) / trough if trough > 0 else 0.0
-        equal = abs(l2 - l1) / l1 <= cfg.peak_tolerance_pct if l1 > 0 else False
-        deep = depth >= cfg.min_trough_depth_pct and (cfg.max_trough_depth_pct <= 0
-                                                      or depth <= cfg.max_trough_depth_pct)
+    def _fired_short(brk_idx: int, neckline: float) -> bool:
         if cfg.entry_mode == "second_peak":
-            fired = cur == p2 + k  # enter as soon as the 2nd trough is confirmed
-        else:
-            not_stale = cfg.max_break_bars <= 0 or (cur - p2) <= cfg.max_break_bars
-            fired = (closes[cur] > neckline >= closes[prev]) and cur > p2 and not_stale
-        if (equal and deep and fired and _trend_ok("long") and _vol_ok(p1, p2)):
-            return PatternSignal(
-                kind="double_bottom", direction="long", coin=coin,
-                neckline=neckline, extreme_level=trough, height=neckline - trough,
-                entry_ref=closes[cur], confirm_time=times[cur],
-                p1_time=times[p1], p2_time=times[p2],
-            )
+            return cur == brk_idx + k
+        not_stale = cfg.max_break_bars <= 0 or (cur - brk_idx) <= cfg.max_break_bars
+        return (closes[cur] < neckline <= closes[prev]) and cur > brk_idx and not_stale
+
+    def _fired_long(brk_idx: int, neckline: float) -> bool:
+        if cfg.entry_mode == "second_peak":
+            return cur == brk_idx + k
+        not_stale = cfg.max_break_bars <= 0 or (cur - brk_idx) <= cfg.max_break_bars
+        return (closes[cur] > neckline >= closes[prev]) and cur > brk_idx and not_stale
+
+    if "double" in types:
+        # ---- double top (short): two ≈equal peaks, break BELOW the neckline ----
+        top = _pick_pair(_swing_highs(highs, k), cfg)
+        if top is not None:
+            p1, p2 = top
+            h1, h2 = highs[p1], highs[p2]
+            neckline = min(lows[p1 : p2 + 1])          # intervening trough
+            peak = max(h1, h2)
+            depth = (peak - neckline) / neckline if neckline > 0 else 0.0
+            equal = abs(h2 - h1) / h1 <= cfg.peak_tolerance_pct if h1 > 0 else False
+            deep = depth >= cfg.min_trough_depth_pct and (cfg.max_trough_depth_pct <= 0
+                                                           or depth <= cfg.max_trough_depth_pct)
+            if equal and deep and _fired_short(p2, neckline) and _trend_ok("short") and _vol_ok(p1, p2):
+                return PatternSignal(
+                    kind="double_top", direction="short", coin=coin,
+                    neckline=neckline, extreme_level=peak, height=peak - neckline,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[p1], p2_time=times[p2], anchors=(times[p1], times[p2]))
+
+        # ---- double bottom (long): two ≈equal troughs, break ABOVE the neckline ----
+        bot = _pick_pair(_swing_lows(lows, k), cfg)
+        if bot is not None:
+            p1, p2 = bot
+            l1, l2 = lows[p1], lows[p2]
+            neckline = max(highs[p1 : p2 + 1])          # intervening peak
+            trough = min(l1, l2)
+            depth = (neckline - trough) / trough if trough > 0 else 0.0
+            equal = abs(l2 - l1) / l1 <= cfg.peak_tolerance_pct if l1 > 0 else False
+            deep = depth >= cfg.min_trough_depth_pct and (cfg.max_trough_depth_pct <= 0
+                                                          or depth <= cfg.max_trough_depth_pct)
+            if equal and deep and _fired_long(p2, neckline) and _trend_ok("long") and _vol_ok(p1, p2):
+                return PatternSignal(
+                    kind="double_bottom", direction="long", coin=coin,
+                    neckline=neckline, extreme_level=trough, height=neckline - trough,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[p1], p2_time=times[p2], anchors=(times[p1], times[p2]))
+
+    if "head_shoulders" in types:
+        tol = cfg.peak_tolerance_pct
+        # ---- head & shoulders (short): LS, higher head, RS≈LS; break BELOW neckline ----
+        hs = _pick_triple(_swing_highs(highs, k), cfg)
+        if hs is not None:
+            ls, hd, rs = hs
+            a, b, c = highs[ls], highs[hd], highs[rs]
+            neckline = min(min(lows[ls:hd + 1]), min(lows[hd:rs + 1]))  # the two troughs
+            sh = min(a, c)
+            shoulders_eq = abs(c - a) / a <= tol if a > 0 else False
+            head_above = b > a and b > c and (b - sh) / sh > tol
+            deep = (sh - neckline) / neckline >= cfg.min_trough_depth_pct if neckline > 0 else False
+            if shoulders_eq and head_above and deep and _fired_short(rs, neckline) \
+                    and _trend_ok("short") and _vol_ok(ls, rs):
+                return PatternSignal(
+                    kind="head_shoulders", direction="short", coin=coin,
+                    neckline=neckline, extreme_level=b, height=b - neckline,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[ls], p2_time=times[rs], anchors=(times[ls], times[hd], times[rs]))
+
+        # ---- inverse head & shoulders (long): LS, lower head, RS≈LS; break ABOVE neckline ----
+        ihs = _pick_triple(_swing_lows(lows, k), cfg)
+        if ihs is not None:
+            ls, hd, rs = ihs
+            a, b, c = lows[ls], lows[hd], lows[rs]
+            neckline = max(max(highs[ls:hd + 1]), max(highs[hd:rs + 1]))  # the two peaks
+            sh = max(a, c)
+            shoulders_eq = abs(c - a) / a <= tol if a > 0 else False
+            head_below = b < a and b < c and (sh - b) / b > tol
+            deep = (neckline - sh) / sh >= cfg.min_trough_depth_pct if sh > 0 else False
+            if shoulders_eq and head_below and deep and _fired_long(rs, neckline) \
+                    and _trend_ok("long") and _vol_ok(ls, rs):
+                return PatternSignal(
+                    kind="inv_head_shoulders", direction="long", coin=coin,
+                    neckline=neckline, extreme_level=b, height=neckline - b,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[ls], p2_time=times[rs], anchors=(times[ls], times[hd], times[rs]))
+
+    if "triple" in types:
+        tol = cfg.peak_tolerance_pct
+        # ---- triple top (short): three ≈equal peaks, break BELOW support ----
+        tp = _pick_triple(_swing_highs(highs, k), cfg)
+        if tp is not None:
+            i1, i2, i3 = tp
+            ha, hb, hc = highs[i1], highs[i2], highs[i3]
+            mx, mn = max(ha, hb, hc), min(ha, hb, hc)
+            neckline = min(min(lows[i1:i2 + 1]), min(lows[i2:i3 + 1]))   # support (lower trough)
+            equal = (mx - mn) / mn <= tol if mn > 0 else False
+            deep = (mn - neckline) / neckline >= cfg.min_trough_depth_pct if neckline > 0 else False
+            if equal and deep and _fired_short(i3, neckline) and _trend_ok("short") and _vol_ok(i1, i3):
+                return PatternSignal(
+                    kind="triple_top", direction="short", coin=coin,
+                    neckline=neckline, extreme_level=mx, height=mx - neckline,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[i1], p2_time=times[i3], anchors=(times[i1], times[i2], times[i3]))
+
+        # ---- triple bottom (long): three ≈equal troughs, break ABOVE resistance ----
+        tb = _pick_triple(_swing_lows(lows, k), cfg)
+        if tb is not None:
+            i1, i2, i3 = tb
+            la, lb, lc = lows[i1], lows[i2], lows[i3]
+            mx, mn = max(la, lb, lc), min(la, lb, lc)
+            neckline = max(max(highs[i1:i2 + 1]), max(highs[i2:i3 + 1]))  # resistance (higher peak)
+            equal = (mx - mn) / mn <= tol if mn > 0 else False
+            deep = (neckline - mx) / mx >= cfg.min_trough_depth_pct if mx > 0 else False
+            if equal and deep and _fired_long(i3, neckline) and _trend_ok("long") and _vol_ok(i1, i3):
+                return PatternSignal(
+                    kind="triple_bottom", direction="long", coin=coin,
+                    neckline=neckline, extreme_level=mn, height=neckline - mn,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[i1], p2_time=times[i3], anchors=(times[i1], times[i2], times[i3]))
+
+    if any(t in types for t in ("triangle", "wedge", "rectangle")):
+        # Fit an upper line through recent swing highs and a lower line through
+        # recent swing lows; classify by their slopes; enter on a breakout.
+        lo_i = max(0, n - cfg.tri_window)
+        hidx = [i for i in _swing_highs(highs, k) if i >= lo_i]
+        lidx = [i for i in _swing_lows(lows, k) if i >= lo_i]
+        if len(hidx) >= 2 and len(lidx) >= 2:
+            us, ui = _fit_line(hidx, [highs[i] for i in hidx])   # upper trendline
+            ls_, li = _fit_line(lidx, [lows[i] for i in lidx])   # lower trendline
+            uat = lambda x: us * x + ui
+            lat = lambda x: ls_ * x + li
+            ref = closes[cur] or 1.0
+            su, sl = us / ref, ls_ / ref              # fractional slope per bar
+            fe = cfg.tri_flat_slope
+            x0 = min(min(hidx), min(lidx))            # pattern start
+            H = uat(x0) - lat(x0)                     # widest part (measured-move height)
+            width_cur = uat(cur) - lat(cur)
+            ok_geom = H > 0 and width_cur > 0 and (H / ref) >= cfg.min_trough_depth_pct
+            # classify -> (kind, allow_up_break, allow_down_break)
+            cls = None
+            if abs(su) < fe and abs(sl) < fe:
+                cls = ("rectangle", True, True)
+            elif abs(su) < fe and sl > fe:
+                cls = ("triangle", True, False)       # ascending → break up
+            elif su < -fe and abs(sl) < fe:
+                cls = ("triangle", False, True)       # descending → break down
+            elif su < -fe and sl > fe:
+                cls = ("triangle", True, True)        # symmetrical → either way
+            elif su > fe and sl > fe and sl > su:
+                cls = ("wedge", False, True)          # rising wedge → break down (bearish)
+            elif su < -fe and sl < -fe and su < sl:
+                cls = ("wedge", True, False)          # falling wedge → break up (bullish)
+            if cls and ok_geom and cls[0] in types:
+                kind, allow_up, allow_down = cls
+                up = closes[cur] > uat(cur) and closes[prev] <= uat(prev)
+                down = closes[cur] < lat(cur) and closes[prev] >= lat(prev)
+                anchors = tuple(times[i] for i in sorted(hidx + lidx))
+                if allow_up and up and _trend_ok("long") and _vol_ok(x0, cur):
+                    neck = uat(cur)
+                    return PatternSignal(
+                        kind=kind, direction="long", coin=coin,
+                        neckline=neck, extreme_level=lat(cur), height=H,
+                        entry_ref=closes[cur], confirm_time=times[cur],
+                        p1_time=times[x0], p2_time=times[cur], anchors=anchors)
+                if allow_down and down and _trend_ok("short") and _vol_ok(x0, cur):
+                    neck = lat(cur)
+                    return PatternSignal(
+                        kind=kind, direction="short", coin=coin,
+                        neckline=neck, extreme_level=uat(cur), height=H,
+                        entry_ref=closes[cur], confirm_time=times[cur],
+                        p1_time=times[x0], p2_time=times[cur], anchors=anchors)
+
+    if "flag" in types:
+        # Impulse "flagpole" + tight consolidation + breakout continuing the move.
+        pb = cfg.flag_pole_bars
+        for fc in range(cfg.flag_min_bars, cfg.flag_max_bars + 1):
+            cs = cur - fc                       # consolidation = [cs .. cur-1]; breakout at cur
+            ps = cs - pb                         # pole = [ps .. cs]
+            if ps < 0:
+                break
+            pole_move = (closes[cs] - closes[ps]) / closes[ps] if closes[ps] > 0 else 0.0
+            pole_h = abs(closes[cs] - closes[ps])
+            c_hi = max(highs[cs:cur]); c_lo = min(lows[cs:cur])
+            tight = pole_h > 0 and (c_hi - c_lo) <= cfg.flag_max_retrace * pole_h
+            if not tight:
+                continue
+            anchors = (times[ps], times[cs], times[cur - 1])
+            # bull flag: up pole, consolidation, break ABOVE the consolidation high
+            if pole_move >= cfg.flag_pole_min_pct and closes[cur] > c_hi and closes[prev] <= c_hi \
+                    and _trend_ok("long") and _vol_ok(ps, cur):
+                return PatternSignal(
+                    kind="flag", direction="long", coin=coin,
+                    neckline=c_hi, extreme_level=c_lo, height=pole_h,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[ps], p2_time=times[cur], anchors=anchors)
+            # bear flag: down pole, consolidation, break BELOW the consolidation low
+            if pole_move <= -cfg.flag_pole_min_pct and closes[cur] < c_lo and closes[prev] >= c_lo \
+                    and _trend_ok("short") and _vol_ok(ps, cur):
+                return PatternSignal(
+                    kind="flag", direction="short", coin=coin,
+                    neckline=c_lo, extreme_level=c_hi, height=pole_h,
+                    entry_ref=closes[cur], confirm_time=times[cur],
+                    p1_time=times[ps], p2_time=times[cur], anchors=anchors)
 
     return None
 

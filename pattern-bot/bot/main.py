@@ -28,7 +28,7 @@ import yaml
 
 from broker import Broker, BrokerPosition, OrderError, make_broker
 from patterns import PatternCfg, detect
-from strategy import Position, RiskCfg, decide
+from strategy import Position, RiskCfg, decide, family_of, resolve_detectors
 
 log = logging.getLogger("pattern-bot")
 
@@ -117,22 +117,25 @@ def _pos_from_state(d: dict | None) -> Position | None:
         entry_px=float(d["entry_px"]), stop_px=float(d["stop_px"]),
         target_px=float(d["target_px"]), confirm_time=int(d["confirm_time"]),
         opened_time=int(d.get("opened_time", 0)), bars_held=int(d.get("bars_held", 0)),
+        kind=str(d.get("kind", "")),
     )
 
 
 def _pos_to_state(p: Position) -> dict:
     return {"coin": p.coin, "side": p.side, "size": p.size, "entry_px": p.entry_px,
             "stop_px": p.stop_px, "target_px": p.target_px, "confirm_time": p.confirm_time,
-            "opened_time": p.opened_time, "bars_held": p.bars_held}
+            "opened_time": p.opened_time, "bars_held": p.bars_held, "kind": p.kind}
 
 
-def process_coin(coin: str, broker: Broker, pcfg: PatternCfg, rcfg: RiskCfg,
-                 interval: str, lookback: int, equity: float,
-                 cstate: dict, live: bool, live_pos: BrokerPosition | None) -> dict:
-    """Run one coin: detect → decide → execute. Mutates and returns cstate
-    (last_confirm_time + tracked trade). Logs PATTERN/OPEN/CLOSE lines."""
+def process_coin(coin: str, broker: Broker, detectors: list, interval: str,
+                 lookback: int, equity: float, cstate: dict, live: bool,
+                 live_pos: BrokerPosition | None) -> dict:
+    """Run one coin: detect (across all pattern families, each with its own params)
+    → decide → execute. Mutates and returns cstate. Logs PATTERN/OPEN/CLOSE lines."""
+    pcfg0 = detectors[0][1]
+    fam_rcfg = {fam: r for fam, _, r in detectors}
     candles = broker.candles(coin, interval, lookback)
-    if len(candles) < 2 * pcfg.pivot_lookback + pcfg.min_bars_between + 2:
+    if len(candles) < 2 * pcfg0.pivot_lookback + pcfg0.min_bars_between + 2:
         log.warning("%s: only %d candles, need more for detection — skipping", coin, len(candles))
         return cstate
     mark = broker.mark_px(coin) or candles[-1]["close"]
@@ -150,13 +153,24 @@ def process_coin(coin: str, broker: Broker, pcfg: PatternCfg, rcfg: RiskCfg,
     if pos is not None and pos.opened_time:
         pos.bars_held = max(0, int((last_close_t - pos.opened_time) / ms))
 
-    signal = detect(candles, pcfg, coin=coin)
+    # Detect across families in priority order; first fresh confirmation wins.
+    signal, sig_rcfg = None, None
+    for fam, pcfg, rcfg in detectors:
+        s = detect(candles, pcfg, coin=coin)
+        if s is not None:
+            signal, sig_rcfg = s, rcfg
+            break
     last_ct = cstate.get("last_confirm_time")
     if signal is not None and signal.confirm_time != last_ct:
         log.info("PATTERN %s %s: neckline=%.6g extreme=%.6g height=%.6g → CONFIRMED @ close=%.6g",
                  signal.kind, coin, signal.neckline, signal.extreme_level,
                  signal.height, signal.entry_ref)
 
+    # Use the open position's family rcfg to manage it; else the firing signal's rcfg.
+    if pos is not None:
+        rcfg = fam_rcfg.get(family_of(pos.kind), detectors[0][2])
+    else:
+        rcfg = sig_rcfg if sig_rcfg is not None else detectors[0][2]
     acts = decide(signal, pos, equity, mark, last_ct, rcfg)
     for a in acts:
         kind = a["kind"]
@@ -172,7 +186,8 @@ def process_coin(coin: str, broker: Broker, pcfg: PatternCfg, rcfg: RiskCfg,
                 continue
             new_pos = Position(coin=coin, side=a["side"], size=a["size"], entry_px=a["entry"],
                                stop_px=a["stop"], target_px=a["target"],
-                               confirm_time=a["confirm_time"], opened_time=last_close_t, bars_held=0)
+                               confirm_time=a["confirm_time"], opened_time=last_close_t, bars_held=0,
+                               kind=a.get("pattern", ""))
             cstate["trade"] = _pos_to_state(new_pos)
             cstate["last_confirm_time"] = a["confirm_time"]
         elif kind == "close_trade" and pos is not None:
@@ -223,8 +238,9 @@ def main() -> int:
              cfg.get("exchange", "hyperliquid"), dry, coins, interval)
 
     validate_credentials(cfg, dry_run=dry)
-    pcfg = PatternCfg.from_dict(cfg.get("pattern", {}))
-    rcfg = RiskCfg.from_dict(cfg.get("risk", {}))
+    detectors = resolve_detectors(cfg)
+    log.info("detectors: %s", ", ".join(fam for fam, _, _ in detectors))
+    max_lev = max((int(r.max_leverage) for _, _, r in detectors), default=5)
     broker = make_broker(cfg)
 
     paper_equity = float(cfg.get("paper_equity", 10_000.0))
@@ -235,7 +251,7 @@ def main() -> int:
     # Set leverage once at startup so HL margin matches our notional cap.
     for c in coins:
         try:
-            broker.set_leverage(c, max(1, int(rcfg.max_leverage)))
+            broker.set_leverage(c, max(1, max_lev))
         except Exception as e:  # noqa: BLE001
             log.warning("set_leverage %s: %s", c, e)
 
@@ -253,7 +269,7 @@ def main() -> int:
             for c in coins:
                 cstate = state["coins"].setdefault(c, {"last_confirm_time": None, "trade": None})
                 state["coins"][c] = process_coin(
-                    c, broker, pcfg, rcfg, interval, lookback, equity,
+                    c, broker, detectors, interval, lookback, equity,
                     cstate, live, live_positions.get(c))
             save_state(state_path, state)
             consec_err = 0
