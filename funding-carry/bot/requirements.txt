@@ -1,4 +1,6 @@
 ccxt>=4.3.0
-hyperliquid-python-sdk>=0.9.0
+# >=0.24.0 required: HL spotMeta token indices are no longer contiguous list
+# positions; older SDKs IndexError in Info.__init__.
+hyperliquid-python-sdk>=0.24.0
 eth-account>=0.11.0
 PyYAML>=6.0

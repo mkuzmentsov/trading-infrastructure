@@ -5,7 +5,7 @@ botName: funding-carry-bot
 
 image:
   repository: mkuzmentsov/funding-carry-bot
-  tag: "0.1"
+  tag: "0.2"
   pullPolicy: IfNotPresent
 
 # `botConfig` is rendered verbatim into /app/config/config.yaml (as a mounted
