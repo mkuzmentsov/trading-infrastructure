@@ -63,3 +63,8 @@ pattern-bot/data/
 pattern-bot/charts/
 pattern-bot/bot/config.yaml
 pattern-bot/bot/pattern_state.json
+# Per-release Helm overlays carry credentials — keep examples committed only.
+pattern-bot/k8s/helm/bots/*
+!pattern-bot/k8s/helm/bots/*.yaml.example
+# The chart's files/bot/ is populated by deploy.sh from pattern-bot/bot/.
+pattern-bot/k8s/helm/pattern-bot/files/bot/*.py

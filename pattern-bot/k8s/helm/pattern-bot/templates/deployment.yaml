@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pattern-bot.name" . }}
+  labels:
+    {{- include "pattern-bot.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): only one bot may hold a position at a time;
+  # two replicas would double-open/close. State is on a RWO PVC (also forbids
+  # two simultaneous mounts).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pattern-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pattern-bot.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Re-roll the pod when code or config changes (without a tag bump).
+        checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bot
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-u", "/app/bot/main.py"]
+          args:
+            - "--config"
+            - "/app/config/config.yaml"
+            - "--state-dir"
+            - "/app/state"
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          volumeMounts:
+            - name: bot-code
+              mountPath: /app/bot
+              readOnly: true
+            - name: bot-config
+              mountPath: /app/config
+              readOnly: true
+            - name: bot-state
+              mountPath: /app/state
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: bot-code
+          configMap:
+            name: {{ include "pattern-bot.name" . }}-script
+        - name: bot-config
+          secret:
+            secretName: {{ include "pattern-bot.name" . }}-secret
+        - name: bot-state
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "pattern-bot.name" . }}-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

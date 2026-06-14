@@ -238,7 +238,7 @@ def detect(candles: Sequence[Mapping], cfg: PatternCfg, coin: str = "") -> Optio
         return (closes[cur] > neckline >= closes[prev]) and cur > brk_idx and not_stale
 
     if "double" in types:
-        # ---- double top (short): two ≈equal peaks, break BELOW the neckline ----
+        # ---- double top (short): two ≈equal peaks ----
         top = _pick_pair(_swing_highs(highs, k), cfg)
         if top is not None:
             p1, p2 = top
@@ -256,7 +256,7 @@ def detect(candles: Sequence[Mapping], cfg: PatternCfg, coin: str = "") -> Optio
                     entry_ref=closes[cur], confirm_time=times[cur],
                     p1_time=times[p1], p2_time=times[p2], anchors=(times[p1], times[p2]))
 
-        # ---- double bottom (long): two ≈equal troughs, break ABOVE the neckline ----
+        # ---- double bottom (long): two ≈equal troughs ----
         bot = _pick_pair(_swing_lows(lows, k), cfg)
         if bot is not None:
             p1, p2 = bot

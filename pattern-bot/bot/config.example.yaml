@@ -14,14 +14,15 @@ candle_lookback: 400     # closed bars pulled each loop for detection
 # Re-add coins only after they backtest positively.
 coins: [BTC]
 
-paper_equity: 10000      # equity used for sizing when no live balance is available (dry_run / no creds)
+start_equity: 1000       # backtest starting balance (live uses the real account balance)
+paper_equity: 1000       # equity used for sizing when no live balance is available (dry_run / no creds)
 
 pattern:
   # Active pattern families, in priority order (first fresh confirmation per bar wins).
   # BTC 1h: kept the families that backtested with an edge; dropped triple, flag, and
   # head_shoulders (no edge / too rare). Each family's params are set in
   # `pattern_overrides` below; the values here are global fallbacks.
-  pattern_types: [rectangle, double, wedge, triangle]
+  pattern_types: [rectangle, double, wedge]   # triangle dropped — net-negative in- and out-of-sample
   pivot_lookback: 5          # bars each side required to qualify a swing high/low
   peak_tolerance_pct: 0.01   # two peaks/troughs must be within 1% to count as "equal".
                              # (3% was far too loose — it paired clear higher-highs as "double tops".)
@@ -35,8 +36,12 @@ pattern:
   vol_confirm_mult: 1.5      # require the breakout bar's volume >= 1.5× the pattern's avg volume
 
 risk:
-  risk_per_trade_pct: 0.005  # risk 0.5% of equity to the stop, per trade
-  max_leverage: 5            # cap notional at equity * max_leverage
+  sizing_mode: fixed_fraction # fixed_fraction: notional = position_pct × max_leverage × equity
+                              #                  (commit position_pct as margin at max_leverage)
+                              # risk: size so a stop-out loses risk_per_trade_pct of equity
+  position_pct: 0.25         # commit 25% of equity as margin per trade
+  max_leverage: 2            # 2x perps → 25% margin controls 50% notional exposure
+  risk_per_trade_pct: 0.005  # only used when sizing_mode: risk
   stop_buffer_pct: 0.002     # used only when stop_height_frac=0 (stop beyond the 2nd peak/trough)
   stop_height_frac: 0.5      # stop INSIDE the pattern, 0.5 of the height from the neckline → ≈2:1 RR
   target_mode: measured_move # measured_move | fixed_rr | pct
@@ -59,9 +64,9 @@ pattern_overrides:
     min_trough_depth_pct: 0.02
     vol_confirm_mult: 0
     stop_height_frac: 0.0
-  double:                    # ~29 trades, PF ~1.37
-    peak_tolerance_pct: 0.02
-    min_trough_depth_pct: 0.02
+  double:                    # "clean" double tops/bottoms on a confirmed neckline break
+    peak_tolerance_pct: 0.01   # peaks within 1%
+    min_trough_depth_pct: 0.03  # trough >= 3% deep (the quality lever)
     max_break_bars: 12
     vol_confirm_mult: 1.5
     stop_height_frac: 0.5
@@ -77,6 +82,14 @@ pattern_overrides:
     min_trough_depth_pct: 0.02
     vol_confirm_mult: 0
     stop_height_frac: 0.0
+
+# Telegram notifications (optional): pattern matched / trade opened / trade closed.
+# Blank token or chat_id = disabled (safe no-op). Token from @BotFather; chat_id
+# from @userinfobot. Fires in dry-run too, so you can test alerts without real trades.
+telegram:
+  enabled: true
+  bot_token: ""
+  chat_id: ""
 
 # --- credentials (fill in config.yaml, never commit) ---
 hyperliquid:

@@ -37,8 +37,12 @@ def family_of(kind: str) -> str:
 
 @dataclass(frozen=True)
 class RiskCfg:
-    risk_per_trade_pct: float = 0.005   # fraction of equity risked to the stop
-    max_leverage: float = 5.0           # cap notional at equity * max_leverage
+    sizing_mode: str = "risk"           # "risk": size so a stop-out loses risk_per_trade_pct of equity.
+                                        # "fixed_fraction": notional = position_pct × max_leverage × equity
+                                        #   (i.e. commit position_pct of equity as margin at max_leverage).
+    position_pct: float = 0.25          # fixed_fraction: margin fraction of equity committed per trade
+    risk_per_trade_pct: float = 0.005   # risk mode: fraction of equity risked to the stop
+    max_leverage: float = 5.0           # leverage (also caps notional in risk mode)
     stop_buffer_pct: float = 0.002      # place stop this far beyond the peak/trough
     stop_height_frac: float = 0.0       # >0: place stop INSIDE the pattern, this fraction of the
                                         # height back from the neckline toward the peak/trough
@@ -54,6 +58,8 @@ class RiskCfg:
     def from_dict(cls, d: Mapping) -> "RiskCfg":
         d = d or {}
         return cls(
+            sizing_mode=str(d.get("sizing_mode", "risk")).lower(),
+            position_pct=float(d.get("position_pct", 0.25)),
             risk_per_trade_pct=float(d.get("risk_per_trade_pct", 0.005)),
             max_leverage=float(d.get("max_leverage", 5.0)),
             stop_buffer_pct=float(d.get("stop_buffer_pct", 0.002)),
@@ -145,14 +151,19 @@ def plan_trade(signal: PatternSignal, mark_px: float, equity: float,
     if not long and target >= mark_px:
         return None
 
-    # Risk-based size, capped by leverage.
-    risk_amount = cfg.risk_per_trade_pct * equity
-    size = risk_amount / risk_per_unit
-    notional = size * mark_px
-    max_notional = equity * cfg.max_leverage
-    if notional > max_notional:
-        size = max_notional / mark_px
+    # Position size.
+    if cfg.sizing_mode == "fixed_fraction":
+        # Commit position_pct of equity as margin, at max_leverage → notional exposure.
+        notional = cfg.position_pct * cfg.max_leverage * equity
+        size = notional / mark_px
+    else:
+        # Risk-based: size so a stop-out loses risk_per_trade_pct of equity; cap by leverage.
+        size = (cfg.risk_per_trade_pct * equity) / risk_per_unit
         notional = size * mark_px
+        max_notional = equity * cfg.max_leverage
+        if notional > max_notional:
+            size = max_notional / mark_px
+            notional = size * mark_px
     if notional < cfg.min_notional or size <= 0:
         return None
 

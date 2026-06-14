@@ -33,7 +33,7 @@ from strategy import (Position, RiskCfg, check_exit, plan_trade,  # noqa: E402
                       family_of, resolve_detectors)
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
-START_EQUITY = 10_000.0
+START_EQUITY = 1_000.0   # backtest starting balance (live uses the real account balance)
 
 
 # Each pattern family gets its OWN bright label colour (peaks + on-chart name).
@@ -186,14 +186,15 @@ def _window_for(p: PatternCfg) -> int:
 
 
 def backtest_coin(candles: list[dict], coin: str,
-                  detectors: list[tuple], rt_cost_frac: float) -> dict:
+                  detectors: list[tuple], rt_cost_frac: float,
+                  start_equity: float = START_EQUITY) -> dict:
     """Backtest one coin over a list of (family, PatternCfg, RiskCfg) detectors —
     each pattern family runs with its OWN params. Detectors are checked in order
     each bar; the first fresh confirmation wins. Returns stats + the trade list."""
     window = max(_window_for(p) for _, p, _ in detectors)
     fam_rcfg = {fam: r for fam, _, r in detectors}
     default_rcfg = detectors[0][2]
-    equity = START_EQUITY
+    equity = start_equity
     curve = [equity]
     pos: Position | None = None
     pending = None        # (signal, rcfg) awaiting fill at the NEXT bar's open
@@ -261,7 +262,7 @@ def backtest_coin(candles: list[dict], coin: str,
     wins = pnls[pnls > 0]
     losses = pnls[pnls < 0]
     span_days = (candles[-1]["time"] - candles[0]["time"]) / 86_400_000 if len(candles) > 1 else 1.0
-    total_ret = (equity - START_EQUITY) / START_EQUITY
+    total_ret = (equity - start_equity) / start_equity
     return {
         "coin": coin,
         "n_trades": len(trades),
@@ -274,6 +275,30 @@ def backtest_coin(candles: list[dict], coin: str,
         "avg_hold": float(np.mean([tr["bars_held"] for tr in trades])) if trades else 0.0,
         "trades": trades,
     }
+
+
+def _monthly_report(trades: list[dict]) -> None:
+    """Print per-month and per-year trade stats (n, win%, total R, $ PnL)."""
+    if not trades:
+        print("\n[monthly] no trades")
+        return
+    df = pd.DataFrame(trades)
+    df["entry_dt"] = pd.to_datetime(df["entry_dt"])
+    df["month"] = df["entry_dt"].dt.strftime("%Y-%m")
+    df["year"] = df["entry_dt"].dt.year
+    df["win"] = df["pnl"] > 0
+    print("\n[monthly]  (trades grouped by entry month)")
+    print(f"{'month':<9}{'n':>4}{'win%':>6}{'totR':>8}{'pnl$':>9}{'cumR':>8}")
+    cum = 0.0
+    for mo, g in df.groupby("month"):
+        cum += g["R"].sum()
+        print(f"{mo:<9}{len(g):>4}{g['win'].mean()*100:>5.0f}%{g['R'].sum():>+8.2f}"
+              f"{g['pnl'].sum():>+9.0f}{cum:>+8.1f}")
+    print(f"\n[yearly]")
+    print(f"{'year':<6}{'n':>4}{'win%':>6}{'avgR':>6}{'totR':>8}{'pnl$':>9}")
+    for yr, g in df.groupby("year"):
+        print(f"{yr:<6}{len(g):>4}{g['win'].mean()*100:>5.0f}%{g['R'].mean():>+6.2f}"
+              f"{g['R'].sum():>+8.1f}{g['pnl'].sum():>+9.0f}")
 
 
 def _load_cfg(path: str | None) -> tuple[PatternCfg, RiskCfg, float]:
@@ -315,6 +340,7 @@ def main() -> None:
     ap.add_argument("--entry-mode", choices=["neckline_break", "second_peak"], default=None, help="pattern: when to enter")
     ap.add_argument("--max-trough-depth", type=float, default=None, help="pattern: reject troughs deeper than this (0=off), e.g. 0.10")
     ap.add_argument("--patterns", default=None, help="comma list of pattern families: double,head_shoulders,triple,...")
+    ap.add_argument("--monthly", action="store_true", help="print per-month and per-year trade stats")
     ap.add_argument("--chart", action="store_true", help="write an interactive HTML chart per coin with trades highlighted")
     ap.add_argument("--chart-dir", default=str(Path(__file__).resolve().parent / "charts"))
     args = ap.parse_args()
@@ -345,7 +371,12 @@ def main() -> None:
     cfg["risk"] = {**cfg["risk"], **risk_ov}
 
     detectors = resolve_detectors(cfg)
-    print(f"[backtest] coins={coins} interval={args.interval}  rt_cost={rt_cost_frac*1e4:.1f}bps/side×2")
+    start_equity = float(cfg.get("start_equity", START_EQUITY))
+    _r0 = detectors[0][2]
+    sizing = (f"fixed {_r0.position_pct:.0%}×{_r0.max_leverage:g}x = {_r0.position_pct*_r0.max_leverage:.0%} notional"
+              if _r0.sizing_mode == "fixed_fraction" else f"risk {_r0.risk_per_trade_pct:.2%}/trade")
+    print(f"[backtest] coins={coins} interval={args.interval}  start=${start_equity:,.0f}  "
+          f"sizing={sizing}  rt_cost={rt_cost_frac*1e4:.1f}bps/side×2")
     for fam, p, r in detectors:
         extra = (f"tol={p.peak_tolerance_pct:.1%} brk={p.max_break_bars}"
                  if fam in ("double", "head_shoulders", "triple") else
@@ -370,7 +401,7 @@ def main() -> None:
         if len(candles) < 100:
             print(f"{coin:<6} (insufficient data: {len(candles)} bars)")
             continue
-        r = backtest_coin(candles, coin, detectors, rt_cost_frac)
+        r = backtest_coin(candles, coin, detectors, rt_cost_frac, start_equity)
         results.append(r)
         all_trades.extend(r["trades"])
         pf = "inf" if r["profit_factor"] == float("inf") else f"{r['profit_factor']:.2f}"
@@ -393,6 +424,9 @@ def main() -> None:
               f"{'':>8} {'':>8} {'':>7} "
               f"{(wins.sum()/abs(losses.sum())) if losses.sum() else float('nan'):>6.2f} "
               f"{np.mean([tr['bars_held'] for tr in all_trades]) if n else 0:>7.1f}")
+
+    if args.monthly:
+        _monthly_report(all_trades)
 
     if args.trades:
         print("\n[trades]")

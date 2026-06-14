@@ -27,6 +27,7 @@ from pathlib import Path
 import yaml
 
 from broker import Broker, BrokerPosition, OrderError, make_broker
+from notify import Notifier
 from patterns import PatternCfg, detect
 from strategy import Position, RiskCfg, decide, family_of, resolve_detectors
 
@@ -129,7 +130,7 @@ def _pos_to_state(p: Position) -> dict:
 
 def process_coin(coin: str, broker: Broker, detectors: list, interval: str,
                  lookback: int, equity: float, cstate: dict, live: bool,
-                 live_pos: BrokerPosition | None) -> dict:
+                 live_pos: BrokerPosition | None, notifier: Notifier | None = None) -> dict:
     """Run one coin: detect (across all pattern families, each with its own params)
     → decide → execute. Mutates and returns cstate. Logs PATTERN/OPEN/CLOSE lines."""
     pcfg0 = detectors[0][1]
@@ -165,6 +166,10 @@ def process_coin(coin: str, broker: Broker, detectors: list, interval: str,
         log.info("PATTERN %s %s: neckline=%.6g extreme=%.6g height=%.6g → CONFIRMED @ close=%.6g",
                  signal.kind, coin, signal.neckline, signal.extreme_level,
                  signal.height, signal.entry_ref)
+        if notifier:
+            notifier.send(f"🔔 {coin} {signal.kind} matched ({signal.direction})\n"
+                          f"neckline {signal.neckline:.6g} · height {signal.height:.6g}\n"
+                          f"close {signal.entry_ref:.6g}")
 
     # Use the open position's family rcfg to manage it; else the firing signal's rcfg.
     if pos is not None:
@@ -190,6 +195,11 @@ def process_coin(coin: str, broker: Broker, detectors: list, interval: str,
                                kind=a.get("pattern", ""))
             cstate["trade"] = _pos_to_state(new_pos)
             cstate["last_confirm_time"] = a["confirm_time"]
+            if notifier:
+                tag = "" if not live else " [LIVE]"
+                notifier.send(f"🟢 OPEN {a['side'].upper()} {coin}{tag} ({a.get('pattern','')})\n"
+                              f"entry {a['entry']:.6g} · stop {a['stop']:.6g} · target {a['target']:.6g}\n"
+                              f"size {a['size']:.6g} · RR {a['rr']:.2f}")
         elif kind == "close_trade" and pos is not None:
             gross = (mark - pos.entry_px) if pos.side == "long" else (pos.entry_px - mark)
             pnl = gross * pos.size
@@ -204,6 +214,10 @@ def process_coin(coin: str, broker: Broker, detectors: list, interval: str,
                 log.error("CLOSE %s rejected — keeping tracked trade, will retry: %s", coin, e)
                 continue
             cstate["trade"] = None
+            if notifier:
+                emoji = "✅" if pnl >= 0 else "❌"
+                notifier.send(f"{emoji} CLOSE {coin} ({a['reason']})\n"
+                              f"pnl ${pnl:+.2f} · R {r:+.2f} @ {mark:.6g}")
         elif kind == "alert":
             log.warning("ALERT %s — %s", coin, a["why"])
             cstate["last_confirm_time"] = signal.confirm_time if signal else last_ct
@@ -240,6 +254,14 @@ def main() -> int:
     validate_credentials(cfg, dry_run=dry)
     detectors = resolve_detectors(cfg)
     log.info("detectors: %s", ", ".join(fam for fam, _, _ in detectors))
+    tg = cfg.get("telegram", {}) or {}
+    notifier = Notifier(tg.get("bot_token", ""), tg.get("chat_id", ""),
+                        enabled=bool(tg.get("enabled", True)))
+    if notifier.enabled:
+        log.info("telegram notifications: ON")
+        notifier.send(f"🤖 pattern-bot started — {'DRY-RUN' if dry else 'LIVE'} · "
+                      f"{', '.join(coins)} {interval} · patterns: "
+                      f"{', '.join(fam for fam, _, _ in detectors)}")
     max_lev = max((int(r.max_leverage) for _, _, r in detectors), default=5)
     broker = make_broker(cfg)
 
@@ -270,7 +292,7 @@ def main() -> int:
                 cstate = state["coins"].setdefault(c, {"last_confirm_time": None, "trade": None})
                 state["coins"][c] = process_coin(
                     c, broker, detectors, interval, lookback, equity,
-                    cstate, live, live_positions.get(c))
+                    cstate, live, live_positions.get(c), notifier)
             save_state(state_path, state)
             consec_err = 0
         except KeyboardInterrupt:

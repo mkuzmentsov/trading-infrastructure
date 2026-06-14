@@ -1,0 +1,105 @@
+# Defaults for pattern-bot. Per-bot overlays in helm/bots/<name>.yaml (gitignored
+# except *.yaml.example) override credentials, dry_run, and Telegram.
+
+botName: pattern-bot
+
+image:
+  # Reuses the funding-carry-bot image — it already has hyperliquid-python-sdk,
+  # eth-account, PyYAML, and requests (a transitive dep of the HL SDK), which is
+  # everything pattern-bot needs (we don't use ccxt). Code is mounted from the
+  # ConfigMap, so the image is just a Python+deps base and is fully shareable.
+  # (A dedicated pattern-bot/k8s/Dockerfile exists as a fallback if you prefer.)
+  repository: mkuzmentsov/funding-carry-bot
+  tag: "0.2"
+  pullPolicy: IfNotPresent
+
+# `botConfig` is rendered verbatim into /app/config/config.yaml (mounted Secret).
+# Schema mirrors pattern-bot/bot/config.example.yaml. Per-bot overlays should
+# typically only override the credential blocks, telegram, and dry_run.
+botConfig:
+  dry_run: true
+  exchange: hyperliquid
+  loop_seconds: 60
+  log_level: INFO
+
+  interval: "1h"
+  candle_lookback: 400
+  coins: [BTC]
+  paper_equity: 1000        # sizing fallback when no live balance is available
+
+  pattern:
+    pattern_types: [rectangle, double, wedge]
+    pivot_lookback: 5
+    peak_tolerance_pct: 0.01
+    min_bars_between: 5
+    max_bars_between: 60
+    max_break_bars: 12
+    min_trough_depth_pct: 0.03
+    trend_ma: 0
+    vol_confirm_mult: 1.5
+
+  pattern_overrides:
+    rectangle:
+      tri_window: 60
+      tri_flat_slope: 0.0008
+      min_trough_depth_pct: 0.02
+      vol_confirm_mult: 0
+      stop_height_frac: 0.0
+    double:
+      peak_tolerance_pct: 0.01
+      min_trough_depth_pct: 0.03
+      max_break_bars: 12
+      vol_confirm_mult: 1.5
+      stop_height_frac: 0.5
+    wedge:
+      tri_window: 40
+      tri_flat_slope: 0.0005
+      min_trough_depth_pct: 0.02
+      vol_confirm_mult: 0
+      stop_height_frac: 0.5
+
+  risk:
+    sizing_mode: fixed_fraction
+    position_pct: 0.25
+    max_leverage: 2
+    risk_per_trade_pct: 0.005
+    stop_buffer_pct: 0.002
+    stop_height_frac: 0.5
+    target_mode: measured_move
+    fixed_rr: 2.0
+    max_hold_bars: 0
+    min_notional: 10
+    slippage_bps: 5
+    taker_fee_bps: 4.5
+
+  telegram:
+    enabled: true
+    bot_token: ""           # set in the per-bot overlay
+    chat_id: ""
+
+  hyperliquid:
+    base_url: "https://api.hyperliquid.xyz"
+    account_address: ""     # MASTER address (the account that approved the API wallet)
+    vault_address: ""       # optional sub-account / vault; blank = trade master
+    secret_key: ""          # API wallet private key — set in the per-bot overlay
+
+  kraken_futures:
+    api_key: ""
+    api_secret: ""
+
+# pattern_state.json (open trade + last-fired signal per coin). Must survive
+# restarts so the bot doesn't double-enter.
+persistence:
+  enabled: true
+  size: 100Mi
+  storageClass: ""
+
+nodeSelector: {}
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 384Mi
+    cpu: 400m
