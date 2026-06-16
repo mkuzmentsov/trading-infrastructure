@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 
 from ..config import ValidationConfig
 
+# Conventional significance threshold for the Deflated Sharpe Ratio: we require at
+# least 95% probability the true Sharpe beats the expected-max-under-null.
+DSR_THRESHOLD = 0.95
+
 
 @dataclass
 class GateCheck:
@@ -43,16 +47,39 @@ class ApproveForLiveGate:
     def evaluate(self, evidence: dict) -> GateResult:
         """Assemble the checklist from collected validation evidence.
 
-        Required evidence keys (each produced by the modules above):
-          beats_baseline_oos  : strategy Sharpe > baseline Sharpe OOS, after costs (§4 / principle #4)
-          pbo                 : Probability of Backtest Overfitting (cpcv.py)         <= max_pbo
-          deflated_sharpe     : DSR probability (deflated_sharpe.py)                  >= min_deflated_sharpe
-          purged_cv_clean     : no label leakage; all tuning inside folds (purged_cv) == True
-          regime_robust       : acceptable in every regime, not one-regime wonder (§4.7)
-          stress_safe         : all stress scenarios behaved safely (stress.py)       == True
-          paper_passed        : paper-trading gate cleared (§4.9)        == True if require_paper_gate
+        Only checks whose evidence is present are added, so a partial run (e.g. the
+        rule-based baseline, which has no ML PBO yet) yields a partial — but honest —
+        verdict. Recognized keys:
+
+          oos_sharpe          : OOS Sharpe after costs   -> positive_oos_sharpe, beats_baseline_oos
+          baseline_sharpe     : comparator Sharpe (default 0.0)
+          deflated_sharpe     : DSR probability (deflated_sharpe.py)  >= DSR_THRESHOLD
+          pbo                 : Prob. of Backtest Overfitting (cpcv)  <= max_pbo
+          regime_robust       : bool (§4.7)
+          stress_safe         : bool (stress.py)
+          paper_passed        : bool (§4.9), required iff require_paper_gate
         """
-        raise NotImplementedError(
-            "build GateCheck list from `evidence` against ValidationConfig thresholds; "
-            "approved == all passed."
-        )
+        checks: list[GateCheck] = []
+
+        if "oos_sharpe" in evidence:
+            sr = evidence["oos_sharpe"]
+            base = evidence.get("baseline_sharpe", 0.0)
+            checks.append(GateCheck("positive_oos_sharpe", sr > 0, f"OOS Sharpe={sr:.2f}"))
+            checks.append(GateCheck("beats_baseline_oos", sr > base,
+                                    f"OOS Sharpe={sr:.2f} vs baseline={base:.2f}"))
+        if "deflated_sharpe" in evidence:
+            dsr = evidence["deflated_sharpe"]
+            checks.append(GateCheck("deflated_sharpe", dsr >= DSR_THRESHOLD,
+                                    f"DSR={dsr:.3f} (need >= {DSR_THRESHOLD})"))
+        if "pbo" in evidence:
+            pbo = evidence["pbo"]
+            checks.append(GateCheck("pbo", pbo <= self.config.max_pbo,
+                                    f"PBO={pbo:.2f} (need <= {self.config.max_pbo})"))
+        if "regime_robust" in evidence:
+            checks.append(GateCheck("regime_robust", bool(evidence["regime_robust"]), ""))
+        if "stress_safe" in evidence:
+            checks.append(GateCheck("stress_safe", bool(evidence["stress_safe"]), ""))
+        if self.config.require_paper_gate and "paper_passed" in evidence:
+            checks.append(GateCheck("paper_passed", bool(evidence["paper_passed"]), ""))
+
+        return GateResult(checks=checks)

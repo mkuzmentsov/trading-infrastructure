@@ -57,8 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--start", default=None)
     p_bt.add_argument("--end", default=None)
 
+    p_val = sub.add_parser("validate", help="in-sample tune -> OOS test + approve-for-live gate")
+    p_val.add_argument("--config", required=True)
+    p_val.add_argument("--start", default=None)
+    p_val.add_argument("--end", default=None)
+    p_val.add_argument("--train-frac", type=float, default=0.6)
+
     for name, help_ in [
-        ("validate", "run the validation harness + approve-for-live gate"),
         ("paper", "paper-trade against live data"),
         ("live", "run live (guarded: requires passed gate + paper run)"),
     ]:
@@ -111,12 +116,45 @@ def _cmd_backtest(args) -> int:
     return 0
 
 
+def _cmd_validate(args) -> int:
+    from .validation.baseline_oos import run_oos_validation
+    from .validation.gate import ApproveForLiveGate
+
+    cfg = _load_config(args.config)
+    start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    end = _parse_dt(args.end, datetime.now(timezone.utc))
+    r = run_oos_validation(cfg, start, end, train_frac=args.train_frac)
+
+    m = r.oos_metrics
+    print("\n=== Validation (in-sample tune -> out-of-sample test) ===")
+    print(f"universe={cfg.universe} interval={cfg.bar_interval}  grid_trials={r.n_trials}")
+    print(f"OOS segment starts {r.split_ts:%Y-%m-%d} ({r.test_bars} bars after embargo)")
+    print("-- in-sample selection --")
+    print(f"best params={r.best_params}  train Sharpe={r.train_sharpe:.2f}")
+    print("-- OUT-OF-SAMPLE (the number that counts) --")
+    print(f"Sharpe={m.sharpe:.2f}  Sortino={m.sortino:.2f}  CAGR={m.cagr:+.1%}  maxDD={m.max_drawdown:.1%}")
+    print(f"skew={m.skew:+.2f}  hit={m.hit_rate:.1%}  PF={m.profit_factor:.2f}")
+    print(f"untuned-default OOS Sharpe={r.default_oos_sharpe:.2f}   buy&hold OOS Sharpe={r.buy_hold_oos_sharpe:.2f}")
+    print(f"Deflated Sharpe (P[true SR>0], {r.n_trials} trials)={r.deflated_sharpe:.3f}")
+
+    gate = ApproveForLiveGate(cfg.validation).evaluate(
+        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe}
+    )
+    print("\n-- approve-for-live gate (§4) --")
+    print(gate.summary())
+    print("\nNote: PBO/CPCV, regime, stress and paper checks are not yet wired — this is a "
+          "partial gate for the rule baseline. Full gate lands with the ML phase.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
         return _cmd_fetch(args)
     if args.command == "backtest":
         return _cmd_backtest(args)
+    if args.command == "validate":
+        return _cmd_validate(args)
     raise SystemExit(f"`atb {args.command}` is not implemented yet (scaffold).")
 
 

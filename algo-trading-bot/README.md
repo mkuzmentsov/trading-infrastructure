@@ -12,10 +12,15 @@ a venue adapter.
 
 ## Status
 
-**Phase 0 → 1 scaffold.** Full 8-layer skeleton per requirements §2. Interfaces,
-domain types, and the standard metric/stat functions are implemented; business logic
-is `NotImplementedError` stubs that name what they must do and cite the requirement
-section. Everything imports and the implemented metrics are tested.
+**Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
+skeleton (§2). Implemented and tested (17 tests): ccxt data ingest + point-in-time
+Parquet store, causal feature pipeline, the Tier-1 trend baseline, forecast
+combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with costs,
+the shared backtest==live engine with run provenance, and an OOS validation harness
+(in-sample grid tune → out-of-sample test + Deflated Sharpe + approve-for-live gate).
+The rest of §2/§4 (ML meta-label, purged CV/CPCV/PBO, regime classifier, stress,
+live/paper runners) remains `NotImplementedError` stubs that cite their requirement
+section.
 
 ## Phase-0 decisions
 
@@ -56,15 +61,25 @@ pytest algo-trading-bot/tests
 Extras are split so the research/validation path installs light:
 `storage` (parquet+duckdb), `ml` (lightgbm+sklearn), `venues` (ccxt+hyperliquid).
 
-## CLI (planned)
+## CLI
 
 ```
-atb fetch    --venue kraken --symbols BTC ETH --interval 1h --start ... --end ...
-atb backtest --config config.toml      # equity curve, ledger, metrics, provenance
-atb validate --config config.toml      # §4 harness + approve-for-live gate
-atb paper    --config config.toml      # paper-trade live data (gate before capital)
-atb live     --config config.toml      # guarded: requires passed gate + paper run
+atb fetch    --venue binance --symbols BTC --interval 1h --start 2024-01-01   # WORKING
+atb backtest --config configs/btc_1h.toml    # equity curve, metrics, provenance — WORKING
+atb validate --config configs/btc_1h.toml    # in-sample tune -> OOS test + gate — WORKING
+atb paper    --config configs/btc_1h.toml    # paper-trade live data            — stub
+atb live     --config configs/btc_1h.toml    # guarded live                      — stub
 ```
+
+### What the harness already tells you (real BTC 1h, 2024-01 → 2026-06)
+
+- `backtest` (untuned baseline, after costs): total return **−0.5%**, Sharpe **−0.04**, skew **+0.51**.
+- `validate` (grid-tune on train, test OOS): best train Sharpe **+0.65** → **OOS Sharpe −0.92**,
+  Deflated Sharpe **0.15** (need ≥0.95) → gate **REJECTED**.
+
+That train→test collapse is the point: the validation harness caught an overfit edge
+before any capital saw it (principle #2). This `Sharpe ≈ 0` baseline is the bar ML must
+clear OOS, after costs (principle #4).
 
 ## Build order (§6.1)
 

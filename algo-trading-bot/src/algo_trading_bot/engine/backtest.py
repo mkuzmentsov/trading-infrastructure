@@ -99,15 +99,32 @@ class Backtester:
             venue=VenueId(cfg.venue.name),
         )
 
-    def run(self, start: datetime, end: datetime, venue: str | None = None) -> BacktestResult:
-        """Run the backtest and return equity curve, ledger, metrics, and provenance."""
+    def load_bars(self, start: datetime, end: datetime, venue: str | None = None) -> list:
+        """Read the bar slice once so callers (e.g. a parameter grid) can reuse it
+        without re-hitting Parquet per trial."""
+        symbols = [Symbol(s) for s in self.config.universe]
+        venue = venue or self.config.data_venue
+        return list(HistoricalSource(self.store, symbols, start, end, venue=venue).stream())
+
+    def run(
+        self,
+        start: datetime,
+        end: datetime,
+        venue: str | None = None,
+        bars: list | None = None,
+    ) -> BacktestResult:
+        """Run the backtest and return equity curve, ledger, metrics, and provenance.
+
+        ``bars`` may be a preloaded slice (from :meth:`load_bars`) to skip the read.
+        """
         cfg = self.config
         symbols = [Symbol(s) for s in cfg.universe]
         venue = venue or cfg.data_venue  # None -> read any venue in the store
 
+        if bars is None:
+            bars = self.load_bars(start, end, venue)
         engine = self.build_engine()
-        source = HistoricalSource(self.store, symbols, start, end, venue=venue)
-        engine.run(MarketEvent(bar) for bar in source.stream())
+        engine.run(MarketEvent(bar) for bar in bars)
 
         if not engine.equity_val:
             raise RuntimeError(
