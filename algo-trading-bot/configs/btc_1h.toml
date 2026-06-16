@@ -1,0 +1,36 @@
+# Sample backtest config — BTC 1h swing trend baseline.
+# Data is fetched separately (e.g. from Binance) into data_dir; trade venue is HL.
+name = "btc_1h_trend"
+horizon = "swing"
+universe = ["BTC"]
+data_venue = "binance"   # deep history from Binance; trade venue below is Hyperliquid
+bar_interval = "1h"
+starting_cash = 10000.0
+data_dir = "./data"
+
+[venue]
+name = "hyperliquid"
+testnet = true
+max_capital_quote = 10000.0
+
+[trend]
+ema_fast = 20
+ema_slow = 100
+vol_window = 48
+scale = 10.0
+
+[friction]
+maker_fee_bps = 1.0
+taker_fee_bps = 4.5
+slippage_model = "size_scaled"
+latency_ms = 250
+funding_enabled = true
+
+[risk]
+max_gross_leverage = 2.0
+target_annual_vol = 0.20
+kelly_fraction = 0.5
+drawdown_derisk = 0.10
+drawdown_halt = 0.20
+min_trade_notional = 10.0
+rebalance_deadband = 0.05

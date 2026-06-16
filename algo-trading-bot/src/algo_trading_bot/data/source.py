@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Iterable, Iterator, Protocol
 
 from ..core.types import Bar, FundingPoint, Symbol
+from .store import PointInTimeStore
 
 
 class DataSource(Protocol):
@@ -25,17 +26,25 @@ class DataSource(Protocol):
 class HistoricalSource:
     """Replays a stored snapshot. Backbone of the backtest (§3.1).
 
-    Reads from a :class:`~algo_trading_bot.data.store.PointInTimeStore` and emits
-    bars strictly ordered by ``knowable_at`` so the engine never sees the future.
+    Emits bars strictly ordered by ``knowable_at`` so the engine never sees the future.
     """
 
-    def __init__(self, symbols: Iterable[Symbol], start: datetime, end: datetime) -> None:
-        self.symbols = list(symbols)
+    def __init__(
+        self,
+        store: PointInTimeStore,
+        symbols: Iterable[Symbol],
+        start: datetime,
+        end: datetime,
+        venue: str | None = None,
+    ) -> None:
+        self.store = store
+        self.symbols = [Symbol(s) for s in symbols]
         self.start = start
         self.end = end
+        self.venue = venue
 
     def stream(self) -> Iterator[Bar | FundingPoint]:
-        raise NotImplementedError("wire to PointInTimeStore.read_ordered()")
+        yield from self.store.read_ordered(self.symbols, self.start, self.end, venue=self.venue)
 
 
 class LiveSource:

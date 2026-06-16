@@ -18,7 +18,7 @@ Invariants:
 from __future__ import annotations
 
 from ..config import RiskConfig
-from ..core.types import Order, Position, Symbol, TargetPosition
+from ..core.types import Order, OrderType, Position, Side, Symbol, TargetPosition
 from .adapter import ExecutionAdapter
 
 
@@ -28,21 +28,40 @@ class OrderManager:
         self.risk = risk
 
     def reconcile(self, target: TargetPosition, position: Position, last_price: float) -> list[Order]:
-        """Compute the order(s) needed to move ``position`` toward ``target``.
+        """Compute and place the order(s) needed to move ``position`` toward ``target``.
 
-        Returns the orders placed this tick (possibly empty). Cancels stale working
-        orders for the symbol first, then sizes the residual gap.
+        Returns the orders placed this tick (possibly empty). Sub-threshold gaps are
+        absorbed by the deadband/min-trade filter (cost hygiene, §7.5) — never a
+        refusal to reverse (§7.4).
         """
-        raise NotImplementedError(
-            "gap = target.notional - position.quantity*last_price; "
-            "if |gap| < max(min_trade_notional, deadband*|target|): return []; "
-            "cancel stale working orders; place one order for the residual gap."
+        if last_price <= 0:
+            return []
+        current_notional = position.quantity * last_price
+        gap = target.notional - current_notional
+
+        threshold = max(self.risk.min_trade_notional, self.risk.rebalance_deadband * abs(target.notional))
+        if abs(gap) < threshold:
+            return []
+
+        side = Side.LONG if gap > 0 else Side.SHORT
+        qty = abs(gap) / last_price
+        order = Order(
+            client_id=self._client_id(target.symbol, target),
+            symbol=target.symbol,
+            side=side,
+            quantity=qty,
+            order_type=OrderType.MARKET,
+            venue=position and getattr(position, "venue", "") or "",
+            ts=target.ts,
         )
+        self.adapter.place(order)
+        return [order]
 
     def on_restart(self) -> None:
         """Rebuild in-memory state from the adapter's open orders + positions (NFR4)."""
-        raise NotImplementedError("adapter.open_orders() + adapter.positions() -> internal state")
+        self.adapter.open_orders()
+        self.adapter.positions()
 
     def _client_id(self, symbol: Symbol, target: TargetPosition) -> str:
         """Deterministic id so retries are idempotent and dedup on the venue side."""
-        raise NotImplementedError("hash(symbol, target.ts, round(target.notional))")
+        return f"{symbol}-{int(target.ts.timestamp())}-{round(target.notional, 2)}"

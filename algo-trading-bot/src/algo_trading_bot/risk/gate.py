@@ -11,6 +11,8 @@ around this gate (principle #7, NFR6 audited).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ..core.types import Position, Symbol, TargetPosition
 from .drawdown import DrawdownBreaker
 from .kill_switch import KillSwitch
@@ -23,8 +25,8 @@ class RiskGate:
         self,
         kill: KillSwitch,
         drawdown: DrawdownBreaker,
-        stops: StopManager,
         limits: LimitChecker,
+        stops: StopManager | None = None,
     ) -> None:
         self.kill = kill
         self.drawdown = drawdown
@@ -44,5 +46,22 @@ class RiskGate:
         2. drawdown halt -> force flat; de-risk -> scale down.
         3. stop breached for this symbol -> force flat.
         4. limit check -> clamp to caps.
+        Each stage can only reduce risk (§7.2 absolute precedence).
         """
-        raise NotImplementedError("apply stages top-to-bottom; each may only shrink the target")
+        flat = replace(target, notional=0.0, reason="risk:flat")
+
+        if not self.kill.allows_trading():
+            return replace(flat, reason="risk:kill")
+
+        if self.drawdown.halted:
+            return replace(flat, reason="risk:drawdown_halt")
+        if self.drawdown.factor < 1.0:
+            target = replace(target, notional=target.notional * self.drawdown.factor,
+                             reason=target.reason + "+derisk")
+
+        if self.stops is not None:
+            stop_target = self.stops.check(target.symbol, last_price)
+            if stop_target is not None:
+                return stop_target  # already flat, reason='stop'
+
+        return self.limits.clamp_target(target, positions, venue)

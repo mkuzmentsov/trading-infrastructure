@@ -55,12 +55,26 @@ class ValidationConfig(BaseModel):
     require_paper_gate: bool = True
 
 
+class TrendConfig(BaseModel):
+    """Tier-1 trend baseline knobs (strategy/baseline_trend.py)."""
+
+    ema_fast: int = 20
+    ema_slow: int = 100
+    vol_window: int = 48
+    scale: float = 10.0  # maps the trend/vol ratio into ~[-1, 1] via tanh
+
+
 class BotConfig(BaseModel):
     name: str = "atb"
     horizon: Horizon = Horizon.SWING
     venue: VenueConfig
     universe: list[str] = Field(default_factory=lambda: ["BTC"], description="symbols to trade")
+    # Data is ingested independently of the trade venue (§2.1): e.g. fetch deep history
+    # from Binance, trade on Hyperliquid. None -> read whatever venue is in the store.
+    data_venue: str | None = None
     bar_interval: str = "1h"  # default 1h swing / 1d position; see core/types.Horizon
+    starting_cash: float = 10_000.0
+    trend: TrendConfig = TrendConfig()
     friction: FrictionConfig = FrictionConfig()
     risk: RiskConfig = RiskConfig()
     validation: ValidationConfig = ValidationConfig()

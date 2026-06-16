@@ -1,0 +1,14 @@
+# Fetched market data — reproducible via `atb fetch`, not source.
+data/
+
+# Backtest run outputs / reports
+runs/
+*.parquet
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/

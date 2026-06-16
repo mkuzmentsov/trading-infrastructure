@@ -7,6 +7,7 @@ forecast entirely (§7.2 precedence rank 2 — below the risk layer, above netti
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Protocol
 
 from ..core.types import Forecast, Regime, RiskTier
@@ -21,7 +22,10 @@ class TrendRangeDetector:
     as ADX, realized-vol percentile, Hurst exponent, efficiency ratio."""
 
     def detect(self, features: dict[str, float]) -> Regime:
-        raise NotImplementedError("threshold on trend-strength + vol features -> Regime")
+        # v0.1: no regime classifier yet -> UNKNOWN, which permits the Tier-1 trend
+        # baseline through the gate. A real ADX/Hurst/efficiency-ratio classifier
+        # replaces this when the regime-gate slice lands.
+        return Regime.UNKNOWN
 
 
 # Which tiers are permitted in which regime. Tactical (mean-reversion) is gated OFF
@@ -43,4 +47,6 @@ class RegimeGate:
     def apply(self, forecast: Forecast, tier: RiskTier, regime: Regime) -> Forecast:
         """Return the forecast unchanged if its tier is permitted in ``regime``,
         else a zeroed copy. Never flips sign — gating only removes risk."""
-        raise NotImplementedError("if tier not in _GATE[regime]: return forecast with value=0")
+        if tier in _GATE.get(regime, set()):
+            return forecast
+        return replace(forecast, value=0.0)
