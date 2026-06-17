@@ -62,18 +62,20 @@ class Backtester:
         self.config = config
         self.store = PointInTimeStore(config.data_dir)
 
-    def build_engine(self) -> TradingEngine:
+    def build_engine(self, strategies: list | None = None) -> TradingEngine:
         """Assemble the same TradingEngine used live, but with a SimClock + FillSimulator.
 
-        The clock start is set at run() time once the first bar is known.
+        ``strategies`` overrides the default trend baseline (used by the meta-label
+        economic test). The clock start is set at run() time once the first bar is known.
         """
         cfg = self.config
         ppy = PERIODS_PER_YEAR[cfg.bar_interval]
 
         features = RollingFeaturePipeline(cfg.trend.ema_fast, cfg.trend.ema_slow, cfg.trend.vol_window)
-        strategies = [TrendMomentum(interval=cfg.bar_interval, scale=cfg.trend.scale)]
+        if strategies is None:
+            strategies = [TrendMomentum(interval=cfg.bar_interval, scale=cfg.trend.scale)]
         regime_gate = RegimeGate(TrendRangeDetector())
-        combiner = ForecastCombiner({StrategyId("trend_momentum"): 1.0})
+        combiner = ForecastCombiner({s.id: 1.0 for s in strategies})
         sizer = VolTargetSizer(cfg.risk, cfg.starting_cash, ppy)
 
         kill = KillSwitch()
@@ -112,10 +114,12 @@ class Backtester:
         end: datetime,
         venue: str | None = None,
         bars: list | None = None,
+        strategies: list | None = None,
     ) -> BacktestResult:
         """Run the backtest and return equity curve, ledger, metrics, and provenance.
 
-        ``bars`` may be a preloaded slice (from :meth:`load_bars`) to skip the read.
+        ``bars`` may be a preloaded slice (from :meth:`load_bars`) to skip the read;
+        ``strategies`` overrides the default trend baseline.
         """
         cfg = self.config
         symbols = [Symbol(s) for s in cfg.universe]
@@ -123,7 +127,7 @@ class Backtester:
 
         if bars is None:
             bars = self.load_bars(start, end, venue)
-        engine = self.build_engine()
+        engine = self.build_engine(strategies)
         engine.run(MarketEvent(bar) for bar in bars)
 
         if not engine.equity_val:

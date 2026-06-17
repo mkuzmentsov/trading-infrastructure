@@ -180,14 +180,31 @@ def _cmd_metalabel(args) -> int:
     print(f"labeled events={len(X)}  features={res.n_features}  "
           f"folds={len(res.fold_aucs)}  fold AUCs={[round(a, 3) for a in res.fold_aucs]}")
     print(res.summary())
-    edge = res.oos_auc - 0.5
-    if res.oos_auc < 0.53:
-        print(f"\nVerdict: OOS AUC {res.oos_auc:.3f} ~ coin-flip (edge {edge:+.3f}). The meta "
-              "layer has no out-of-sample predictive power here, so it must NOT be wired into "
-              "the book (principle #4). Fail fast — try other features/labels/horizons.")
-    else:
-        print(f"\nVerdict: OOS AUC {res.oos_auc:.3f} shows edge — next step: wire the model into "
-              "MetaLabelMomentum and confirm it improves the baseline Sharpe OOS, after costs.")
+
+    # The decisive economic test: does meta-labeling lift the baseline Sharpe OOS,
+    # after costs? AUC alone never settles this (principle #4).
+    from .model.metalabel_eval import evaluate_metalabel_oos
+    from .validation.gate import ApproveForLiveGate
+
+    print("\n=== Economic test (OOS backtest, after costs) ===")
+    econ = evaluate_metalabel_oos(cfg, start, end, vertical_bars=args.vertical_bars)
+    b, m = econ.baseline, econ.meta
+    print(f"OOS from {econ.split_ts:%Y-%m-%d} ({econ.oos_bars} bars)  train base_rate={econ.base_rate:.1%}")
+    print(f"{'':14}{'Sharpe':>8}{'CAGR':>9}{'maxDD':>9}{'skew':>8}{'PF':>7}")
+    print(f"{'baseline trend':14}{b.sharpe:>8.2f}{b.cagr:>8.1%}{b.max_drawdown:>9.1%}{b.skew:>8.2f}{b.profit_factor:>7.2f}")
+    print(f"{'meta-labeled':14}{m.sharpe:>8.2f}{m.cagr:>8.1%}{m.max_drawdown:>9.1%}{m.skew:>8.2f}{m.profit_factor:>7.2f}")
+
+    gate = ApproveForLiveGate(cfg.validation).evaluate(
+        {"oos_sharpe": econ.meta_oos_sharpe, "baseline_sharpe": econ.baseline_oos_sharpe,
+         "deflated_sharpe": 0.0}
+    )
+    print("\n-- approve-for-live gate (§4) --")
+    print(gate.summary())
+    lift = econ.meta_oos_sharpe - econ.baseline_oos_sharpe
+    print(f"\nVerdict: meta {'LIFTS' if lift > 0 else 'does NOT lift'} the baseline OOS Sharpe "
+          f"({econ.baseline_oos_sharpe:+.2f} -> {econ.meta_oos_sharpe:+.2f}, {lift:+.2f}). "
+          + ("Still negative — no edge to ship (principle #4)." if econ.meta_oos_sharpe <= 0
+             else "Positive and improved — candidate; next: DSR + CPCV before any capital."))
     return 0
 
 

@@ -82,6 +82,27 @@ def test_meta_label_oos_auc_runs():
     assert len(res.importances) == res.n_features
 
 
+def test_economic_test_runs_and_compares(tmp_path):
+    """The meta-label economic test: trains on train, runs baseline vs meta OOS, after
+    costs. Asserts structure + that OOS metrics are finite and the split is honest."""
+    from algo_trading_bot.config import BotConfig, VenueConfig
+    from algo_trading_bot.engine.backtest import Backtester
+    from algo_trading_bot.model.metalabel_eval import evaluate_metalabel_oos
+
+    cfg = BotConfig(
+        universe=["BTC"], bar_interval="1h", data_venue="test", data_dir=str(tmp_path),
+        venue=VenueConfig(name="test", max_capital_quote=0.0),
+    )
+    Backtester(cfg).store.append_bars(_synthetic_bars(2600))
+    econ = evaluate_metalabel_oos(cfg, datetime(2024, 1, 1, tzinfo=timezone.utc),
+                                  datetime(2025, 1, 1, tzinfo=timezone.utc),
+                                  train_frac=0.6, vertical_bars=24)
+    assert econ.oos_bars > 0
+    assert 0.0 < econ.base_rate < 1.0
+    assert np.isfinite(econ.baseline_oos_sharpe)
+    assert np.isfinite(econ.meta_oos_sharpe)
+
+
 def test_shuffled_labels_collapse_to_chance():
     """No-leak guard: with labels shuffled, a leak-free purged-CV harness must score
     ~0.5 OOS. If this rises, the CV is leaking (the most important regression to catch)."""
