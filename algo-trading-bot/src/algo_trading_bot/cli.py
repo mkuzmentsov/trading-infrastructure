@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_xs.add_argument("--end", default=None)
     p_xs.add_argument("--train-frac", type=float, default=0.6)
 
+    p_st = sub.add_parser("stress", help="replay pathological tapes; assert the system stays safe")
+    p_st.add_argument("--config", required=True)
+    p_st.add_argument("--start", default=None)
+    p_st.add_argument("--end", default=None)
+
     for name, help_ in [
         ("paper", "paper-trade against live data"),
         ("live", "run live (guarded: requires passed gate + paper run)"),
@@ -248,6 +253,28 @@ def _cmd_xsec(args) -> int:
     return 0
 
 
+def _cmd_stress(args) -> int:
+    from .engine.backtest import Backtester
+    from .validation.stress import run_all
+
+    cfg = _load_config(args.config)
+    start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    end = _parse_dt(args.end, datetime.now(timezone.utc))
+    base_bars = Backtester(cfg).load_bars(start, end)
+    if len(base_bars) < 300:
+        raise SystemExit(f"only {len(base_bars)} bars — fetch more history before stress testing")
+
+    print(f"\n=== Stress / scenario replay ({len(base_bars)} base bars) ===")
+    print("Asserts SAFE behaviour (solvent, de-risks, no order storm), not profit (§4.8).")
+    results = run_all(cfg, base_bars)
+    for r in results:
+        print()
+        print(r.summary())
+    n_safe = sum(r.safe for r in results)
+    print(f"\n{n_safe}/{len(results)} scenarios SAFE.")
+    return 0 if n_safe == len(results) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
@@ -260,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_metalabel(args)
     if args.command == "xsec":
         return _cmd_xsec(args)
+    if args.command == "stress":
+        return _cmd_stress(args)
     raise SystemExit(f"`atb {args.command}` is not implemented yet (scaffold).")
 
 

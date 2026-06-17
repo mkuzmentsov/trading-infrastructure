@@ -63,6 +63,8 @@ class TradingEngine:
         # backtest collectors (a live monitor would stream these instead of buffering)
         self.equity_ts: list = []
         self.equity_val: list[float] = []
+        self.leverage_val: list[float] = []      # gross exposure / equity per bar (§2.7 / stress)
+        self.orders_per_bar: list[int] = []
         self.trades: list[dict] = []
 
     def run(self, events) -> None:
@@ -111,7 +113,9 @@ class TradingEngine:
                 self.oms.reconcile(approved, self.portfolio.position(sym), bar.close)
 
         # Settle fills, then mark NAV and update the drawdown breaker for the next bar.
+        n_fills = 0
         for fill in self.oms.adapter.poll_fills():
+            n_fills += 1
             realized = self.portfolio.apply_fill(fill)
             self.trades.append(
                 {"ts": fill.ts, "symbol": fill.symbol, "side": fill.side.name,
@@ -120,5 +124,9 @@ class TradingEngine:
 
         nav = self.portfolio.equity(self._marks)
         self.drawdown.update(nav)
+        gross = sum(abs(p.quantity * self._marks.get(s, p.avg_price))
+                    for s, p in self.portfolio.positions.items())
         self.equity_ts.append(bar.ts)
         self.equity_val.append(nav)
+        self.leverage_val.append(gross / nav if nav > 0 else float("inf"))
+        self.orders_per_bar.append(n_fills)

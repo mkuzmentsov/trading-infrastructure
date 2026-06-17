@@ -13,7 +13,7 @@ a venue adapter.
 ## Status
 
 **Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
-skeleton (§2). Implemented and tested (32 tests): ccxt data ingest + interval-aware
+skeleton (§2). Implemented and tested (35 tests): ccxt data ingest + interval-aware
 point-in-time Parquet store, causal feature pipeline, the Tier-1 trend baseline,
 forecast combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with
 costs, the shared backtest==live engine with run provenance, an OOS validation
@@ -21,9 +21,11 @@ harness (in-sample grid tune → out-of-sample test + Deflated Sharpe + gate), t
 meta-label ML loop (triple-barrier labeling, average-uniqueness weights, purged &
 embargoed K-fold CV, GBT, MDA importance, leak-check, economic test), and a
 cross-sectional momentum panel backtest (lookahead-careful, cost-aware, IS/OOS + DSR),
-and CPCV + Probability of Backtest Overfitting (CSCV) wired into both validators.
-Remaining stubs (cite their requirement section): regime classifier, stress replay,
-model registry, live/paper runners.
+CPCV + Probability of Backtest Overfitting (CSCV) wired into both validators, and
+stress/scenario replay (flash crash, de-peg, outage, liquidity drought) checking
+solvency / de-risk / no-order-storm invariants — with a test proving the drawdown
+breaker fires and flattens the book on a deep crash. Remaining stubs (cite their
+requirement section): regime classifier, model registry, live/paper runners.
 
 ## Phase-0 decisions
 
@@ -72,6 +74,7 @@ atb backtest  --config configs/btc_1h.toml   # equity curve, metrics, provenance
 atb validate  --config configs/btc_1h.toml   # in-sample tune -> OOS test + gate — WORKING
 atb metalabel --config configs/btc_1h.toml   # triple-barrier + GBT in purged CV — WORKING (needs [ml])
 atb xsec      --config configs/xsec_1d.toml  # cross-sectional momentum panel OOS — WORKING
+atb stress    --config configs/btc_1h.toml   # pathological tapes; assert SAFE    — WORKING
 atb paper     --config configs/btc_1h.toml   # paper-trade live data            — stub
 atb live      --config configs/btc_1h.toml   # guarded live                      — stub
 ```
