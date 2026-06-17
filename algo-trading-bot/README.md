@@ -146,3 +146,10 @@ harness doing its job. No edge has cleared the bar yet, and that conclusion is t
 data → friction+metrics → **dumb trend baseline (the benchmark)** → feature/label
 pipeline → meta-label ML (must beat baseline OOS, after costs) → validation harness →
 arbitration → paper → live. Nothing ships that can't beat the dumb baseline.
+
+## What's next
+
+See **`docs/ROADMAP.md`** — prioritized future work (regime classifier, stops in the
+loop, walk-forward retraining, vol-managed momentum, multi-strategy arbitration, model
+registry, live drift auto-disable, funding ingestion, and more), grounded in what's
+built and the findings so far.
