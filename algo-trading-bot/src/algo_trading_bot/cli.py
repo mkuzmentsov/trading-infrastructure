@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--end", default=None)
     p_val.add_argument("--train-frac", type=float, default=0.6)
 
+    p_ml = sub.add_parser("metalabel", help="train meta-label GBT under purged CV; report OOS AUC")
+    p_ml.add_argument("--config", required=True)
+    p_ml.add_argument("--start", default=None)
+    p_ml.add_argument("--end", default=None)
+    p_ml.add_argument("--vertical-bars", type=int, default=24)
+
     for name, help_ in [
         ("paper", "paper-trade against live data"),
         ("live", "run live (guarded: requires passed gate + paper run)"),
@@ -147,6 +153,44 @@ def _cmd_validate(args) -> int:
     return 0
 
 
+def _cmd_metalabel(args) -> int:
+    from .engine.backtest import Backtester
+    from .features.dataset import build_labeled_dataset
+    from .model.metalabel import train_meta_label_cv
+
+    cfg = _load_config(args.config)
+    start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    end = _parse_dt(args.end, datetime.now(timezone.utc))
+
+    bars = Backtester(cfg).load_bars(start, end)
+    print(f"Building labeled dataset from {len(bars)} bars "
+          f"(triple-barrier, vertical={args.vertical_bars} bars) ...")
+    X, y, w, spans = build_labeled_dataset(
+        bars, fast=cfg.trend.ema_fast, slow=cfg.trend.ema_slow,
+        vol_window=cfg.trend.vol_window, vertical_bars=args.vertical_bars,
+    )
+    if len(X) < 500:
+        raise SystemExit(f"only {len(X)} labeled events — fetch more history")
+
+    res = train_meta_label_cv(
+        X, y, w, spans,
+        n_splits=cfg.validation.n_splits, embargo_pct=cfg.validation.embargo_pct,
+    )
+    print("\n=== Meta-label model (GBT, purged CV) ===")
+    print(f"labeled events={len(X)}  features={res.n_features}  "
+          f"folds={len(res.fold_aucs)}  fold AUCs={[round(a, 3) for a in res.fold_aucs]}")
+    print(res.summary())
+    edge = res.oos_auc - 0.5
+    if res.oos_auc < 0.53:
+        print(f"\nVerdict: OOS AUC {res.oos_auc:.3f} ~ coin-flip (edge {edge:+.3f}). The meta "
+              "layer has no out-of-sample predictive power here, so it must NOT be wired into "
+              "the book (principle #4). Fail fast — try other features/labels/horizons.")
+    else:
+        print(f"\nVerdict: OOS AUC {res.oos_auc:.3f} shows edge — next step: wire the model into "
+              "MetaLabelMomentum and confirm it improves the baseline Sharpe OOS, after costs.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
@@ -155,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_backtest(args)
     if args.command == "validate":
         return _cmd_validate(args)
+    if args.command == "metalabel":
+        return _cmd_metalabel(args)
     raise SystemExit(f"`atb {args.command}` is not implemented yet (scaffold).")
 
 

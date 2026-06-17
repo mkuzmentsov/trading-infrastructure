@@ -26,13 +26,43 @@ class PurgedKFold:
     def split(
         self, X: pd.DataFrame, label_spans: pd.Series
     ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Yield (train_idx, test_idx) with overlapping train labels purged and an
-        embargo applied after each test fold.
+        """Yield (train_idx, test_idx) positional arrays with overlapping train labels
+        purged and an embargo applied after each test fold.
 
-        ``label_spans`` maps each sample's index -> the end time of its label window,
-        so overlap can be detected.
+        ``X`` is indexed by event time (sorted). ``label_spans`` maps each event's
+        index -> the end time of its label window, so overlap can be detected.
         """
-        raise NotImplementedError(
-            "partition into n_splits contiguous test folds; for each, drop train samples "
-            "whose [t, label_span[t]] intersects the test window; embargo embargo_pct after."
-        )
+        n = len(X)
+        if n == 0:
+            return
+        idx = X.index
+        spans = label_spans.reindex(idx)
+        embargo = int(n * self.embargo_pct)
+        bounds = np.linspace(0, n, self.n_splits + 1).astype(int)
+
+        for k in range(self.n_splits):
+            lo, hi = bounds[k], bounds[k + 1]
+            if hi <= lo:
+                continue
+            test_pos = np.arange(lo, hi)
+            test_start = idx[lo]
+            test_end = idx[hi - 1]
+
+            # Purge: drop train samples whose label span [t, span[t]] overlaps the test
+            # window [test_start, test_end]. Embargo: also drop the `embargo` samples
+            # immediately after the test block (serial-correlation leakage).
+            embargo_end = idx[min(hi - 1 + embargo, n - 1)]
+            keep = []
+            for i in range(n):
+                if lo <= i < hi:
+                    continue
+                t = idx[i]
+                span_end = spans.iloc[i]
+                if pd.isna(span_end):
+                    continue
+                overlaps = (t <= test_end) and (span_end >= test_start)
+                in_embargo = test_end < t <= embargo_end
+                if overlaps or in_embargo:
+                    continue
+                keep.append(i)
+            yield np.array(keep, dtype=int), test_pos
