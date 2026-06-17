@@ -28,6 +28,7 @@ import pandas as pd
 from ..backtest import metrics as M
 from ..config import BotConfig, TrendConfig
 from ..data.bars import PERIODS_PER_YEAR
+from .cpcv import cscv_pbo
 from .deflated_sharpe import deflated_sharpe_ratio
 
 # Default tuning grid. fast < slow always holds for these values.
@@ -53,6 +54,8 @@ class OOSResult:
     n_trials: int
     split_ts: datetime
     test_bars: int
+    pbo: float = float("nan")              # Probability of Backtest Overfitting (CSCV)
+    prob_oos_loss: float = float("nan")    # P(IS-selected config loses OOS)
     trials: list[Trial] = field(default_factory=list)
 
 
@@ -107,13 +110,16 @@ def run_oos_validation(
             mask &= idx < hi
         return returns[mask.to_numpy()]
 
-    # 1) In-sample grid search.
+    # 1) In-sample grid search. Keep each trial's full return series for the PBO matrix.
     grid = _grid(config.trend)
     trials: list[Trial] = []
+    returns_by_trial: dict[str, pd.Series] = {}
     for variant in grid:
         cfg_v = config.model_copy(update={"trend": variant})
         res = Backtester(cfg_v).run(start, end, bars=bars)
         tr = segment(res.returns, hi=train_end_ts).to_numpy()
+        label = f"{variant.ema_fast}/{variant.ema_slow}"
+        returns_by_trial[label] = res.returns
         trials.append(
             Trial(
                 params={"ema_fast": variant.ema_fast, "ema_slow": variant.ema_slow},
@@ -160,6 +166,10 @@ def run_oos_validation(
             var_sharpe=var_sharpe,
         )
 
+    # 6) Probability of Backtest Overfitting over the whole grid (CSCV).
+    matrix = pd.DataFrame(returns_by_trial).dropna(how="any")
+    pbo_res = cscv_pbo(matrix, n_blocks=10)
+
     return OOSResult(
         best_params=best.params,
         train_sharpe=best.train_sharpe,
@@ -170,5 +180,7 @@ def run_oos_validation(
         n_trials=len(grid),
         split_ts=test_start_ts.to_pydatetime(),
         test_bars=len(test_ret),
+        pbo=pbo_res.pbo,
+        prob_oos_loss=pbo_res.prob_oos_loss,
         trials=trials,
     )

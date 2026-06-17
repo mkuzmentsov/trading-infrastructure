@@ -148,14 +148,16 @@ def _cmd_validate(args) -> int:
     print(f"skew={m.skew:+.2f}  hit={m.hit_rate:.1%}  PF={m.profit_factor:.2f}")
     print(f"untuned-default OOS Sharpe={r.default_oos_sharpe:.2f}   buy&hold OOS Sharpe={r.buy_hold_oos_sharpe:.2f}")
     print(f"Deflated Sharpe (P[true SR>0], {r.n_trials} trials)={r.deflated_sharpe:.3f}")
+    print(f"PBO (prob. of backtest overfitting, CSCV)={r.pbo:.2f}   P(OOS loss)={r.prob_oos_loss:.2f}")
 
     gate = ApproveForLiveGate(cfg.validation).evaluate(
-        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe}
+        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe,
+         "pbo": r.pbo}
     )
     print("\n-- approve-for-live gate (§4) --")
     print(gate.summary())
-    print("\nNote: PBO/CPCV, regime, stress and paper checks are not yet wired — this is a "
-          "partial gate for the rule baseline. Full gate lands with the ML phase.")
+    print("\nNote: regime, stress and paper checks are not yet wired — this is a partial gate. "
+          "PBO above quantifies how overfit the grid search itself was (CSCV, §4.2).")
     return 0
 
 
@@ -235,9 +237,11 @@ def _cmd_xsec(args) -> int:
     print(f"equal-weight (long-only) OOS Sharpe={r.equal_weight_oos_sharpe:.2f}  "
           f"(dollar-neutral momentum is market-independent by design)")
     print(f"Deflated Sharpe (P[true SR>0], {r.n_trials} trials)={r.deflated_sharpe:.3f}")
+    print(f"PBO (prob. of backtest overfitting, CSCV)={r.pbo:.2f}   P(OOS loss)={r.prob_oos_loss:.2f}")
 
     gate = ApproveForLiveGate(cfg.validation).evaluate(
-        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe}
+        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe,
+         "pbo": r.pbo}
     )
     print("\n-- approve-for-live gate (§4) --")
     print(gate.summary())

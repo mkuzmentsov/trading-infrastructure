@@ -18,9 +18,10 @@ from ..backtest.panel import run_panel_backtest
 from ..config import BotConfig
 from ..core.types import Symbol
 from ..data.bars import PERIODS_PER_YEAR
+from .cpcv import cscv_pbo
 from .deflated_sharpe import deflated_sharpe_ratio
 
-_LOOKBACKS = (14, 30, 60, 90)
+_LOOKBACKS = (7, 14, 21, 30, 45, 60, 90, 120)
 
 
 @dataclass
@@ -35,6 +36,8 @@ class XSecOOSResult:
     n_symbols: int
     split_ts: datetime
     test_bars: int
+    pbo: float = float("nan")
+    prob_oos_loss: float = float("nan")
     trials: list = field(default_factory=list)
 
 
@@ -81,10 +84,12 @@ def run_xsec_validation(
             periods_per_year=ppy, starting_cash=config.starting_cash,
         )
 
-    # 1) In-sample grid search over lookback.
+    # 1) In-sample grid search over lookback; keep return series for the PBO matrix.
     trials = []
+    returns_by_trial: dict[str, pd.Series] = {}
     for lb in _LOOKBACKS:
         res = run(lb)
+        returns_by_trial[f"lb{lb}"] = res.returns
         tr = res.returns[res.returns.index < train_end_ts].to_numpy()
         trials.append({"lookback": lb, "train_sharpe": M.sharpe(tr, ppy),
                        "train_perbar": _perbar_sharpe(tr)})
@@ -111,6 +116,10 @@ def run_xsec_validation(
         dsr = deflated_sharpe_ratio(obs, len(tr_test), M.skew(tr_test),
                                     M.kurtosis(tr_test) + 3.0, len(trials), var_sharpe)
 
+    # 5b) Probability of Backtest Overfitting over the lookback grid (CSCV).
+    matrix = pd.DataFrame(returns_by_trial).dropna(how="any")
+    pbo_res = cscv_pbo(matrix, n_blocks=10)
+
     return XSecOOSResult(
         best_lookback=best["lookback"],
         train_sharpe=best["train_sharpe"],
@@ -122,5 +131,7 @@ def run_xsec_validation(
         n_symbols=panel.shape[1],
         split_ts=test_start_ts.to_pydatetime(),
         test_bars=len(test_ret),
+        pbo=pbo_res.pbo,
+        prob_oos_loss=pbo_res.prob_oos_loss,
         trials=trials,
     )

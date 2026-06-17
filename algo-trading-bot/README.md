@@ -13,16 +13,17 @@ a venue adapter.
 ## Status
 
 **Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
-skeleton (§2). Implemented and tested (28 tests): ccxt data ingest + interval-aware
+skeleton (§2). Implemented and tested (32 tests): ccxt data ingest + interval-aware
 point-in-time Parquet store, causal feature pipeline, the Tier-1 trend baseline,
 forecast combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with
 costs, the shared backtest==live engine with run provenance, an OOS validation
 harness (in-sample grid tune → out-of-sample test + Deflated Sharpe + gate), the full
 meta-label ML loop (triple-barrier labeling, average-uniqueness weights, purged &
 embargoed K-fold CV, GBT, MDA importance, leak-check, economic test), and a
-cross-sectional momentum panel backtest (lookahead-careful, cost-aware, IS/OOS + DSR).
-Remaining stubs (cite their requirement section): CPCV/PBO, regime classifier, stress
-replay, model registry, live/paper runners.
+cross-sectional momentum panel backtest (lookahead-careful, cost-aware, IS/OOS + DSR),
+and CPCV + Probability of Backtest Overfitting (CSCV) wired into both validators.
+Remaining stubs (cite their requirement section): regime classifier, stress replay,
+model registry, live/paper runners.
 
 ## Phase-0 decisions
 
@@ -79,8 +80,8 @@ atb live      --config configs/btc_1h.toml   # guarded live                     
 
 - `backtest` (untuned baseline, after costs): total return **−0.5%**, Sharpe **−0.04**, skew **+0.51**.
 - `validate` (grid-tune on train, test OOS): best train Sharpe **+0.65** → **OOS Sharpe −0.92**,
-  Deflated Sharpe **0.15** (need ≥0.95) → gate **REJECTED**. The harness caught an overfit
-  edge before any capital saw it (principle #2).
+  Deflated Sharpe **0.15** (need ≥0.95), **PBO 0.77** (need ≤0.3) → gate **REJECTED**. The
+  harness caught an overfit edge before any capital saw it (principle #2).
 - `metalabel` (triple-barrier label, GBT, purged & embargoed CV): pooled **OOS AUC 0.62**
   (consistent across 6 folds). Leak-checked: **shuffling labels collapses AUC to 0.500**,
   dropping calendar features keeps 0.59 — a real, leak-free signal, dominated by `ret_vol`
@@ -92,14 +93,16 @@ atb live      --config configs/btc_1h.toml   # guarded live                     
   profit**, demonstrated end-to-end (principle #4). The harness stopped a plausible signal
   from being mistaken for an edge — which is exactly its job (principle #1).
 - `xsec` (cross-sectional momentum, 16-alt universe, 1d, dollar-neutral): in-sample best
-  lookback Sharpe **+1.27** collapses to **OOS Sharpe 0.00**, with **skew −3.47** and a
-  −32% drawdown — the momentum-crash / negative-skew profile §6.2/§12 flags as an
-  account-killer. Gate **REJECTED**.
+  lookback Sharpe **+1.27**; even where a grid happens to yield a positive OOS Sharpe
+  (~+0.45), **PBO 0.73** and **DSR 0.30** expose it as overfit, and skew runs to **−3.47**
+  (momentum-crash / negative-skew, the §6.2/§12 account-killer). Gate **REJECTED**. PBO is
+  the lesson here: a single train/test split can look positive while the *selection* is a
+  coin-flip — PBO catches what one split misses.
 
 Three strategy families tested (single-asset trend, meta-label ML, cross-sectional
 momentum); **all three show strong in-sample and no robust OOS edge after costs**. That
-consistent train→OOS collapse — caught every time — is the harness doing its job. No edge
-has cleared the bar yet, and that conclusion is now trustworthy.
+consistent train→OOS collapse — caught every time, and now quantified by PBO — is the
+harness doing its job. No edge has cleared the bar yet, and that conclusion is trustworthy.
 
 ## Build order (§6.1)
 
