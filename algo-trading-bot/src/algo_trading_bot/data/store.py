@@ -33,12 +33,13 @@ class PointInTimeStore:
         (self.root / "bars").mkdir(parents=True, exist_ok=True)
 
     # --- paths ---
-    def _path(self, venue: str, symbol: str) -> Path:
-        return self.root / "bars" / f"{venue}__{symbol}.parquet"
+    def _path(self, venue: str, symbol: str, interval: str) -> Path:
+        return self.root / "bars" / f"{venue}__{symbol}__{interval}.parquet"
 
     # --- write ---
-    def append_bars(self, bars: list[Bar]) -> None:
-        """Merge ``bars`` into their per-(venue,symbol) Parquet files, de-duped on ts."""
+    def append_bars(self, bars: list[Bar], interval: str) -> None:
+        """Merge ``bars`` into their per-(venue,symbol,interval) Parquet files, de-duped
+        on ts. ``interval`` partitions the store so mixing granularities is impossible."""
         if not bars:
             return
         df = pd.DataFrame(
@@ -55,7 +56,7 @@ class PointInTimeStore:
             }
         )
         for (venue, symbol), grp in df.groupby(["venue", "symbol"], sort=False):
-            path = self._path(str(venue), str(symbol))
+            path = self._path(str(venue), str(symbol), interval)
             if path.exists():
                 grp = pd.concat([pd.read_parquet(path), grp], ignore_index=True)
             grp = (
@@ -70,11 +71,11 @@ class PointInTimeStore:
 
     # --- read ---
     def _frame(
-        self, symbols: list[Symbol], venue: str | None, start: datetime, end: datetime
+        self, symbols: list[Symbol], venue: str | None, interval: str, start: datetime, end: datetime
     ) -> pd.DataFrame:
         frames = []
         for sym in symbols:
-            for path in (self.root / "bars").glob(f"*__{sym}.parquet"):
+            for path in (self.root / "bars").glob(f"*__{sym}__{interval}.parquet"):
                 if venue and not path.name.startswith(f"{venue}__"):
                     continue
                 frames.append(pd.read_parquet(path))
@@ -90,12 +91,13 @@ class PointInTimeStore:
         symbols: list[Symbol],
         start: datetime,
         end: datetime,
+        interval: str,
         as_of: datetime | None = None,
         venue: str | None = None,
     ) -> Iterator[Bar]:
         """Yield bars in ``knowable_at`` order, optionally only those knowable by
         ``as_of`` (point-in-time read). This is what the historical source consumes."""
-        df = self._frame(symbols, venue, start, end)
+        df = self._frame(symbols, venue, interval, start, end)
         if df.empty:
             return
         if as_of is not None:
@@ -115,12 +117,27 @@ class PointInTimeStore:
                 knowable_at=r.knowable_at.to_pydatetime(),
             )
 
+    def close_panel(
+        self, symbols: list[Symbol], start: datetime, end: datetime, interval: str,
+        venue: str | None = None,
+    ) -> pd.DataFrame:
+        """Return a (timestamp x symbol) panel of close prices for cross-sectional work.
+
+        Rows are bar close timestamps; columns are symbols. Aligned on the shared index
+        (a symbol missing a bar is NaN). Point-in-time correct: ts == knowable_at.
+        """
+        df = self._frame(symbols, venue, interval, start, end)
+        if df.empty:
+            return pd.DataFrame()
+        return df.pivot_table(index="ts", columns="symbol", values="close").sort_index()
+
     # --- reproducibility (§3.4) ---
     def snapshot_id(
-        self, symbols: list[Symbol], start: datetime, end: datetime, venue: str | None = None
+        self, symbols: list[Symbol], start: datetime, end: datetime, interval: str,
+        venue: str | None = None,
     ) -> str:
         """Stable content hash of the queried slice, recorded in every run's provenance."""
-        df = self._frame(symbols, venue, start, end).sort_values(["symbol", "ts"])
+        df = self._frame(symbols, venue, interval, start, end).sort_values(["symbol", "ts"])
         h = hashlib.sha256()
         h.update(",".join(sorted(symbols)).encode())
         h.update(str(len(df)).encode())

@@ -35,16 +35,20 @@ class HistoricalSource:
         symbols: Iterable[Symbol],
         start: datetime,
         end: datetime,
+        interval: str,
         venue: str | None = None,
     ) -> None:
         self.store = store
         self.symbols = [Symbol(s) for s in symbols]
         self.start = start
         self.end = end
+        self.interval = interval
         self.venue = venue
 
     def stream(self) -> Iterator[Bar | FundingPoint]:
-        yield from self.store.read_ordered(self.symbols, self.start, self.end, venue=self.venue)
+        yield from self.store.read_ordered(
+            self.symbols, self.start, self.end, self.interval, venue=self.venue
+        )
 
 
 class LiveSource:

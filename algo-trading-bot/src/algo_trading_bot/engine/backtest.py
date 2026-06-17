@@ -106,7 +106,8 @@ class Backtester:
         without re-hitting Parquet per trial."""
         symbols = [Symbol(s) for s in self.config.universe]
         venue = venue or self.config.data_venue
-        return list(HistoricalSource(self.store, symbols, start, end, venue=venue).stream())
+        src = HistoricalSource(self.store, symbols, start, end, self.config.bar_interval, venue=venue)
+        return list(src.stream())
 
     def run(
         self,
@@ -157,7 +158,7 @@ class Backtester:
         except Exception:
             commit = "unknown"
         return RunProvenance(
-            data_snapshot_id=self.store.snapshot_id(symbols, start, end, venue),
+            data_snapshot_id=self.store.snapshot_id(symbols, start, end, self.config.bar_interval, venue),
             git_commit=commit,
             config_hash=cfg_hash,
             started_at=datetime.now(timezone.utc),

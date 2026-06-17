@@ -93,7 +93,7 @@ def test_economic_test_runs_and_compares(tmp_path):
         universe=["BTC"], bar_interval="1h", data_venue="test", data_dir=str(tmp_path),
         venue=VenueConfig(name="test", max_capital_quote=0.0),
     )
-    Backtester(cfg).store.append_bars(_synthetic_bars(2600))
+    Backtester(cfg).store.append_bars(_synthetic_bars(2600), "1h")
     econ = evaluate_metalabel_oos(cfg, datetime(2024, 1, 1, tzinfo=timezone.utc),
                                   datetime(2025, 1, 1, tzinfo=timezone.utc),
                                   train_frac=0.6, vertical_bars=24)

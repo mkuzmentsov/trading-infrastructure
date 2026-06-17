@@ -13,16 +13,16 @@ a venue adapter.
 ## Status
 
 **Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
-skeleton (§2). Implemented and tested (23 tests): ccxt data ingest + point-in-time
-Parquet store, causal feature pipeline, the Tier-1 trend baseline, forecast
-combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with costs,
-the shared backtest==live engine with run provenance, an OOS validation harness
-(in-sample grid tune → out-of-sample test + Deflated Sharpe + gate), and the full
+skeleton (§2). Implemented and tested (28 tests): ccxt data ingest + interval-aware
+point-in-time Parquet store, causal feature pipeline, the Tier-1 trend baseline,
+forecast combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with
+costs, the shared backtest==live engine with run provenance, an OOS validation
+harness (in-sample grid tune → out-of-sample test + Deflated Sharpe + gate), the full
 meta-label ML loop (triple-barrier labeling, average-uniqueness weights, purged &
-embargoed K-fold CV, GBT, MDA importance, leak-check regression test, and the
-economic test that runs meta vs baseline OOS after costs). Remaining stubs (cite
-their requirement section): CPCV/PBO, regime classifier, stress replay, model
-registry, live/paper runners.
+embargoed K-fold CV, GBT, MDA importance, leak-check, economic test), and a
+cross-sectional momentum panel backtest (lookahead-careful, cost-aware, IS/OOS + DSR).
+Remaining stubs (cite their requirement section): CPCV/PBO, regime classifier, stress
+replay, model registry, live/paper runners.
 
 ## Phase-0 decisions
 
@@ -70,6 +70,7 @@ atb fetch     --venue binance --symbols BTC --interval 1h --start 2024-01-01  # 
 atb backtest  --config configs/btc_1h.toml   # equity curve, metrics, provenance — WORKING
 atb validate  --config configs/btc_1h.toml   # in-sample tune -> OOS test + gate — WORKING
 atb metalabel --config configs/btc_1h.toml   # triple-barrier + GBT in purged CV — WORKING (needs [ml])
+atb xsec      --config configs/xsec_1d.toml  # cross-sectional momentum panel OOS — WORKING
 atb paper     --config configs/btc_1h.toml   # paper-trade live data            — stub
 atb live      --config configs/btc_1h.toml   # guarded live                      — stub
 ```
@@ -90,9 +91,15 @@ atb live      --config configs/btc_1h.toml   # guarded live                     
   ranking signal just concentrated risk into volatile periods, and costs ate it. **AUC ≠
   profit**, demonstrated end-to-end (principle #4). The harness stopped a plausible signal
   from being mistaken for an edge — which is exactly its job (principle #1).
+- `xsec` (cross-sectional momentum, 16-alt universe, 1d, dollar-neutral): in-sample best
+  lookback Sharpe **+1.27** collapses to **OOS Sharpe 0.00**, with **skew −3.47** and a
+  −32% drawdown — the momentum-crash / negative-skew profile §6.2/§12 flags as an
+  account-killer. Gate **REJECTED**.
 
-This `Sharpe ≈ 0` baseline is the bar any model must clear OOS, after costs. Nothing has,
-yet — and the harness is what makes that conclusion trustworthy.
+Three strategy families tested (single-asset trend, meta-label ML, cross-sectional
+momentum); **all three show strong in-sample and no robust OOS edge after costs**. That
+consistent train→OOS collapse — caught every time — is the harness doing its job. No edge
+has cleared the bar yet, and that conclusion is now trustworthy.
 
 ## Build order (§6.1)
 

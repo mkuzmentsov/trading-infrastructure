@@ -51,7 +51,7 @@ def _write_trending_bars(store, n=900, seed=1):
         ts = t0 + timedelta(hours=i + 1)
         bars.append(Bar(Symbol("BTC"), ts, price, price * 1.002, price * 0.998,
                         price, 100.0, VenueId("test"), knowable_at=ts))
-    store.append_bars(bars)
+    store.append_bars(bars, "1h")
 
 
 def test_oos_validation_runs_and_splits(tmp_path):

@@ -69,6 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_ml.add_argument("--end", default=None)
     p_ml.add_argument("--vertical-bars", type=int, default=24)
 
+    p_xs = sub.add_parser("xsec", help="cross-sectional momentum panel backtest (in-sample tune -> OOS)")
+    p_xs.add_argument("--config", required=True)
+    p_xs.add_argument("--start", default=None)
+    p_xs.add_argument("--end", default=None)
+    p_xs.add_argument("--train-frac", type=float, default=0.6)
+
     for name, help_ in [
         ("paper", "paper-trade against live data"),
         ("live", "run live (guarded: requires passed gate + paper run)"),
@@ -208,6 +214,36 @@ def _cmd_metalabel(args) -> int:
     return 0
 
 
+def _cmd_xsec(args) -> int:
+    from .validation.gate import ApproveForLiveGate
+    from .validation.xsec_oos import run_xsec_validation
+
+    cfg = _load_config(args.config)
+    start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    end = _parse_dt(args.end, datetime.now(timezone.utc))
+    r = run_xsec_validation(cfg, start, end, train_frac=args.train_frac)
+
+    m = r.oos_metrics
+    print("\n=== Cross-sectional momentum (in-sample tune -> OOS) ===")
+    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  "
+          f"top_frac={cfg.xsec.top_frac}  rebalance={cfg.xsec.rebalance}  grid_trials={r.n_trials}")
+    print(f"OOS segment starts {r.split_ts:%Y-%m-%d} ({r.test_bars} bars)")
+    print(f"-- in-sample selection --  best lookback={r.best_lookback}  train Sharpe={r.train_sharpe:.2f}")
+    print("-- OUT-OF-SAMPLE (the number that counts) --")
+    print(f"Sharpe={m.sharpe:.2f}  Sortino={m.sortino:.2f}  CAGR={m.cagr:+.1%}  maxDD={m.max_drawdown:.1%}")
+    print(f"skew={m.skew:+.2f}  vol={m.vol:.1%}  avg_turnover={r.oos_avg_turnover:.2f}/bar")
+    print(f"equal-weight (long-only) OOS Sharpe={r.equal_weight_oos_sharpe:.2f}  "
+          f"(dollar-neutral momentum is market-independent by design)")
+    print(f"Deflated Sharpe (P[true SR>0], {r.n_trials} trials)={r.deflated_sharpe:.3f}")
+
+    gate = ApproveForLiveGate(cfg.validation).evaluate(
+        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0, "deflated_sharpe": r.deflated_sharpe}
+    )
+    print("\n-- approve-for-live gate (§4) --")
+    print(gate.summary())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
@@ -218,6 +254,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_validate(args)
     if args.command == "metalabel":
         return _cmd_metalabel(args)
+    if args.command == "xsec":
+        return _cmd_xsec(args)
     raise SystemExit(f"`atb {args.command}` is not implemented yet (scaffold).")
 
 

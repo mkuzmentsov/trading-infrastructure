@@ -64,6 +64,16 @@ class TrendConfig(BaseModel):
     scale: float = 10.0  # maps the trend/vol ratio into ~[-1, 1] via tanh
 
 
+class XSecConfig(BaseModel):
+    """Cross-sectional momentum (Tier-2, §6.2) — panel-backtest knobs."""
+
+    lookback: int = 30        # momentum formation window (bars)
+    skip: int = 0             # skip most-recent bars (reversal/microstructure hygiene)
+    top_frac: float = 0.3     # long top frac, short bottom frac of the ranked universe
+    rebalance: int = 7        # rebalance every N bars
+    leverage: float = 1.0     # gross exposure multiplier (sum|w| = leverage)
+
+
 class BotConfig(BaseModel):
     name: str = "atb"
     horizon: Horizon = Horizon.SWING
@@ -75,6 +85,7 @@ class BotConfig(BaseModel):
     bar_interval: str = "1h"  # default 1h swing / 1d position; see core/types.Horizon
     starting_cash: float = 10_000.0
     trend: TrendConfig = TrendConfig()
+    xsec: XSecConfig = XSecConfig()
     friction: FrictionConfig = FrictionConfig()
     risk: RiskConfig = RiskConfig()
     validation: ValidationConfig = ValidationConfig()

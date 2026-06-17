@@ -32,7 +32,7 @@ def _make_bars(store, n=600, seed=0):
         ts = t0 + timedelta(hours=i + 1)
         bars.append(Bar(Symbol("BTC"), ts, price, price * 1.002, price * 0.998,
                         price, 100.0, VenueId("test"), knowable_at=ts))
-    store.append_bars(bars)
+    store.append_bars(bars, "1h")
 
 
 def _config(tmp_path):
