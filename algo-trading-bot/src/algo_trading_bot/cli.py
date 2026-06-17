@@ -81,11 +81,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_st.add_argument("--end", default=None)
 
     for name, help_ in [
-        ("paper", "paper-trade against live data"),
-        ("live", "run live (guarded: requires passed gate + paper run)"),
+        ("paper", "run the engine in paper mode (simulated fills) on a live-style feed"),
+        ("live", "run live with real orders (guarded: requires a recorded gate pass)"),
     ]:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("--config", required=True)
+        sp.add_argument("--source", choices=["replay", "live"], default="replay",
+                        help="replay stored bars (default) or poll the venue for live bars")
+        sp.add_argument("--speed", type=float, default=20.0, help="replay bars/sec (0 = max)")
+        sp.add_argument("--max-bars", type=int, default=None, help="stop after N bars")
+        sp.add_argument("--state-dir", default="./state")
 
     return parser
 
@@ -275,6 +280,17 @@ def _cmd_stress(args) -> int:
     return 0 if n_safe == len(results) else 1
 
 
+def _cmd_run(args) -> int:
+    from .engine.live import LiveRunner
+
+    cfg = _load_config(args.config)
+    LiveRunner(
+        cfg, mode=args.command, source=args.source, speed=args.speed,
+        max_bars=args.max_bars, state_dir=args.state_dir,
+    ).run()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "fetch":
@@ -289,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_xsec(args)
     if args.command == "stress":
         return _cmd_stress(args)
+    if args.command in ("paper", "live"):
+        return _cmd_run(args)
     raise SystemExit(f"`atb {args.command}` is not implemented yet (scaffold).")
 
 

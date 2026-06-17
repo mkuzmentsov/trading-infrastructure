@@ -1,9 +1,13 @@
 # Fetched market data — reproducible via `atb fetch`, not source.
-data/
+# Anchored to the project root so it does NOT match the src/.../data package.
+/data/
 
 # Backtest run outputs / reports
-runs/
+/runs/
 *.parquet
+
+# Live/paper runtime state + decision logs
+/state/
 
 # Python
 __pycache__/

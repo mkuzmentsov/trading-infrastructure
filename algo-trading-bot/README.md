@@ -13,7 +13,7 @@ a venue adapter.
 ## Status
 
 **Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
-skeleton (§2). Implemented and tested (35 tests): ccxt data ingest + interval-aware
+skeleton (§2). Implemented and tested (38 tests): ccxt data ingest + interval-aware
 point-in-time Parquet store, causal feature pipeline, the Tier-1 trend baseline,
 forecast combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with
 costs, the shared backtest==live engine with run provenance, an OOS validation
@@ -24,8 +24,11 @@ cross-sectional momentum panel backtest (lookahead-careful, cost-aware, IS/OOS +
 CPCV + Probability of Backtest Overfitting (CSCV) wired into both validators, and
 stress/scenario replay (flash crash, de-peg, outage, liquidity drought) checking
 solvency / de-risk / no-order-storm invariants — with a test proving the drawdown
-breaker fires and flattens the book on a deep crash. Remaining stubs (cite their
-requirement section): regime classifier, model registry, live/paper runners.
+breaker fires and flattens the book on a deep crash. A paper runner (replay or live
+poll) drives the same engine with simulated fills, structured audit logging, and
+persistent safe-restart, runnable via Docker/compose; real-money live is guarded.
+Remaining stubs (cite their requirement section): regime classifier, model registry,
+real venue order adapters (HL/Kraken order placement).
 
 ## Phase-0 decisions
 
@@ -75,9 +78,29 @@ atb validate  --config configs/btc_1h.toml   # in-sample tune -> OOS test + gate
 atb metalabel --config configs/btc_1h.toml   # triple-barrier + GBT in purged CV — WORKING (needs [ml])
 atb xsec      --config configs/xsec_1d.toml  # cross-sectional momentum panel OOS — WORKING
 atb stress    --config configs/btc_1h.toml   # pathological tapes; assert SAFE    — WORKING
-atb paper     --config configs/btc_1h.toml   # paper-trade live data            — stub
-atb live      --config configs/btc_1h.toml   # guarded live                      — stub
+atb paper     --config configs/paper.toml    # run engine, simulated fills        — WORKING
+atb live      --config configs/paper.toml    # real orders                        — GUARDED (refuses)
 ```
+
+## Run it locally (Docker)
+
+Paper mode runs the **same engine** as backtest/validate (NFR1) against a live-style
+feed, with simulated fills (no API keys), persisting NAV/positions + a JSONL decision
+log to `./state` (safe restart, NFR4).
+
+```bash
+cd algo-trading-bot
+./scripts/fetch.sh           # one-shot: pull BTC 1h into ./data  (docker)
+./scripts/paper.sh           # build + paper-trade (replays stored bars through the engine)
+# or directly:
+docker compose --profile tools run --rm fetch
+docker compose up --build paper
+```
+
+`--source replay` (default) streams stored bars through the engine so you can watch it
+run deterministically; `--source live` polls the venue for newly-closed bars. Real-money
+`live` is intentionally **guarded** — it refuses to start unless a recorded approve-for-live
+gate pass exists, and nothing has cleared the gate (§4).
 
 ### What the harness already tells you (real BTC 1h, 2024-01 → 2026-06)
 
