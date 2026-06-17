@@ -62,11 +62,13 @@ class Backtester:
         self.config = config
         self.store = PointInTimeStore(config.data_dir)
 
-    def build_engine(self, strategies: list | None = None) -> TradingEngine:
-        """Assemble the same TradingEngine used live, but with a SimClock + FillSimulator.
+    def build_engine(self, strategies: list | None = None, adapter=None) -> TradingEngine:
+        """Assemble the TradingEngine. Backtest/paper pass no adapter (a FillSimulator is
+        wired); live passes a real venue ExecutionAdapter. Everything else — features,
+        strategies, arbitration, risk, OMS — is identical (NFR1).
 
-        ``strategies`` overrides the default trend baseline (used by the meta-label
-        economic test). The clock start is set at run() time once the first bar is known.
+        ``strategies`` overrides the default trend baseline. The clock start is set at
+        run() time once the first bar is known.
         """
         cfg = self.config
         ppy = PERIODS_PER_YEAR[cfg.bar_interval]
@@ -83,8 +85,8 @@ class Backtester:
         limits = LimitChecker(cfg.risk, cfg.starting_cash, {VenueId(cfg.venue.name): cfg.venue.max_capital_quote})
         risk_gate = RiskGate(kill, drawdown, limits)
 
-        sim = FillSimulator(cfg.friction)
-        oms = OrderManager(sim, cfg.risk)
+        execution = adapter if adapter is not None else FillSimulator(cfg.friction)
+        oms = OrderManager(execution, cfg.risk)
         portfolio = Portfolio(cfg.starting_cash)
 
         return TradingEngine(

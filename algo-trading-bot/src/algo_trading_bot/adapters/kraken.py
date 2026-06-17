@@ -1,39 +1,24 @@
-"""Kraken adapter (§2.1, §8) — via CCXT (spot; derivatives where available).
+"""Kraken adapter (§2.1, §8) — Kraken spot via ccxt.
 
-Provides the live market feed and order I/O for Kraken. Symbol normalization maps
-Kraken tickers (e.g. 'XBT/USD') to canonical symbols (data/bars.py). Credentials
-come from env/secret store, never config.
-
-Requires the ``venues`` extra (ccxt).
+Thin credential wrapper over CcxtBroker. Keys come from the environment, never config
+or code: ATB_KRAKEN_API_KEY / ATB_KRAKEN_API_SECRET. Kraken spot has no short
+positions, so positions() returns {} and the book is long/flat only.
 """
 
 from __future__ import annotations
 
+import os
+
 from ..config import VenueConfig
-from ..core.types import Fill, Order, Position, Symbol
+from ..execution.ccxt_broker import CcxtBroker
 
 
-class KrakenAdapter:
-    def __init__(self, cfg: VenueConfig) -> None:
+class KrakenAdapter(CcxtBroker):
+    def __init__(self, cfg: VenueConfig, client=None) -> None:
+        ccxt_config = {
+            "apiKey": os.environ.get("ATB_KRAKEN_API_KEY", ""),
+            "secret": os.environ.get("ATB_KRAKEN_API_SECRET", ""),
+            "enableRateLimit": True,
+        }
+        super().__init__("kraken", ccxt_config=ccxt_config, client=client)
         self.cfg = cfg
-        # self._client = ccxt.kraken({...}) initialized lazily.
-
-    # --- ExecutionAdapter ---
-    def place(self, order: Order) -> None:
-        raise NotImplementedError("ccxt create_order(...)")
-
-    def cancel(self, client_id: str) -> None:
-        raise NotImplementedError("ccxt cancel_order(...)")
-
-    def open_orders(self) -> list[Order]:
-        raise NotImplementedError("ccxt fetch_open_orders(...)")
-
-    def positions(self) -> dict[Symbol, Position]:
-        raise NotImplementedError
-
-    def poll_fills(self) -> list[Fill]:
-        raise NotImplementedError("ccxt fetch_my_trades(...)")
-
-    # --- market data ---
-    def stream(self):
-        raise NotImplementedError("ccxt watch_ohlcv / fetch_ohlcv -> Bar")

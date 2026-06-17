@@ -13,7 +13,7 @@ a venue adapter.
 ## Status
 
 **Phase 1–4 vertical slice working end-to-end** on real data, atop the full 8-layer
-skeleton (§2). Implemented and tested (38 tests): ccxt data ingest + interval-aware
+skeleton (§2). Implemented and tested (43 tests): ccxt data ingest + interval-aware
 point-in-time Parquet store, causal feature pipeline, the Tier-1 trend baseline,
 forecast combiner + vol-target sizer, risk gate, idempotent OMS, fill simulator with
 costs, the shared backtest==live engine with run provenance, an OOS validation
@@ -26,9 +26,10 @@ stress/scenario replay (flash crash, de-peg, outage, liquidity drought) checking
 solvency / de-risk / no-order-storm invariants — with a test proving the drawdown
 breaker fires and flattens the book on a deep crash. A paper runner (replay or live
 poll) drives the same engine with simulated fills, structured audit logging, and
-persistent safe-restart, runnable via Docker/compose; real-money live is guarded.
-Remaining stubs (cite their requirement section): regime classifier, model registry,
-real venue order adapters (HL/Kraken order placement).
+persistent safe-restart, runnable via Docker/compose; real-money live is guarded. Real
+venue order I/O (Kraken spot, Hyperliquid perps) is implemented via a single ccxt broker
+and verified with a mock exchange (no live orders in tests). Remaining stubs (cite their
+requirement section): regime classifier, model registry, funding settlement in live PnL.
 
 ## Phase-0 decisions
 
@@ -101,6 +102,16 @@ docker compose up --build paper
 run deterministically; `--source live` polls the venue for newly-closed bars. Real-money
 `live` is intentionally **guarded** — it refuses to start unless a recorded approve-for-live
 gate pass exists, and nothing has cleared the gate (§4).
+
+When something does clear the gate, real orders go through one ccxt broker. Credentials
+come only from the environment, never config/code:
+
+```
+# Kraken (spot)
+export ATB_KRAKEN_API_KEY=...      ATB_KRAKEN_API_SECRET=...
+# Hyperliquid (perps)
+export ATB_HL_WALLET_ADDRESS=...   ATB_HL_PRIVATE_KEY=...
+```
 
 ### What the harness already tells you (real BTC 1h, 2024-01 → 2026-06)
 

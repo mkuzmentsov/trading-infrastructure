@@ -1,39 +1,30 @@
-"""Hyperliquid adapter (§2.1, §8) — native hyperliquid-python-sdk (perps).
+"""Hyperliquid adapter (§2.1, §8) — HL perps via ccxt.
 
-Provides the live market feed and order I/O for HL. Funding is native and frequent;
-it is surfaced as a context feature (FundingPoint), never as a strategy (§2.1).
-Credentials (API wallet / private key) come from env/secret store, never config.
+Thin credential wrapper over CcxtBroker. HL signs with an API wallet: credentials come
+from the environment, never config or code — ATB_HL_WALLET_ADDRESS / ATB_HL_PRIVATE_KEY.
+HL is a perp venue, so positions() returns signed net positions (long/short).
 
-Requires the ``venues`` extra (hyperliquid-python-sdk, eth-account).
+Funding is native and frequent; it is surfaced as a context feature, not a strategy
+(§2.1). Funding settlement in the live PnL is a follow-up (flagged, not silently
+omitted).
 """
 
 from __future__ import annotations
 
+import os
+
 from ..config import VenueConfig
-from ..core.types import Fill, Order, Position, Symbol
+from ..execution.ccxt_broker import CcxtBroker
 
 
-class HyperliquidAdapter:
-    def __init__(self, cfg: VenueConfig) -> None:
+class HyperliquidAdapter(CcxtBroker):
+    def __init__(self, cfg: VenueConfig, client=None) -> None:
+        ccxt_config = {
+            "walletAddress": os.environ.get("ATB_HL_WALLET_ADDRESS", ""),
+            "privateKey": os.environ.get("ATB_HL_PRIVATE_KEY", ""),
+            "enableRateLimit": True,
+        }
+        if cfg.testnet:
+            ccxt_config["sandbox"] = True
+        super().__init__("hyperliquid", ccxt_config=ccxt_config, client=client)
         self.cfg = cfg
-        # self._info / self._exchange initialized lazily from the HL SDK.
-
-    # --- ExecutionAdapter ---
-    def place(self, order: Order) -> None:
-        raise NotImplementedError("hyperliquid Exchange.order(...)")
-
-    def cancel(self, client_id: str) -> None:
-        raise NotImplementedError("hyperliquid Exchange.cancel(...)")
-
-    def open_orders(self) -> list[Order]:
-        raise NotImplementedError
-
-    def positions(self) -> dict[Symbol, Position]:
-        raise NotImplementedError
-
-    def poll_fills(self) -> list[Fill]:
-        raise NotImplementedError
-
-    # --- market data ---
-    def stream(self):
-        raise NotImplementedError("HL websocket candles + funding -> Bar/FundingPoint")

@@ -93,11 +93,21 @@ class LiveRunner:
 
     # --- run ---
     def run(self) -> None:
+        adapter = None
         if self.mode == "live":
             self._guard_live()  # raises unless explicitly cleared
+            from ..adapters import make_adapter
 
-        engine = Backtester(self.config).build_engine()
+            adapter = make_adapter(self.config.venue)  # real CcxtBroker
+
+        engine = Backtester(self.config).build_engine(adapter=adapter)
         restored = self._restore(engine)
+        if self.mode == "live" and adapter is not None:
+            # The venue is authoritative for live positions; reconcile + adopt (NFR4).
+            venue_pos = adapter.positions()
+            if venue_pos:
+                engine.portfolio.positions.update(venue_pos)
+            engine.oms.on_restart()
         print(f"[{self.config.name}] mode={self.mode} source={self.source} "
               f"restored_bars={restored} cash={engine.portfolio.cash:,.0f}")
 
