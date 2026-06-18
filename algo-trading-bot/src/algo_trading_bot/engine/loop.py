@@ -72,6 +72,18 @@ class TradingEngine:
         for event in events:
             self.handle(event)
 
+    def warmup(self, bars) -> None:
+        """Feed historical bars through the *feature pipeline only* — no trading, no NAV
+        recording — so a live session starts with warm features instead of waiting ~100
+        bars in real time. Advances the clock and marks so the first live bar trades."""
+        for bar in bars:
+            if isinstance(self.clock, SimClock):
+                self.clock.advance_to(bar.known_at())
+            self._marks[bar.symbol] = bar.close
+            self.features.update(bar)
+            if hasattr(self.oms.adapter, "update_market"):
+                self.oms.adapter.update_market(bar.symbol, bar.close, bar.ts)
+
     def handle(self, event: Event) -> None:
         if isinstance(event, MarketEvent):
             self._on_market(event)

@@ -1,29 +1,50 @@
-# Run the bot locally. Two steps:
-#   1) fetch data once:   docker compose --profile tools run --rm fetch
-#   2) paper-trade:        docker compose up --build paper
+# Run the bot locally for Kraken and/or Hyperliquid.
 #
-# `paper` replays stored bars through the real engine with simulated fills (no keys).
-# State + decision logs land in ./state; market data in ./data. Both are host-mounted
-# so they survive container restarts (NFR4).
+# 1) fetch data once (per venue):
+#      docker compose --profile tools run --rm fetch-kraken
+#      docker compose --profile tools run --rm fetch-hl
+# 2) paper-trade (simulated fills, no keys needed):
+#      docker compose up --build paper-kraken paper-hl
+#
+# `--source replay` (default below) streams stored bars through the real engine so you
+# can watch it; switch to `--source live` to tail the venue's live bars (warms up from
+# stored history first). State + decision logs persist to ./state (survive restarts).
+#
+# Credentials (only used by the GUARDED real-money `live` mode) come from ./.env —
+# copy .env.example to .env and fill it in. Paper mode ignores them.
 
 services:
-  paper:
+  paper-kraken:
     build: .
     image: algo-trading-bot:latest
-    command: ["paper", "--config", "configs/paper.toml", "--source", "replay",
+    env_file: [.env]
+    command: ["paper", "--config", "configs/paper_kraken.toml", "--source", "replay",
               "--speed", "2", "--state-dir", "/app/state"]
-    volumes:
-      - ./data:/app/data
-      - ./state:/app/state
-      - ./configs:/app/configs
+    volumes: [./data:/app/data, ./state:/app/state, ./configs:/app/configs]
     restart: unless-stopped
 
-  # One-shot data fetch. Enable with the `tools` profile so it doesn't run on `up`.
-  fetch:
+  paper-hl:
     build: .
     image: algo-trading-bot:latest
-    profiles: ["tools"]
-    command: ["fetch", "--venue", "binance", "--symbols", "BTC", "--interval", "1h",
-              "--start", "2024-01-01", "--data-dir", "/app/data"]
-    volumes:
-      - ./data:/app/data
+    env_file: [.env]
+    command: ["paper", "--config", "configs/paper_hl.toml", "--source", "replay",
+              "--speed", "2", "--state-dir", "/app/state"]
+    volumes: [./data:/app/data, ./state:/app/state, ./configs:/app/configs]
+    restart: unless-stopped
+
+  # One-shot data fetches (profile `tools` so they don't run on `up`).
+  fetch-kraken:
+    build: .
+    image: algo-trading-bot:latest
+    profiles: [tools]
+    command: ["fetch", "--venue", "kraken", "--symbols", "BTC", "--interval", "1h",
+              "--start", "2026-05-01", "--data-dir", "/app/data"]
+    volumes: [./data:/app/data]
+
+  fetch-hl:
+    build: .
+    image: algo-trading-bot:latest
+    profiles: [tools]
+    command: ["fetch", "--venue", "hyperliquid", "--symbols", "BTC", "--interval", "1h",
+              "--start", "2026-02-18", "--data-dir", "/app/data"]
+    volumes: [./data:/app/data]

@@ -91,26 +91,29 @@ log to `./state` (safe restart, NFR4).
 
 ```bash
 cd algo-trading-bot
-./scripts/fetch.sh           # one-shot: pull BTC 1h into ./data  (docker)
-./scripts/paper.sh           # build + paper-trade (replays stored bars through the engine)
-# or directly:
-docker compose --profile tools run --rm fetch
-docker compose up --build paper
+# 1) fetch live data per venue (one-shot)
+docker compose --profile tools run --rm fetch-kraken
+docker compose --profile tools run --rm fetch-hl
+# 2) paper-trade both venues (simulated fills, no keys)
+docker compose up --build paper-kraken paper-hl
 ```
 
-`--source replay` (default) streams stored bars through the engine so you can watch it
-run deterministically; `--source live` polls the venue for newly-closed bars. Real-money
-`live` is intentionally **guarded** — it refuses to start unless a recorded approve-for-live
-gate pass exists, and nothing has cleared the gate (§4).
+Each venue has its own config (`configs/paper_kraken.toml`, `configs/paper_hl.toml`) and
+runs the same engine with simulated fills. `--source replay` (default) streams stored
+bars so you can watch it run deterministically; `--source live` tails the venue's live
+bars (warming up from stored history first). State + decision logs persist per venue in
+`./state`.
 
-When something does clear the gate, real orders go through one ccxt broker. Credentials
-come only from the environment, never config/code:
+Real-money `live` is intentionally **guarded** — it refuses to start unless a recorded
+approve-for-live gate pass exists, and nothing has cleared the gate (§4). When something
+does, real orders go through one ccxt broker; credentials come only from `.env`
+(`cp .env.example .env` and fill in — gitignored, never config/code):
 
 ```
 # Kraken (spot)
-export ATB_KRAKEN_API_KEY=...      ATB_KRAKEN_API_SECRET=...
+ATB_KRAKEN_API_KEY=...      ATB_KRAKEN_API_SECRET=...
 # Hyperliquid (perps)
-export ATB_HL_WALLET_ADDRESS=...   ATB_HL_PRIVATE_KEY=...
+ATB_HL_WALLET_ADDRESS=...   ATB_HL_PRIVATE_KEY=...
 ```
 
 ### What the harness already tells you (real BTC 1h, 2024-01 → 2026-06)

@@ -9,6 +9,9 @@
 # Live/paper runtime state + decision logs
 /state/
 
+# Secrets — env file with venue API keys (never commit)
+.env
+
 # Python
 __pycache__/
 *.pyc

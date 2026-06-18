@@ -52,7 +52,7 @@ def fetch_ohlcv(
         canonical = normalize_symbol(base, venue)
         market = _market_symbol(venue, base)
         since = int(start.replace(tzinfo=timezone.utc).timestamp() * 1000)
-        last_seen = -1
+        prev_last_ts: int | None = None
         while since < end_ms:
             rows = ex.fetch_ohlcv(market, interval, since=since, limit=limit)
             if not rows:
@@ -61,12 +61,14 @@ def fetch_ohlcv(
                 if row[0] > end_ms:
                     break
                 out.append(bar_from_ohlcv(row, canonical, VenueId(venue), interval))
-            new_since = rows[-1][0] + step_ms
-            if new_since <= last_seen:  # venue ignored `since` (e.g. Kraken) -> stop
+            last_ts = rows[-1][0]
+            # Venues that ignore `since` (e.g. Kraken) return the same window each call;
+            # stop once the last bar timestamp stops advancing.
+            if last_ts == prev_last_ts:
                 break
-            last_seen = rows[-1][0]
-            since = new_since
-            if rows[-1][0] >= end_ms:
+            prev_last_ts = last_ts
+            since = last_ts + step_ms
+            if last_ts >= end_ms:
                 break
     return out
 

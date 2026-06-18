@@ -75,21 +75,19 @@ class LiveRunner:
         }
         self.state_path.write_text(json.dumps(st, indent=2))
 
-    # --- sources ---
-    def _make_source(self):
-        if self.source == "replay":
-            bars = Backtester(self.config).load_bars(
-                datetime(2000, 1, 1, tzinfo=timezone.utc), datetime.now(timezone.utc)
-            )
-            if not bars:
-                raise RuntimeError("no stored bars to replay — run `atb fetch` first")
-            return replay_source(bars, speed=self.speed, max_bars=self.max_bars)
-        if self.source == "live":
-            return ccxt_poll_source(
-                self.config.data_venue or self.config.venue.name,
-                self.config.universe, self.config.bar_interval, max_bars=self.max_bars,
-            )
-        raise ValueError(f"unknown source {self.source!r} (replay|live)")
+    def _stored_bars(self) -> list:
+        return Backtester(self.config).load_bars(
+            datetime(2000, 1, 1, tzinfo=timezone.utc), datetime.now(timezone.utc)
+        )
+
+    def _live_iter(self, after):
+        """Live-polled bars newer than ``after`` (the last warmup bar)."""
+        for bar in ccxt_poll_source(
+            self.config.data_venue or self.config.venue.name,
+            self.config.universe, self.config.bar_interval, max_bars=self.max_bars,
+        ):
+            if after is None or bar.ts > after:
+                yield bar
 
     # --- run ---
     def run(self) -> None:
@@ -101,19 +99,34 @@ class LiveRunner:
             adapter = make_adapter(self.config.venue)  # real CcxtBroker
 
         engine = Backtester(self.config).build_engine(adapter=adapter)
-        restored = self._restore(engine)
-        if self.mode == "live" and adapter is not None:
-            # The venue is authoritative for live positions; reconcile + adopt (NFR4).
-            venue_pos = adapter.positions()
-            if venue_pos:
-                engine.portfolio.positions.update(venue_pos)
-            engine.oms.on_restart()
-        print(f"[{self.config.name}] mode={self.mode} source={self.source} "
-              f"restored_bars={restored} cash={engine.portfolio.cash:,.0f}")
+        stored = self._stored_bars()
 
-        i = restored
+        if self.source == "live":
+            # Warm features from stored history, then tail live bars. Resume the book
+            # from persisted state (paper) or reconcile from the venue (live, NFR4).
+            engine.warmup(stored)
+            last_warm = stored[-1].ts if stored else None
+            restored = self._restore(engine)
+            if self.mode == "live" and adapter is not None:
+                venue_pos = adapter.positions()
+                if venue_pos:
+                    engine.portfolio.positions.update(venue_pos)
+                engine.oms.on_restart()
+            print(f"[{self.config.name}] mode={self.mode} source=live warmed={len(stored)} "
+                  f"restored_bars={restored} cash={engine.portfolio.cash:,.0f}")
+            trading_iter = self._live_iter(last_warm)
+        else:
+            # Replay is a deterministic run from the start — no restore (that would
+            # double-count); the full history streams through the trading path.
+            if not stored:
+                raise RuntimeError("no stored bars to replay — run `atb fetch` first")
+            print(f"[{self.config.name}] mode={self.mode} source=replay "
+                  f"bars={len(stored)} cash={engine.portfolio.cash:,.0f}")
+            trading_iter = replay_source(stored, speed=self.speed, max_bars=self.max_bars)
+
+        i = 0
         last_ts = None
-        for bar in self._make_source():
+        for bar in trading_iter:
             engine.handle(MarketEvent(bar))
             i += 1
             last_ts = bar.ts
