@@ -1,11 +1,11 @@
-# Paper-trading config — Kraken Futures (USD-settled perpetuals), BTC 1h trend, sim fills.
+# Paper-trading config — Kraken Futures (USD-settled perpetuals), BTC 1d trend (position), sim fills.
 # Perps -> long/short with leverage, matching Hyperliquid. Live `--source live` polls
 # Kraken Futures public OHLCV (BTC/USD:USD).
 name = "paper_kraken_btc"
-horizon = "swing"
+horizon = "position"
 universe = ["BTC"]
 data_venue = "krakenfutures"
-bar_interval = "1h"
+bar_interval = "1d"
 starting_cash = 10000.0
 data_dir = "./data"
 

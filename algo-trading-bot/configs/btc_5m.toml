@@ -1,10 +1,9 @@
-# Paper-trading config — Hyperliquid perps, BTC 1d trend (position), simulated fills.
-# Data + trade venue both Hyperliquid. Live `--source live` polls HL public OHLCV.
-name = "paper_hl_btc"
-horizon = "position"
+# Frequency experiment — BTC 5-minute bars, same trend params as 1h (only frequency varies).
+name = "btc_5m_trend"
+horizon = "swing"
 universe = ["BTC"]
-data_venue = "hyperliquid"
-bar_interval = "1d"
+data_venue = "binance"
+bar_interval = "5m"
 starting_cash = 10000.0
 data_dir = "./data"
 
@@ -23,7 +22,7 @@ scale = 10.0
 taker_fee_bps = 4.5
 
 [risk]
-max_gross_leverage = 2.0       # HL perps: long/short
+max_gross_leverage = 2.0
 target_annual_vol = 0.20
 kelly_fraction = 0.5
 drawdown_derisk = 0.10

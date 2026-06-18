@@ -38,14 +38,14 @@ services:
     build: .
     image: algo-trading-bot:latest
     profiles: [tools]
-    command: ["fetch", "--venue", "krakenfutures", "--symbols", "BTC", "--interval", "1h",
-              "--start", "2026-04-01", "--data-dir", "/app/data"]
+    command: ["fetch", "--venue", "krakenfutures", "--symbols", "BTC", "--interval", "1d",
+              "--start", "2022-01-01", "--data-dir", "/app/data"]
     volumes: [./data:/app/data]
 
   fetch-hl:
     build: .
     image: algo-trading-bot:latest
     profiles: [tools]
-    command: ["fetch", "--venue", "hyperliquid", "--symbols", "BTC", "--interval", "1h",
-              "--start", "2026-02-18", "--data-dir", "/app/data"]
+    command: ["fetch", "--venue", "hyperliquid", "--symbols", "BTC", "--interval", "1d",
+              "--start", "2022-01-01", "--data-dir", "/app/data"]
     volumes: [./data:/app/data]
