@@ -20,7 +20,13 @@ from ..core.types import Bar, Symbol, VenueId
 from .bars import INTERVALS, bar_from_ohlcv, normalize_symbol
 
 # ccxt unified quote per venue for a base symbol. Kept tiny and explicit.
-_QUOTE = {"binance": "USDT", "kraken": "USD", "hyperliquid": "USDC:USDC"}
+# Perp venues use a settle suffix ("BTC/USD:USD" etc.) so the market is the swap.
+_QUOTE = {
+    "binance": "USDT",            # spot (data only)
+    "kraken": "USD",              # spot
+    "krakenfutures": "USD:USD",   # USD-settled linear perpetual
+    "hyperliquid": "USDC:USDC",   # USDC-settled perpetual
+}
 
 
 def _market_symbol(venue: str, base: str) -> str:

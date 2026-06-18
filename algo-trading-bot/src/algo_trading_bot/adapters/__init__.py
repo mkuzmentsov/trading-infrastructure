@@ -20,8 +20,14 @@ def make_adapter(cfg: VenueConfig):
         from .hyperliquid import HyperliquidAdapter
 
         return HyperliquidAdapter(cfg)
+    if name == "krakenfutures":
+        from .kraken import KrakenFuturesAdapter
+
+        return KrakenFuturesAdapter(cfg)
     if name == "kraken":
         from .kraken import KrakenAdapter
 
         return KrakenAdapter(cfg)
-    raise ValueError(f"unknown venue: {cfg.name!r} (expected 'hyperliquid' | 'kraken')")
+    raise ValueError(
+        f"unknown venue: {cfg.name!r} (expected 'hyperliquid' | 'krakenfutures' | 'kraken')"
+    )

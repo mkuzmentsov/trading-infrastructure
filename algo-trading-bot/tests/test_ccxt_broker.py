@@ -77,6 +77,13 @@ def test_poll_fills_maps_and_dedups():
     assert b.poll_fills() == []
 
 
+def test_krakenfutures_uses_perp_market_symbol():
+    b = CcxtBroker("krakenfutures", client=FakeExchange())
+    b.place(Order("cid-1", Symbol("BTC"), Side.SHORT, 0.5, OrderType.MARKET))
+    assert b.client.created[0]["symbol"] == "BTC/USD:USD"   # USD-settled perpetual
+    assert b.client.created[0]["side"] == "sell"            # short is valid on perps
+
+
 def test_positions_signed_for_perps():
     b = CcxtBroker("hyperliquid", client=FakeExchange())
     b.client._positions = [

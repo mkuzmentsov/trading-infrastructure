@@ -1,15 +1,16 @@
-# Paper-trading config — Kraken spot, BTC 1h trend baseline, simulated fills.
-# Data + trade venue both Kraken. Live `--source live` polls Kraken public OHLCV.
+# Paper-trading config — Kraken Futures (USD-settled perpetuals), BTC 1h trend, sim fills.
+# Perps -> long/short with leverage, matching Hyperliquid. Live `--source live` polls
+# Kraken Futures public OHLCV (BTC/USD:USD).
 name = "paper_kraken_btc"
 horizon = "swing"
 universe = ["BTC"]
-data_venue = "kraken"
+data_venue = "krakenfutures"
 bar_interval = "1h"
 starting_cash = 10000.0
 data_dir = "./data"
 
 [venue]
-name = "kraken"
+name = "krakenfutures"
 testnet = true
 max_capital_quote = 10000.0
 
@@ -23,7 +24,7 @@ scale = 10.0
 taker_fee_bps = 5.0
 
 [risk]
-max_gross_leverage = 1.0       # Kraken spot: long/flat only, no leverage
+max_gross_leverage = 2.0       # perps: long/short with leverage
 target_annual_vol = 0.20
 kelly_fraction = 0.5
 drawdown_derisk = 0.10
