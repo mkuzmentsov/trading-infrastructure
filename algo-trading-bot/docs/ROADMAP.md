@@ -83,6 +83,10 @@ The methodology says single-asset directional ML rarely works; spread the search
 17. **Async fill reconciliation.** Live fills are polled each bar (fine for swing/position).
     For tighter loops, reconcile partials/rejects/disconnects against venue state on every
     tick, not just restart.
+18b. **Per-venue instrument constraints.** The risk layer clamps leverage but not
+    *direction*: on a spot venue (Kraken) the engine can still produce a short target,
+    which a real spot venue would reject. Add a per-venue constraint (long/flat only for
+    spot, leverage cap per instrument) enforced in the risk gate / OMS before any order.
 
 ## Data & infrastructure
 

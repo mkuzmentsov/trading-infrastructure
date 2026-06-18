@@ -129,7 +129,16 @@ class LiveRunner:
         i = 0
         last_ts = None
         for bar in trading_iter:
+            n_before = len(engine.trades)
             engine.handle(MarketEvent(bar))
+            # Surface any fills this bar as explicit TRADE lines + `fill` audit records.
+            for tr in engine.trades[n_before:]:
+                self.audit.decision("fill", tr["ts"], {
+                    "symbol": str(tr["symbol"]), "side": tr["side"], "qty": tr["qty"],
+                    "price": tr["price"], "fee": tr["fee"], "realized": tr["realized"],
+                })
+                print(f"  >> TRADE {tr['side']:5s} {tr['qty']:.6f} {tr['symbol']} "
+                      f"@ {tr['price']:,.2f}  fee={tr['fee']:.2f}  realized={tr['realized']:+.2f}")
             i += 1
             last_ts = bar.ts
             nav = engine.equity_val[-1]
