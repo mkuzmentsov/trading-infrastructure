@@ -75,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_xs.add_argument("--end", default=None)
     p_xs.add_argument("--train-frac", type=float, default=0.6)
 
+    p_ts = sub.add_parser("tstrend", help="multi-asset daily time-series trend (in-sample tune -> OOS)")
+    p_ts.add_argument("--config", required=True)
+    p_ts.add_argument("--start", default=None)
+    p_ts.add_argument("--end", default=None)
+    p_ts.add_argument("--train-frac", type=float, default=0.6)
+
     p_st = sub.add_parser("stress", help="replay pathological tapes; assert the system stays safe")
     p_st.add_argument("--config", required=True)
     p_st.add_argument("--start", default=None)
@@ -258,6 +264,36 @@ def _cmd_xsec(args) -> int:
     return 0
 
 
+def _cmd_tstrend(args) -> int:
+    from .validation.gate import ApproveForLiveGate
+    from .validation.ts_trend_oos import run_ts_trend_validation
+
+    cfg = _load_config(args.config)
+    start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
+    end = _parse_dt(args.end, datetime.now(timezone.utc))
+    r = run_ts_trend_validation(cfg, start, end, train_frac=args.train_frac)
+
+    m = r.oos_metrics
+    print("\n=== Multi-asset daily time-series trend (in-sample tune -> OOS) ===")
+    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  grid_trials={r.n_trials}")
+    print(f"OOS segment starts {r.split_ts:%Y-%m-%d} ({r.test_bars} bars)")
+    print(f"-- in-sample selection --  best={r.best_params}  train Sharpe={r.train_sharpe:.2f}")
+    print("-- OUT-OF-SAMPLE (the number that counts) --")
+    print(f"Sharpe={m.sharpe:.2f}  Sortino={m.sortino:.2f}  CAGR={m.cagr:+.1%}  maxDD={m.max_drawdown:.1%}")
+    print(f"skew={m.skew:+.2f}  vol={m.vol:.1%}  avg_turnover={r.oos_avg_turnover:.2f}/bar")
+    print(f"equal-weight (long-only) OOS Sharpe={r.equal_weight_oos_sharpe:.2f}")
+    print(f"Deflated Sharpe (P[true SR>0], {r.n_trials} trials)={r.deflated_sharpe:.3f}")
+    print(f"PBO (prob. of backtest overfitting, CSCV)={r.pbo:.2f}   P(OOS loss)={r.prob_oos_loss:.2f}")
+
+    gate = ApproveForLiveGate(cfg.validation).evaluate(
+        {"oos_sharpe": m.sharpe, "baseline_sharpe": 0.0,
+         "deflated_sharpe": r.deflated_sharpe, "pbo": r.pbo}
+    )
+    print("\n-- approve-for-live gate (§4) --")
+    print(gate.summary())
+    return 0
+
+
 def _cmd_stress(args) -> int:
     from .engine.backtest import Backtester
     from .validation.stress import run_all
@@ -303,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_metalabel(args)
     if args.command == "xsec":
         return _cmd_xsec(args)
+    if args.command == "tstrend":
+        return _cmd_tstrend(args)
     if args.command == "stress":
         return _cmd_stress(args)
     if args.command in ("paper", "live"):

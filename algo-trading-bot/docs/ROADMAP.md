@@ -15,8 +15,31 @@ version — updated as of the meta-label / xsec / stress / paper / live-adapter 
 - **Deployment** — paper runner (replay/live feed), persistence + safe restart, JSONL audit log, Docker/compose.
 - **Live execution** — real order I/O via one ccxt broker (Kraken/HL), env-only credentials, guarded behind the gate.
 
-**Standing finding:** three strategy families, all rejected OOS after costs (PBO 0.73–0.77).
-No edge has cleared the gate. The harness is the deliverable.
+## Findings so far (these shape the priorities below)
+
+- Three single-shot families — single-asset trend (1h), meta-label GBT, cross-sectional
+  momentum — were all rejected OOS after costs (PBO 0.73–0.77); their apparent edges were
+  overfit artifacts.
+- **Bar frequency: slower is better here.** Same BTC / 30 days / strategy, only frequency
+  varies: 1h +2.2% → 5m −3.8% → 1m −15.9% (turnover 2.7× / 39× / 167×). Cost drag scales
+  ~linearly with frequency; sub-hour needs L2/latency infra we don't have (§6.0). Don't go
+  faster — go longer.
+- **Position-horizon daily trend is the first promising result.** 9y BTC daily, OOS Sharpe
+  0.59, skew +1.06, **PBO 0.21 (passes)** — but Deflated Sharpe 0.715 (< 0.95) and it did
+  not beat buy-and-hold on the 2023–26 BTC bull run. Gate-rejected on *significance*, not
+  on overfitting — most likely a statistical-power problem (daily data is sparse).
+- **Multi-asset daily TSM did *not* lift significance.** A 16-alt diversified trend book
+  is well-deployed (vol 15.7%, CAGR +4.4%) and barely overfit (**PBO 0.12**) but OOS Sharpe
+  0.34 and DSR 0.617 — *below* single-asset BTC (0.59 / 0.715), with skew washed to ~0.
+  Why: crypto alts are highly correlated, so N names ≠ N independent bets; the
+  diversification (and the √N vol scaling) assumes an independence that isn't there, and
+  the 2023–26 regime favored BTC/holding. Honest result: broadening across correlated
+  crypto didn't help. Equal-weight hold beat it (0.62) again.
+- Implication: the edge, if real, is trend at long horizons; confirming it needs more
+  *genuinely independent* evidence — longer history and **uncorrelated** markets / a
+  correlation-aware risk model — not just more (correlated) crypto names or parameters.
+
+The harness — not any single strategy — remains the deliverable.
 
 ---
 
@@ -39,6 +62,10 @@ No edge has cleared the gate. The harness is the deliverable.
 5. **Funding settlement in PnL (§3.2).** Backtest `FillSimulator.apply_funding` and the
    live broker both need funding charged at settlement for perps — currently flagged, not
    modelled. Requires the funding/OI ingestion below.
+5b. **Statistical power for daily strategies.** Daily bars give few independent points, so
+   the Deflated Sharpe rarely clears 0.95 even for a real edge (the daily BTC trend fell
+   short there). Raise power with more assets (TSM, #7b), longer history, and block-
+   bootstrap confidence intervals on OOS Sharpe — report the interval, not just the point.
 
 ## Edge hunting — the actual research (where profit, if any, lives)
 
@@ -47,9 +74,15 @@ The methodology says single-asset directional ML rarely works; spread the search
 6. **Vol-managed / momentum-crash protection.** Xsec momentum showed skew −3.47 (the
    §6.2/§12 account-killer). Add a volatility-scaling overlay (Barroso–Santa-Clara) and a
    crash filter; re-test whether risk-managed momentum survives OOS where raw momentum didn't.
-7. **Position-horizon trend (1d/1w, trailing stops).** The place trend-following
-   historically survives. Test long-lookback time-series momentum with proper trailing
-   stops on the position horizon, judged by PBO not a single split.
+7. **Position-horizon trend (1d/1w, trailing stops).** [DONE for single-asset BTC — OOS
+   Sharpe 0.59, PBO 0.21, see Findings.] Next: add proper trailing stops (#2) and test
+   1w, judged by PBO not a single split.
+7b. **Multi-asset daily time-series trend (managed-futures style).** [BUILT — see Findings]
+   `atb tstrend`: per-asset directional trend, vol-targeted to equal risk, netted into one
+   book. Result was *below* single-asset BTC (correlated crypto ≠ diversification). Open
+   follow-up: **correlation-aware sizing** (don't assume √N independence; use a shrinkage
+   covariance) and add genuinely uncorrelated markets, which is the real way to get the
+   diversification premium TSM needs.
 8. **Richer, leakage-safe features.** Wire the existing `fracdiff.py` into the live feature
    pipeline; add cross-asset/dominance, funding/OI context, and term-structure features.
    Re-run the meta-label with MDA to see if any feature family carries real OOS signal.
@@ -83,7 +116,7 @@ The methodology says single-asset directional ML rarely works; spread the search
 17. **Async fill reconciliation.** Live fills are polled each bar (fine for swing/position).
     For tighter loops, reconcile partials/rejects/disconnects against venue state on every
     tick, not just restart.
-18b. **Per-venue instrument constraints.** The risk layer clamps leverage but not
+17b. **Per-venue instrument constraints.** The risk layer clamps leverage but not
     *direction*. Both configured venues now trade perps (Hyperliquid, Kraken Futures), so
     short targets are valid; but if a spot venue is ever used the engine could still
     produce a short it would reject. Add a per-venue constraint (long/flat only for spot,
