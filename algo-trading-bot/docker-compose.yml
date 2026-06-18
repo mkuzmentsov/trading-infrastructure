@@ -18,8 +18,9 @@ services:
     build: .
     image: algo-trading-bot:latest
     env_file: [.env]
-    command: ["paper", "--config", "configs/paper_kraken.toml", "--source", "replay",
-              "--speed", "2", "--state-dir", "/app/state"]
+    # Live: warm up from stored history, then tail Kraken's live bars (one per hour).
+    command: ["paper", "--config", "configs/paper_kraken.toml", "--source", "live",
+              "--state-dir", "/app/state"]
     volumes: [./data:/app/data, ./state:/app/state, ./configs:/app/configs]
     restart: unless-stopped
 
@@ -27,8 +28,8 @@ services:
     build: .
     image: algo-trading-bot:latest
     env_file: [.env]
-    command: ["paper", "--config", "configs/paper_hl.toml", "--source", "replay",
-              "--speed", "2", "--state-dir", "/app/state"]
+    command: ["paper", "--config", "configs/paper_hl.toml", "--source", "live",
+              "--state-dir", "/app/state"]
     volumes: [./data:/app/data, ./state:/app/state, ./configs:/app/configs]
     restart: unless-stopped
 

@@ -1,6 +1,9 @@
 # Minimal image for running the paper/live engine and the research CLI locally.
 FROM python:3.12-slim
 
+# Stream logs immediately (so `docker compose logs -f` shows the heartbeat live).
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install the package first (cached unless deps change). storage = parquet/duckdb,

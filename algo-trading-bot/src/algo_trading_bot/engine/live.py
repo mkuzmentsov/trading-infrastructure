@@ -124,6 +124,8 @@ class LiveRunner:
                   f"bars={len(stored)} cash={engine.portfolio.cash:,.0f}")
             trading_iter = replay_source(stored, speed=self.speed, max_bars=self.max_bars)
 
+        # Live bars are sparse (one per interval) — print each; replay is dense — every 20th.
+        heartbeat = 1 if self.source == "live" else 20
         i = 0
         last_ts = None
         for bar in trading_iter:
@@ -138,9 +140,10 @@ class LiveRunner:
                 "leverage": round(lev, 3), "position": round(pos.quantity, 6),
                 "halted": engine.drawdown.halted,
             })
-            if i % 20 == 0:
-                print(f"[{bar.ts:%Y-%m-%d %H:%M}] nav={nav:,.0f} lev={lev:.2f} "
-                      f"pos={pos.quantity:+.4f} halted={engine.drawdown.halted}")
+            if i % heartbeat == 0:
+                print(f"[{bar.ts:%Y-%m-%d %H:%M}] {bar.symbol} close={bar.close:,.0f} "
+                      f"nav={nav:,.2f} lev={lev:.2f} pos={pos.quantity:+.4f} "
+                      f"halted={engine.drawdown.halted}")
                 self._persist(engine, i, last_ts)
         self._persist(engine, i, last_ts)
         final = engine.equity_val[-1] if engine.equity_val else engine.portfolio.cash
