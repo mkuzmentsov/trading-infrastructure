@@ -114,7 +114,7 @@ class TradingEngine:
                 fc = strat.on_data(state)
                 if fc is None:
                     continue
-                forecasts.append(self.regime_gate.apply(fc, strat.tier, regime))
+                forecasts.append(self.regime_gate.apply(fc, strat.tier, regime, feats))
 
             combined = self.combiner.combine(forecasts, self.clock.now())
             cf = combined.get(sym)

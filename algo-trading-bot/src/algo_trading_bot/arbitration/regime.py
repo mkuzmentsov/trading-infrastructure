@@ -63,13 +63,82 @@ _GATE: dict[Regime, set[RiskTier]] = {
 }
 
 
-class RegimeGate:
-    def __init__(self, detector: RegimeDetector) -> None:
-        self.detector = detector
+class HysteresisDetector:
+    """Debounce wrapper: only switch the reported regime once a new one has persisted for
+    ``persist`` consecutive bars. Kills the flicker that whipsaws a hard gate (experiment #1
+    finding). State is single-book (these configs trade one symbol); a multi-symbol engine
+    would key this per symbol."""
 
-    def apply(self, forecast: Forecast, tier: RiskTier, regime: Regime) -> Forecast:
-        """Return the forecast unchanged if its tier is permitted in ``regime``,
-        else a zeroed copy. Never flips sign — gating only removes risk."""
+    def __init__(self, inner: RegimeDetector, persist: int = 3) -> None:
+        self.inner = inner
+        self.persist = max(1, persist)
+        self._current: Regime = Regime.UNKNOWN
+        self._candidate: Regime = Regime.UNKNOWN
+        self._count: int = 0
+
+    def detect(self, features: dict[str, float]) -> Regime:
+        raw = self.inner.detect(features)
+        if raw == self._current:
+            self._candidate, self._count = raw, 0
+            return self._current
+        if raw == self._candidate:
+            self._count += 1
+        else:
+            self._candidate, self._count = raw, 1
+        if self._count >= self.persist:
+            self._current, self._count = self._candidate, 0
+        return self._current
+
+
+def _soft_trend_weight(features: dict[str, float], er_lo: float, er_hi: float,
+                       vol_pct_high: float) -> float:
+    """Continuous trend weight in [0,1] for the FOUNDATION tier: ramps with the efficiency
+    ratio (chop->trend) and is cut in the top vol bucket. Smooth, so no flatten/reopen churn."""
+    er = features.get("efficiency_ratio", 0.0)
+    w = (er - er_lo) / (er_hi - er_lo) if er_hi > er_lo else (1.0 if er >= er_hi else 0.0)
+    w = 0.0 if w < 0.0 else 1.0 if w > 1.0 else w
+    vp = features.get("vol_pct", 0.0)
+    if vp >= vol_pct_high:                         # linearly cut from 1.0 at the threshold to 0 at 1.0
+        cut = (vp - vol_pct_high) / max(1.0 - vol_pct_high, 1e-6)
+        w *= max(0.0, 1.0 - cut)
+    return w
+
+
+class RegimeGate:
+    """Gate the forecast by regime. ``mode``:
+      - ``hard``       : zero the forecast if its tier isn't permitted in the regime (original).
+      - ``hysteresis`` : same on/off rule, but on a debounced regime (wrap detector upstream).
+      - ``soft``       : scale the FOUNDATION forecast by a continuous ER-derived trend weight
+                         instead of a 0/1 switch — removes the flicker churn.
+    """
+
+    def __init__(self, detector: RegimeDetector, mode: str = "hard",
+                 soft_er_lo: float = 0.15, soft_er_hi: float = 0.45,
+                 vol_pct_high: float = 0.90) -> None:
+        self.detector = detector
+        self.mode = mode
+        self.soft_er_lo = soft_er_lo
+        self.soft_er_hi = soft_er_hi
+        self.vol_pct_high = vol_pct_high
+
+    def apply(self, forecast: Forecast, tier: RiskTier, regime: Regime,
+              features: dict[str, float] | None = None) -> Forecast:
+        """Return the forecast scaled/zeroed for ``regime``. Never flips sign — gating only
+        removes risk. ``soft`` mode needs ``features`` (ER/vol_pct); falls back to hard if absent."""
+        if self.mode == "soft" and features is not None and regime != Regime.UNKNOWN:
+            if tier == RiskTier.FOUNDATION:
+                w = _soft_trend_weight(features, self.soft_er_lo, self.soft_er_hi, self.vol_pct_high)
+                return forecast if w >= 1.0 else replace(forecast, value=forecast.value * w)
+            return forecast
         if tier in _GATE.get(regime, set()):
             return forecast
         return replace(forecast, value=0.0)
+
+
+def make_regime_gate(cfg) -> RegimeGate:
+    """Build the regime gate from a RegimeConfig: detector (optionally hysteresis-wrapped) + mode."""
+    detector: RegimeDetector = TrendRangeDetector(er_trend=cfg.er_trend, vol_pct_high=cfg.vol_pct_high)
+    if cfg.mode == "hysteresis":
+        detector = HysteresisDetector(detector, persist=cfg.persist)
+    return RegimeGate(detector, mode=cfg.mode, soft_er_lo=cfg.soft_er_lo,
+                      soft_er_hi=cfg.soft_er_hi, vol_pct_high=cfg.vol_pct_high)

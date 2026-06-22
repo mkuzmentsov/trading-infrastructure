@@ -7,7 +7,12 @@ TrendRangeDetector's classification + the gate's effect on a FOUNDATION trend fo
 import math
 from datetime import datetime, timedelta, timezone
 
-from algo_trading_bot.arbitration.regime import RegimeGate, TrendRangeDetector
+from algo_trading_bot.arbitration.regime import (
+    HysteresisDetector,
+    RegimeGate,
+    TrendRangeDetector,
+    _soft_trend_weight,
+)
 from algo_trading_bot.core.types import (
     Bar,
     Forecast,
@@ -69,6 +74,51 @@ def test_gate_zeroes_foundation_in_range():
     assert gate.apply(fc, RiskTier.FOUNDATION, Regime.TREND_UP).value == 0.8
     assert gate.apply(fc, RiskTier.FOUNDATION, Regime.RANGE).value == 0.0
     assert gate.apply(fc, RiskTier.FOUNDATION, Regime.HIGH_VOL).value == 0.0
+
+
+class _Fixed:
+    def __init__(self, seq):
+        self.seq, self.i = seq, 0
+
+    def detect(self, features):
+        r = self.seq[min(self.i, len(self.seq) - 1)]
+        self.i += 1
+        return r
+
+
+def test_hysteresis_debounces_flicker():
+    # one warmup bar to confirm the initial regime, then a single-bar flip to RANGE inside a
+    # TREND_UP run must NOT switch the reported regime (transient never persists `persist` bars)
+    seq = [Regime.TREND_UP, Regime.TREND_UP, Regime.RANGE, Regime.TREND_UP, Regime.TREND_UP]
+    det = HysteresisDetector(_Fixed(seq), persist=2)
+    out = [det.detect({}) for _ in seq]
+    assert out == [Regime.UNKNOWN, Regime.TREND_UP, Regime.TREND_UP, Regime.TREND_UP, Regime.TREND_UP]
+    assert Regime.RANGE not in out                 # the transient RANGE was debounced away
+
+    # a sustained switch DOES flip after `persist` consecutive bars
+    seq2 = [Regime.TREND_UP, Regime.RANGE, Regime.RANGE, Regime.RANGE]
+    det2 = HysteresisDetector(_Fixed(seq2), persist=2)
+    out2 = [det2.detect({}) for _ in seq2]
+    assert out2 == [Regime.UNKNOWN, Regime.UNKNOWN, Regime.RANGE, Regime.RANGE]
+
+
+def test_soft_trend_weight_ramps_with_efficiency():
+    # below er_lo -> 0, above er_hi -> 1, linear between; high vol cuts it
+    assert _soft_trend_weight({"efficiency_ratio": 0.10}, 0.15, 0.45, 0.90) == 0.0
+    assert _soft_trend_weight({"efficiency_ratio": 0.45}, 0.15, 0.45, 0.90) == 1.0
+    mid = _soft_trend_weight({"efficiency_ratio": 0.30}, 0.15, 0.45, 0.90)
+    assert abs(mid - 0.5) < 1e-9
+    # strong trend but extreme vol -> weight cut toward 0
+    assert _soft_trend_weight({"efficiency_ratio": 0.45, "vol_pct": 1.0}, 0.15, 0.45, 0.90) == 0.0
+
+
+def test_soft_gate_scales_foundation_continuously():
+    gate = RegimeGate(TrendRangeDetector(), mode="soft", soft_er_lo=0.15, soft_er_hi=0.45)
+    fc = Forecast(strategy=StrategyId("trend"), symbol=Symbol("BTC"),
+                  ts=datetime(2024, 1, 1, tzinfo=timezone.utc), value=0.8)
+    feats = {"efficiency_ratio": 0.30, "vol_pct": 0.5}     # mid ER -> ~0.5 weight
+    out = gate.apply(fc, RiskTier.FOUNDATION, Regime.RANGE, feats)
+    assert abs(out.value - 0.4) < 1e-9                      # 0.8 * 0.5, NOT a hard zero
 
 
 def test_pipeline_emits_regime_features_when_warm():

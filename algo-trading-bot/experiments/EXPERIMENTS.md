@@ -96,3 +96,44 @@ report and 6 unit tests (`test_regime.py`). Raw: `experiments/regime_classifier/
 consecutive bars before switching) or **soft gating** (scale the forecast by ER confidence instead
 of a 0/1 switch), so the book isn't flattened-and-reopened on every flicker. Re-test against this
 same baseline. The per-regime table predicts a real win IS available if the churn is removed.
+
+### #2 — Gate modes: hysteresis vs soft (2026-06-22)
+Added a configurable gate `mode` (`config.RegimeConfig.mode`, also `--regime-mode`):
+**hysteresis** debounces the regime label (switch only after `persist=3` consecutive bars);
+**soft** drops the 0/1 switch entirely and scales the FOUNDATION forecast by a continuous
+ER-derived weight (ramp 0.15→0.45, cut in the top vol bucket). Raw: `experiments/regime_gate_modes/`.
+
+**btc_1d** (the config where a trend edge exists — vs the #1 hard gate and the no-gate baseline):
+
+| Variant | full Sharpe | OOS Sharpe | DSR | PBO | Gate |
+|---------|-------------|------------|-----|-----|------|
+| baseline (no gate) | 0.68 | 0.62 | 0.732 | 0.21 | REJECTED |
+| hard (#1) | 0.63 | 0.63 | 0.652 | 0.13 | REJECTED |
+| hysteresis | 0.78 | 0.51 | 0.716 | **0.58** | REJECTED (PBO) |
+| **soft** ✅ | **0.80** | **0.78** | **0.788** | 0.22 | REJECTED (DSR) |
+
+**btc_1h** (the 1h trend has no underlying edge — baseline OOS −0.12):
+
+| Variant | full Sharpe | OOS Sharpe | DSR | PBO |
+|---------|-------------|------------|-----|-----|
+| baseline (no gate) | 0.24 | −0.12 | 0.40 | 0.70 |
+| hard (#1) | −3.20 | −3.75 | 0.00 | 0.46 |
+| hysteresis | −0.93 | −1.48 | 0.05 | 0.69 |
+| soft | −2.76 | −3.00 | 0.00 | 0.26 |
+
+**Verdict: IMPROVED — `soft` is the winner and is now the default (`RegimeConfig.mode="soft"`).**
+- On btc_1d, soft is the **first genuine improvement** in the whole chain: OOS Sharpe **0.62→0.78**
+  (+0.16 vs baseline, +0.15 vs hard), full Sharpe **0.68→0.80**, DSR **0.732→0.788** (best yet, and
+  moving toward the 0.95 gate), PBO 0.22 (fine). It keeps continuous trend exposure and de-weights
+  chop *smoothly* — no flatten/reopen churn. Still gate-REJECTED on DSR (0.788<0.95), but materially
+  closer; the daily-data statistical-power problem remains the binding constraint.
+- **Hysteresis is not it**: full Sharpe looks good (0.78) but OOS drops to 0.51 and PBO blows out to
+  **0.58** — debouncing adds a lagged discrete switch that overfits. Soft ≫ hysteresis.
+- **At 1h, no gate variant helps** (all OOS < −1): the 1h trend strategy has no edge to protect, and
+  a regime gate can't manufacture one — soft just re-weights noise. This is a *strategy* problem, not
+  a gate problem. Honest cost of making soft the global default: the (already-rejected, never-
+  deployable) 1h book gets worse; the deployable 1d book gets clearly better.
+
+**Net of #1+#2:** the regime gate, done as continuous soft weighting, lifts the daily trend's OOS
+Sharpe 0.62→0.78 and DSR 0.732→0.788 without raising overfitting — a real, if still sub-gate, gain.
+Remaining lever for significance is statistical power (more assets / longer history), not the gate.

@@ -56,12 +56,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_bt.add_argument("--config", required=True, help="path to bot config (TOML/JSON)")
     p_bt.add_argument("--start", default=None)
     p_bt.add_argument("--end", default=None)
+    p_bt.add_argument("--regime-mode", default=None, choices=["hard", "hysteresis", "soft"],
+                      help="override regime gate mode for this run")
+    p_bt.add_argument("--regime-persist", type=int, default=None, help="hysteresis persist bars")
 
     p_val = sub.add_parser("validate", help="in-sample tune -> OOS test + approve-for-live gate")
     p_val.add_argument("--config", required=True)
     p_val.add_argument("--start", default=None)
     p_val.add_argument("--end", default=None)
     p_val.add_argument("--train-frac", type=float, default=0.6)
+    p_val.add_argument("--regime-mode", default=None, choices=["hard", "hysteresis", "soft"],
+                       help="override regime gate mode for this run")
+    p_val.add_argument("--regime-persist", type=int, default=None, help="hysteresis persist bars")
 
     p_ml = sub.add_parser("metalabel", help="train meta-label GBT under purged CV; report OOS AUC")
     p_ml.add_argument("--config", required=True)
@@ -115,6 +121,14 @@ def _cmd_fetch(args) -> int:
     return 0
 
 
+def _apply_regime_overrides(cfg, args) -> None:
+    """Let --regime-mode / --regime-persist override the config for ad-hoc experiments."""
+    if getattr(args, "regime_mode", None):
+        cfg.regime.mode = args.regime_mode
+    if getattr(args, "regime_persist", None) is not None:
+        cfg.regime.persist = args.regime_persist
+
+
 def _print_regime_breakdown(result, bar_interval: str) -> None:
     """Per-regime metric breakdown (§3.3/§4.7) — exposes which regimes carry the PnL and
     whether the gate is flattening the strategy where it should. Bar return at t is grouped
@@ -147,6 +161,7 @@ def _cmd_backtest(args) -> int:
     from .engine.backtest import Backtester
 
     cfg = _load_config(args.config)
+    _apply_regime_overrides(cfg, args)
     start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
     end = _parse_dt(args.end, datetime.now(timezone.utc))
     result = Backtester(cfg).run(start, end)
@@ -178,6 +193,7 @@ def _cmd_validate(args) -> int:
     from .validation.gate import ApproveForLiveGate
 
     cfg = _load_config(args.config)
+    _apply_regime_overrides(cfg, args)
     start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
     end = _parse_dt(args.end, datetime.now(timezone.utc))
     r = run_oos_validation(cfg, start, end, train_frac=args.train_frac)

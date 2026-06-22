@@ -64,6 +64,20 @@ class TrendConfig(BaseModel):
     scale: float = 10.0  # maps the trend/vol ratio into ~[-1, 1] via tanh
 
 
+class RegimeConfig(BaseModel):
+    """Regime gate (§2.4). ``mode`` controls how the detected regime acts on the trend
+    forecast — the experiment knob for taming the flicker churn of the hard gate."""
+
+    mode: str = "soft"            # "hard" (on/off) | "hysteresis" (debounced on/off) | "soft" (ER-scaled)
+    # default "soft": validated winner on btc_1d (OOS Sharpe 0.62->0.78, DSR 0.732->0.788) — the
+    # continuous ER weight de-risks chop without the flatten/reopen churn the hard gate suffers.
+    er_trend: float = 0.30        # efficiency-ratio cutoff: ER>=this -> trending
+    vol_pct_high: float = 0.90    # vol percentile -> HIGH_VOL
+    persist: int = 3              # hysteresis: bars a new regime must persist before it switches
+    soft_er_lo: float = 0.15      # soft: ER at/below this -> weight 0 (full chop)
+    soft_er_hi: float = 0.45      # soft: ER at/above this -> weight 1 (full trend)
+
+
 class XSecConfig(BaseModel):
     """Cross-sectional momentum (Tier-2, §6.2) — panel-backtest knobs."""
 
@@ -85,6 +99,7 @@ class BotConfig(BaseModel):
     bar_interval: str = "1h"  # default 1h swing / 1d position; see core/types.Horizon
     starting_cash: float = 10_000.0
     trend: TrendConfig = TrendConfig()
+    regime: RegimeConfig = RegimeConfig()
     xsec: XSecConfig = XSecConfig()
     friction: FrictionConfig = FrictionConfig()
     risk: RiskConfig = RiskConfig()

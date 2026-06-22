@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from ..arbitration.combiner import ForecastCombiner
-from ..arbitration.regime import RegimeGate, TrendRangeDetector
+from ..arbitration.regime import make_regime_gate
 from ..arbitration.sizing import VolTargetSizer
 from ..backtest import metrics as M
 from ..backtest.friction import FillSimulator
@@ -77,7 +77,7 @@ class Backtester:
         features = RollingFeaturePipeline(cfg.trend.ema_fast, cfg.trend.ema_slow, cfg.trend.vol_window)
         if strategies is None:
             strategies = [TrendMomentum(interval=cfg.bar_interval, scale=cfg.trend.scale)]
-        regime_gate = RegimeGate(TrendRangeDetector())
+        regime_gate = make_regime_gate(cfg.regime)
         combiner = ForecastCombiner({s.id: 1.0 for s in strategies})
         sizer = VolTargetSizer(cfg.risk, cfg.starting_cash, ppy)
 
