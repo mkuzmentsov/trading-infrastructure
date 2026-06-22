@@ -1,0 +1,15 @@
+mixed panel: 24 symbols, 2306 bars; OOS from 2023-01-09
+
+=== Sleeved TSM (per-sleeve windows + cluster sizing) ===
+selected: crypto window (20, 50), macro window (20, 100)  (train Sharpe 1.60, 81 joint trials)
+-- OUT-OF-SAMPLE --
+Sharpe=0.79  Sortino=1.17  CAGR=+14.9%  maxDD=-16.1%  vol=19.2%  skew=-0.17
+Deflated Sharpe (P[true SR>0], 81 trials)=0.702
+PBO (CSCV)=0.33   P(OOS loss)=0.00
+
+-- context (from experiments #4, business-day calendar) --
+  crypto-only (1 window, √N)   OOS Sharpe 0.38  DSR 0.609  PBO 0.04
+  mixed global (1 window, √N)  OOS Sharpe 0.16  DSR 0.512  PBO 0.29
+  mixed global (1 window, corr) OOS Sharpe 0.26  DSR 0.546  PBO 0.32
+
+verdict: sleeved DSR 0.702 — BEATS crypto-only DSR (0.609)

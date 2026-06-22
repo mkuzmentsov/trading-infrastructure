@@ -208,3 +208,40 @@ single-window, √N-sized crypto TSM makes it worse. The diversification premium
 trend windows** (let crypto run fast, macro run slow) and **cluster-aware sizing** — not just more data.
 That is the indicated next experiment (#5): per-sleeve trend horizons + corr/cluster sizing on the
 mixed universe. Data + configs (`tstrend_crypto/macro/mixed`, venue `mixed`) are in place to run it.
+
+---
+
+### #5 — Sleeved TSM: per-sleeve windows + cluster sizing (2026-06-22) ⭐
+Fix the two causes #4 diagnosed. Each SLEEVE (crypto / macro) gets its OWN trend window, and each
+is risk-budgeted to `target_vol/√K` via its OWN shrunk covariance (`correlation_aware_weights`),
+then the K=2 sleeves are netted assuming cross-sleeve independence (justified by the +0.02 corr).
+Joint-grid selection on train (9×9=81 trials), OOS + DSR/PBO over the full joint grid (honest
+penalty for the larger search). Harness: `scripts/sleeved_tsm_experiment.py`. Raw: `experiments/sleeved_tsm/`.
+
+| Approach (business-day cal) | windows | OOS Sharpe | DSR | PBO | maxDD | vol |
+|------------------------------|---------|------------|-----|-----|-------|-----|
+| crypto-only (1 win, √N) | 10/50 | 0.38 | 0.609 | 0.04 | −12.4% | — |
+| mixed global (1 win, √N) | 10/100 | 0.16 | 0.512 | 0.29 | −16.1% | — |
+| mixed global (1 win, corr) | 10/100 | 0.26 | 0.546 | 0.32 | −23.1% | — |
+| **sleeved (per-sleeve + cluster)** ⭐ | crypto 20/50 · macro 20/100 | **0.79** | **0.702** | 0.33 | −16.1% | 19.2% |
+
+**Verdict: IMPROVED — the first real diversification win, and the best result in the chain.**
+- OOS Sharpe **doubled** vs crypto-only (0.38→0.79) and is ~5× the naive mixed-global (0.16); CAGR
+  +14.9%, vol 19.2% (on target), skew −0.17.
+- **DSR 0.702 — highest of any TSM variant**, and the first to clear crypto-only (0.609), *even after*
+  the 81-trial penalty. The diversification premium appears once each sleeve trends at its own speed
+  (crypto 20/50 fast, macro 20/100 slow) and is sized as an independent risk block.
+- Both fixes mattered: per-sleeve windows (vs the global 10/100 compromise) + cluster sizing (each
+  sleeve budgeted to target_vol/√2 via its own covariance, so the 16 correlated crypto names don't
+  drown the 8 macro names).
+- **Honest caveats:** (1) **PBO 0.33 nudged just above the 0.30 gate** — the 81-trial joint search is
+  a bigger overfitting surface (crypto-only was 0.04); independent per-sleeve selection would shrink
+  this. (2) Still gate-REJECTED overall (DSR 0.702 < 0.95). But it is the **strongest deployable
+  candidate yet** and the clear direction: a multi-sleeve managed-futures book, not a single-window
+  crypto book.
+
+**Net of #1–#5:** the daily trend's significance ceiling finally moved — not from a smarter risk model
+on crypto (#3 ✗) or from raw uncorrelated data (#4 ✗), but from treating crypto and macro as separate
+trend sleeves with their own horizons and risk budgets (#5 ✓): OOS Sharpe 0.38→0.79, DSR 0.609→0.702.
+Next: promote the sleeve harness to a first-class `atb` command, try independent per-sleeve selection
+(lower PBO), and broaden sleeves (FX/rates/ags as their own blocks) toward the DSR≥0.95 gate.
