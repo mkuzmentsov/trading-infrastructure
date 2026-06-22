@@ -37,6 +37,27 @@ def ts_trend_forecast(
     return forecast, vol
 
 
+def multi_window_forecast(
+    panel: pd.DataFrame, windows: list[tuple[int, int]], vol_window: int, scale: float = 10.0
+):
+    """Carver-style blended trend forecast: average the vol-normalized tanh forecasts across
+    several (fast, slow) speeds. A single a-priori speed *set* (no window search) — the fast
+    components fire on fast trends (crypto), the slow ones on slow trends (macro), so one shared
+    set self-adapts across asset classes and removes the grid-search overfitting / DSR deflation.
+    Causal. Returns the blended forecast in [-1, 1] and per-asset per-bar volatility."""
+    ret = np.log(panel).diff()
+    vol = ret.rolling(vol_window).std()
+    blended = None
+    for fast, slow in windows:
+        ema_f = panel.ewm(span=fast, adjust=False).mean()
+        ema_s = panel.ewm(span=slow, adjust=False).mean()
+        raw = (ema_f - ema_s) / panel / vol.replace(0.0, np.nan)
+        fc = np.tanh(raw / scale)
+        blended = fc if blended is None else blended + fc
+    forecast = blended / max(len(windows), 1)
+    return forecast, vol
+
+
 def ts_trend_weights(
     forecast: pd.DataFrame,
     vol: pd.DataFrame,

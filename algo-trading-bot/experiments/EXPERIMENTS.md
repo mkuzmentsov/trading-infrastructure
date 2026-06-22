@@ -329,3 +329,39 @@ control isolates the longer-history effect from the binance→Yahoo source chang
 sleeved 2-sleeve TSM is **DSR ~0.63–0.70, OOS Sharpe ~0.72–0.79, with deep (−31%) crypto-bear
 drawdowns** — a real, diversified, but sub-gate edge. The daily-trend significance ceiling is a
 genuine property of the data (one clean crypto cycle of OOS), not a modelling shortfall.
+
+---
+
+### #9 — Multi-window blended forecast, NO search (2026-06-22) ⭐⭐
+The biggest remaining lever wasn't the *strategy* — it was the *grid search*. The Deflated Sharpe
+deflates for the trial count; the 81-window search cost the champion ~0.30 of significance
+(`expected_max_sharpe(n_trials<2)=0`, so a no-search config's DSR collapses to the un-deflated
+Probabilistic Sharpe). So replace the per-sleeve window *search* with a FIXED a-priori **blend of
+trend speeds** (Carver-style geometric pairs) — the fast components fire on crypto, the slow on
+macro, one shared set self-adapts. `multi_window_forecast` + the #5 cluster sizing, no selection.
+Harness: `scripts/multiwindow_sleeved_experiment.py`. Raw: `experiments/multiwindow/`.
+
+Robustness — **every** conventional speed set reported, none selected (selecting = a search):
+
+| Panel | speed set | OOS bars | OOS Sharpe | maxDD | PSR (= DSR, no search) |
+|-------|-----------|----------|------------|-------|------------------------|
+| mixed (binance 2017–26) | 3 / 4 / 5-speed | 923 | 0.50 / 0.60 / 0.59 | ~−23% | 0.787 / 0.830 / 0.825 |
+| **mixed_long (2014–26)** | 3 / 4 / 5-speed | 1228 | 0.73 / **0.80** / 0.77 | ~−27% | **0.907 / 0.927 / 0.920** |
+
+**Verdict: BREAKTHROUGH on significance — the strongest, most honest result in the chain.**
+- On the longest, *hardest* history (2014–26, incl. the 2022 crash), the no-search book hits
+  **PSR ≈ 0.91–0.93** across all three speed sets — robust, not a one-set fluke, and the closest the
+  project has come to the DSR ≥ 0.95 gate (vs #8's 0.629 *with* search on the same panel).
+- It's principled: a fixed multi-window blend is the standard CTA construction, removes the
+  single-window fragility (#4) AND the search deflation, and has **no window-selection PBO** (nothing
+  is selected). OOS Sharpe ~0.77 over 1228 held-out bars, surviving a −27% crypto-bear DD.
+- **Honest caveats:** (1) PSR (n_trials=1) is valid only because the *window set* is genuinely
+  pre-committed — but the broader research (sleeve defs, cov params, vol_window=48, scale=10, costs)
+  involved data-informed choices across 9 experiments that PSR does *not* penalize, so ~0.92 is the
+  significance of this pre-specified config, not the whole meta-search. (2) maxDD −27% is a real
+  deployment risk. (3) Still just under 0.95.
+
+**Net:** the daily managed-futures path = **2-sleeve cluster-sized book + multi-window blended
+forecast (no search)**. It reaches PSR ~0.92 honestly on 12 years through a crypto bear — a genuine,
+near-gate, diversified trend edge. Next: promote multi-window to a config option/command so it's a
+first-class deployable strategy, and pressure-test the −27% DD (vol-scaling / crash overlay).

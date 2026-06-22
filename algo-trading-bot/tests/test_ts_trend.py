@@ -7,11 +7,24 @@ import pandas as pd
 from algo_trading_bot.backtest.ts_trend import (
     _shrunk_cov,
     correlation_aware_weights,
+    multi_window_forecast,
     run_sleeved_ts_trend_backtest,
     run_ts_trend_backtest,
     ts_trend_forecast,
     ts_trend_weights,
 )
+
+
+def test_multi_window_forecast_blends_and_bounds():
+    panel = _panel(360)
+    windows = [(8, 32), (16, 64), (32, 128)]
+    fc, vol = multi_window_forecast(panel, windows, vol_window=20, scale=10.0)
+    warm = fc.iloc[150:]
+    assert warm.abs().to_numpy().max() <= 1.0 + 1e-9          # tanh blend stays in [-1,1]
+    # blend == mean of the per-window single forecasts (same vol normalization)
+    singles = [ts_trend_forecast(panel, f, s, 20, 10.0)[0] for f, s in windows]
+    mean_single = sum(singles) / len(singles)
+    assert np.allclose(fc.iloc[150:].to_numpy(), mean_single.iloc[150:].to_numpy(), atol=1e-9)
 
 
 def _two_asset_panel(shared_shock: bool, n=400, seed=1):
