@@ -74,12 +74,15 @@ def run_ts_trend_validation(
     train_end_ts = panel.index[split_i]
     test_start_ts = panel.index[embargo_i]
 
+    ts = config.tstrend
+
     def run(fast, slow):
         return run_ts_trend_backtest(
             panel, fast=fast, slow=slow, vol_window=tr.vol_window, scale=tr.scale,
             target_vol=risk.target_annual_vol, leverage=risk.max_gross_leverage,
             fee_bps=fee_bps, rebalance=config.xsec.rebalance, periods_per_year=ppy,
             starting_cash=config.starting_cash,
+            sizing=ts.sizing, cov_window=ts.cov_window, shrinkage=ts.shrinkage,
         )
 
     # 1) In-sample grid search; keep return series for the PBO matrix.

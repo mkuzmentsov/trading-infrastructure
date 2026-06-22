@@ -88,6 +88,14 @@ class XSecConfig(BaseModel):
     leverage: float = 1.0     # gross exposure multiplier (sum|w| = leverage)
 
 
+class TSTrendConfig(BaseModel):
+    """Multi-asset daily time-series trend (roadmap 7b) — risk-allocation knobs."""
+
+    sizing: str = "sqrtn"      # "sqrtn" (target_vol/√N independence) | "corr" (shrunk-covariance portfolio vol-target)
+    cov_window: int = 100      # trailing bars for the covariance estimate (corr sizing)
+    shrinkage: float = 0.3     # Ledoit-Wolf shrinkage intensity toward constant-correlation
+
+
 class BotConfig(BaseModel):
     name: str = "atb"
     horizon: Horizon = Horizon.SWING
@@ -100,6 +108,7 @@ class BotConfig(BaseModel):
     starting_cash: float = 10_000.0
     trend: TrendConfig = TrendConfig()
     regime: RegimeConfig = RegimeConfig()
+    tstrend: TSTrendConfig = TSTrendConfig()
     xsec: XSecConfig = XSecConfig()
     friction: FrictionConfig = FrictionConfig()
     risk: RiskConfig = RiskConfig()

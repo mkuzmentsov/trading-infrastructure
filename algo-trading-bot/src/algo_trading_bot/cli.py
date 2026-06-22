@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ts.add_argument("--start", default=None)
     p_ts.add_argument("--end", default=None)
     p_ts.add_argument("--train-frac", type=float, default=0.6)
+    p_ts.add_argument("--sizing", default=None, choices=["sqrtn", "corr"],
+                      help="override risk allocation: sqrtn (√N independence) or corr (shrunk covariance)")
+    p_ts.add_argument("--cov-window", type=int, default=None, help="corr sizing: covariance window (bars)")
+    p_ts.add_argument("--shrinkage", type=float, default=None, help="corr sizing: shrinkage intensity 0..1")
 
     p_st = sub.add_parser("stress", help="replay pathological tapes; assert the system stays safe")
     p_st.add_argument("--config", required=True)
@@ -314,13 +318,20 @@ def _cmd_tstrend(args) -> int:
     from .validation.ts_trend_oos import run_ts_trend_validation
 
     cfg = _load_config(args.config)
+    if getattr(args, "sizing", None):
+        cfg.tstrend.sizing = args.sizing
+    if getattr(args, "cov_window", None) is not None:
+        cfg.tstrend.cov_window = args.cov_window
+    if getattr(args, "shrinkage", None) is not None:
+        cfg.tstrend.shrinkage = args.shrinkage
     start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
     end = _parse_dt(args.end, datetime.now(timezone.utc))
     r = run_ts_trend_validation(cfg, start, end, train_frac=args.train_frac)
 
     m = r.oos_metrics
     print("\n=== Multi-asset daily time-series trend (in-sample tune -> OOS) ===")
-    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  grid_trials={r.n_trials}")
+    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  "
+          f"sizing={cfg.tstrend.sizing}  grid_trials={r.n_trials}")
     print(f"OOS segment starts {r.split_ts:%Y-%m-%d} ({r.test_bars} bars)")
     print(f"-- in-sample selection --  best={r.best_params}  train Sharpe={r.train_sharpe:.2f}")
     print("-- OUT-OF-SAMPLE (the number that counts) --")

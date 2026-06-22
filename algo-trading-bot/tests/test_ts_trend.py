@@ -5,10 +5,46 @@ import numpy as np
 import pandas as pd
 
 from algo_trading_bot.backtest.ts_trend import (
+    _shrunk_cov,
+    correlation_aware_weights,
     run_ts_trend_backtest,
     ts_trend_forecast,
     ts_trend_weights,
 )
+
+
+def _two_asset_panel(shared_shock: bool, n=400, seed=1):
+    """Two-asset price panel; shared return shocks (corr~1) vs independent."""
+    rng = np.random.default_rng(seed)
+    z1 = rng.normal(0, 0.02, n)
+    z2 = z1 if shared_shock else rng.normal(0, 0.02, n)
+    idx = pd.date_range("2024-01-01", periods=n, freq="D", tz="UTC")
+    return pd.DataFrame({"A": 100 * np.exp(np.cumsum(z1)),
+                         "B": 100 * np.exp(np.cumsum(z2))}, index=idx)
+
+
+def test_shrunk_cov_preserves_variance_symmetric():
+    rng = np.random.default_rng(0)
+    w = rng.normal(0, 0.02, size=(200, 3))
+    s = np.cov(w, rowvar=False)
+    shrunk = _shrunk_cov(w, shrinkage=0.5)
+    assert shrunk.shape == (3, 3)
+    assert np.allclose(shrunk, shrunk.T)                         # symmetric
+    assert np.allclose(np.diag(shrunk), np.diag(s), atol=1e-12)  # variances preserved
+
+
+def test_correlation_aware_weights_downscale_when_correlated():
+    # identical conviction; a perfectly-correlated pair must take LESS gross than an
+    # independent pair (higher portfolio vol -> scale down). This is the whole point.
+    gross = {}
+    for tag, shared in [("corr", True), ("indep", False)]:
+        panel = _two_asset_panel(shared)
+        _, vol = ts_trend_forecast(panel, fast=10, slow=50, vol_window=20)
+        forecast = pd.DataFrame(0.5, index=panel.index, columns=panel.columns)  # both long, equal
+        w = correlation_aware_weights(forecast, vol, panel.pct_change(), target_vol=0.20,
+                                      periods_per_year=365, leverage=10.0, cov_window=100, shrinkage=0.3)
+        gross[tag] = float(w.abs().sum(axis=1).iloc[150:].mean())
+    assert gross["corr"] < gross["indep"]                       # correlated book de-levers
 
 
 def _panel(n=320, seed=0):

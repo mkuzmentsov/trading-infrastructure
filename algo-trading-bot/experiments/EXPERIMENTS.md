@@ -137,3 +137,37 @@ ER-derived weight (ramp 0.15→0.45, cut in the top vol bucket). Raw: `experimen
 **Net of #1+#2:** the regime gate, done as continuous soft weighting, lifts the daily trend's OOS
 Sharpe 0.62→0.78 and DSR 0.732→0.788 without raising overfitting — a real, if still sub-gate, gain.
 Remaining lever for significance is statistical power (more assets / longer history), not the gate.
+
+---
+
+### #3 — Correlation-aware sizing for the multi-asset TSM (2026-06-22)
+The roadmap follow-up to the last negative result: replace the √N independence assumption in the
+managed-futures book (`ts_trend_weights`: per-asset target = `target_vol/√N`) with a portfolio
+vol-target from a **shrunk covariance matrix** (`correlation_aware_weights`: scale the whole book
+by `target_vol/√(wᵀΣw)`, Σ = constant-correlation-shrunk sample covariance). New `--sizing corr`
+flag + `TSTrendConfig`. Engine path unaffected (this is the vectorized `tstrend` panel).
+Command: `atb tstrend --config configs/tstrend_1d.toml --sizing corr`. Raw: `experiments/tstrend_corr_sizing/`.
+
+| Sizing | OOS Sharpe | DSR | PBO | vol | maxDD | CAGR |
+|--------|------------|-----|-----|-----|-------|------|
+| **√N (baseline, default)** | 0.35 | **0.624** | **0.12** | 15.7% | −15.9% | +4.6% |
+| corr (sh0.3, cw100) | 0.42 | 0.594 | 0.71 | 21.2% | −21.9% | +7.0% |
+| corr (sh0.5, cw252) | 0.37 | 0.526 | 0.62 | 20.0% | −22.9% | +5.8% |
+| corr (sh0.7, cw252) | 0.37 | 0.521 | 0.61 | 20.2% | −23.2% | +5.7% |
+
+**Verdict: DISIMPROVED — correlation-aware sizing NOT adopted (default stays `sqrtn`).**
+- It does what it's designed to: correctly recognizes the alts' high correlation and sizes the book
+  to actually hit the 20% vol target (√N ran *under* at 15.7%), lifting raw OOS Sharpe (0.35→0.42)
+  and CAGR (+4.6→+7.0%). The economic test confirms a correlated pair de-levers vs an independent one.
+- **But it is worse on every metric that matters for the gate**, robustly across shrinkage/window:
+  **PBO 0.12 → 0.61–0.71** (badly overfit), **DSR 0.624 → 0.52–0.59** (significance *down*), maxDD
+  −16% → −22/23%. Higher shrinkage/longer window doesn't rescue it → fundamental, not estimation noise.
+- Mechanism: covariance-based sizing lets the (fast,slow) grid exploit in-sample covariance structure
+  (train Sharpe 0.74 → 1.17) that doesn't generalize — the "dumber" √N rule is more robust OOS exactly
+  because it doesn't fit the data. Confirms the recurring theme: more fitting → worse deflated/PBO.
+- Deeper point (matches the roadmap): correlation-aware sizing can't manufacture diversification that
+  isn't there. Crypto alts lack independent bets; sizing them correctly (hit vol target) just takes
+  more correlated risk → more return, more DD, more overfit — not more *significance*. The lever for
+  the daily TSM is genuinely **uncorrelated markets / longer history**, not a smarter risk model on
+  the same correlated crypto basket. Corr sizing kept as an option (`--sizing corr`) for when a truly
+  diversified universe exists.

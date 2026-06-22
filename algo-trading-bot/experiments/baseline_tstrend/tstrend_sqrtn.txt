@@ -1,0 +1,18 @@
+
+=== Multi-asset daily time-series trend (in-sample tune -> OOS) ===
+universe=16 symbols  interval=1d  grid_trials=9
+OOS segment starts 2023-01-07 (1260 bars)
+-- in-sample selection --  best={'ema_fast': 10, 'ema_slow': 50}  train Sharpe=0.74
+-- OUT-OF-SAMPLE (the number that counts) --
+Sharpe=0.35  Sortino=0.43  CAGR=+4.6%  maxDD=-15.9%
+skew=+0.05  vol=15.7%  avg_turnover=0.02/bar
+equal-weight (long-only) OOS Sharpe=0.61
+Deflated Sharpe (P[true SR>0], 9 trials)=0.624
+PBO (prob. of backtest overfitting, CSCV)=0.12   P(OOS loss)=0.08
+
+-- approve-for-live gate (§4) --
+REJECTED
+PASS  positive_oos_sharpe: OOS Sharpe=0.35
+PASS  beats_baseline_oos: OOS Sharpe=0.35 vs baseline=0.00
+FAIL  deflated_sharpe: DSR=0.624 (need >= 0.95)
+PASS  pbo: PBO=0.12 (need <= 0.3)

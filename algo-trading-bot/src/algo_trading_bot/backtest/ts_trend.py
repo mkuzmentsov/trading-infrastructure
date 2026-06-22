@@ -61,6 +61,76 @@ def ts_trend_weights(
     return w.mul(factor, axis=0)
 
 
+def _shrunk_cov(window_rets: np.ndarray, shrinkage: float) -> np.ndarray:
+    """Ledoit-Wolf-style shrinkage of a sample covariance toward a constant-correlation
+    target (keeps the average correlation — high for crypto alts — while denoising the noisy
+    individual pairwise estimates that wreck a small-sample N-asset covariance)."""
+    s = np.cov(window_rets, rowvar=False)
+    s = np.atleast_2d(s)
+    d = np.diag(s).copy()
+    d[d <= 0] = 1e-12
+    std = np.sqrt(d)
+    corr = s / np.outer(std, std)
+    n = s.shape[0]
+    off = corr[~np.eye(n, dtype=bool)]
+    r_bar = float(off.mean()) if off.size else 0.0
+    target = r_bar * np.outer(std, std)
+    np.fill_diagonal(target, d)
+    return shrinkage * target + (1.0 - shrinkage) * s
+
+
+def correlation_aware_weights(
+    forecast: pd.DataFrame,
+    vol: pd.DataFrame,
+    rets: pd.DataFrame,
+    *,
+    target_vol: float,
+    periods_per_year: float,
+    leverage: float,
+    cov_window: int,
+    shrinkage: float,
+) -> pd.DataFrame:
+    """Signed weights scaled so the *portfolio* vol (from a shrunk covariance matrix) hits
+    ``target_vol`` — the correlation-aware replacement for the √N independence assumption.
+
+    Raw position per name is inverse-vol risk-scaled (``forecast/ann_vol``, same as the √N
+    version's numerator). Then the whole book is scaled by ``target_vol / sqrt(wᵀΣw)`` using
+    the annualized shrunk covariance Σ over a trailing window, and gross-capped at ``leverage``.
+    When names are highly correlated, √(wᵀΣw) is large → the book scales DOWN (N correlated
+    names ≠ N independent bets); the √N rule misses exactly this.
+    """
+    ann_vol = (vol * np.sqrt(periods_per_year)).replace(0.0, np.nan)
+    raw = (forecast / ann_vol).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    r = rets.to_numpy()
+    raw_np = raw.to_numpy()
+    cols = forecast.shape[1]
+    out = np.zeros_like(raw_np)
+    for i in range(len(forecast)):
+        if i < cov_window:
+            continue
+        w_raw = raw_np[i]
+        if not np.any(w_raw):
+            continue
+        win = r[i - cov_window:i]                      # returns strictly before t (causal)
+        active = np.where(np.abs(w_raw) > 0)[0]
+        win_a = win[:, active]
+        mask = ~np.isnan(win_a).any(axis=1)
+        win_a = win_a[mask]
+        if win_a.shape[0] < max(10, cols):             # not enough clean history yet
+            continue
+        cov_ann = _shrunk_cov(win_a, shrinkage) * periods_per_year
+        wa = w_raw[active]
+        port_var = float(wa @ cov_ann @ wa)
+        if port_var <= 0:
+            continue
+        scale = target_vol / np.sqrt(port_var)
+        out[i] = w_raw * scale
+    w = pd.DataFrame(out, index=forecast.index, columns=forecast.columns)
+    gross = w.abs().sum(axis=1)
+    factor = (leverage / gross.replace(0.0, np.nan)).clip(upper=1.0).fillna(1.0)
+    return w.mul(factor, axis=0)
+
+
 def run_ts_trend_backtest(
     panel: pd.DataFrame,
     *,
@@ -74,12 +144,24 @@ def run_ts_trend_backtest(
     rebalance: int,
     periods_per_year: float,
     starting_cash: float = 10_000.0,
+    sizing: str = "sqrtn",
+    cov_window: int = 100,
+    shrinkage: float = 0.3,
 ) -> PanelResult:
-    """Run the diversified TSM book; return net returns, equity, and metrics."""
+    """Run the diversified TSM book; return net returns, equity, and metrics.
+
+    ``sizing``: ``sqrtn`` (per-asset target_vol/√N, the independence assumption) or ``corr``
+    (portfolio vol-target from a shrunk covariance matrix — correlation-aware).
+    """
     rets = panel.pct_change()
     forecast, vol = ts_trend_forecast(panel, fast, slow, vol_window, scale)
-    target = ts_trend_weights(forecast, vol, target_vol=target_vol,
-                              periods_per_year=periods_per_year, leverage=leverage)
+    if sizing == "corr":
+        target = correlation_aware_weights(
+            forecast, vol, rets, target_vol=target_vol, periods_per_year=periods_per_year,
+            leverage=leverage, cov_window=cov_window, shrinkage=shrinkage)
+    else:
+        target = ts_trend_weights(forecast, vol, target_vol=target_vol,
+                                  periods_per_year=periods_per_year, leverage=leverage)
 
     if rebalance > 1:  # hold weights between rebalances
         target = target.iloc[::rebalance].reindex(target.index).ffill().fillna(0.0)
