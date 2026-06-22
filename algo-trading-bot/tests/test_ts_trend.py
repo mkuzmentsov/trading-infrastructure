@@ -52,6 +52,20 @@ def test_sleeved_backtest_runs_and_respects_leverage():
     assert (res.equity > 0).all()                    # solvent throughout
 
 
+def test_sleeved_multiwindow_and_vol_overlay():
+    panel = _panel(400)
+    sleeves = {"a": ["A", "B", "C"], "b": ["D", "E", "F"]}
+    windows = [(8, 32), (16, 64), (32, 128)]
+    kw = dict(sleeves=sleeves, windows=windows, vol_window=20, scale=10.0, target_vol=0.20,
+              leverage=2.0, fee_bps=4.5, periods_per_year=365, cov_window=60, shrinkage=0.3)
+    base = run_sleeved_ts_trend_backtest(panel, **kw)
+    overlaid = run_sleeved_ts_trend_backtest(panel, vol_overlay_window=33, **kw)
+    assert len(base.returns) > 100 and np.isfinite(base.metrics.sharpe)
+    assert (base.equity > 0).all() and (overlaid.equity > 0).all()
+    # the vol overlay changes the realized vol path (it actively rescales exposure)
+    assert abs(overlaid.metrics.vol - base.metrics.vol) > 1e-6
+
+
 def test_shrunk_cov_preserves_variance_symmetric():
     rng = np.random.default_rng(0)
     w = rng.normal(0, 0.02, size=(200, 3))

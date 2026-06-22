@@ -221,7 +221,8 @@ def run_sleeved_ts_trend_backtest(
     panel: pd.DataFrame,
     *,
     sleeves: dict[str, list[str]],
-    sleeve_params: dict[str, tuple[int, int]],
+    sleeve_params: dict[str, tuple[int, int]] | None = None,
+    windows: list[tuple[int, int]] | None = None,
     vol_window: int,
     scale: float,
     target_vol: float,
@@ -230,12 +231,17 @@ def run_sleeved_ts_trend_backtest(
     periods_per_year: float,
     cov_window: int = 100,
     shrinkage: float = 0.3,
+    vol_overlay_window: int = 0,
     starting_cash: float = 10_000.0,
 ) -> PanelResult:
-    """Sleeved managed-futures book (experiment #5): each sleeve trades its OWN trend window
-    and is risk-budgeted to ``target_vol/√K`` via its own shrunk covariance, then the K sleeves
-    are netted assuming cross-sleeve independence (valid when sleeves are ~uncorrelated). Gross
-    is capped globally at ``leverage``. Beats a single-window book on a heterogeneous universe.
+    """Sleeved managed-futures book (experiment #5): each sleeve is risk-budgeted to ``target_vol/√K``
+    via its own shrunk covariance, then the K sleeves are netted assuming cross-sleeve independence
+    and gross-capped globally at ``leverage``.
+
+    Forecast per sleeve: a single ``sleeve_params[name]`` window, OR — when ``windows`` is given — a
+    fixed a-priori multi-speed BLEND (experiment #9, no window search). ``vol_overlay_window`` > 0
+    adds a Barroso–Santa-Clara style portfolio vol-scaling overlay (experiment #10) that de-levers
+    when the book's own trailing realized vol exceeds target — cutting crash drawdowns.
     """
     budget = target_vol / np.sqrt(max(len(sleeves), 1))
     parts = []
@@ -244,8 +250,10 @@ def run_sleeved_ts_trend_backtest(
         if not cols:
             continue
         sub = panel[cols]
-        fast, slow = sleeve_params[name]
-        forecast, vol = ts_trend_forecast(sub, fast, slow, vol_window, scale)
+        if windows:
+            forecast, vol = multi_window_forecast(sub, windows, vol_window, scale)
+        else:
+            forecast, vol = ts_trend_forecast(sub, *sleeve_params[name], vol_window, scale)
         parts.append(correlation_aware_weights(
             forecast, vol, sub.pct_change(), target_vol=budget, periods_per_year=periods_per_year,
             leverage=1e9, cov_window=cov_window, shrinkage=shrinkage))  # per-sleeve: no cap
@@ -253,5 +261,23 @@ def run_sleeved_ts_trend_backtest(
     gross = combined.abs().sum(axis=1)
     factor = (leverage / gross.replace(0.0, np.nan)).clip(upper=1.0).fillna(1.0)  # global cap
     target = combined.mul(factor, axis=0)
+
+    if vol_overlay_window > 0:
+        target = _vol_scale_overlay(panel, target, target_vol=target_vol,
+                                    periods_per_year=periods_per_year, window=vol_overlay_window,
+                                    leverage=leverage)
     return _panel_result_from_target(panel, target, fee_bps=fee_bps,
                                      periods_per_year=periods_per_year, starting_cash=starting_cash)
+
+
+def _vol_scale_overlay(
+    panel: pd.DataFrame, target: pd.DataFrame, *,
+    target_vol: float, periods_per_year: float, window: int, leverage: float,
+) -> pd.DataFrame:
+    """Scale the whole book by ``target_vol / realized_vol`` using the book's OWN trailing realized
+    vol (causal: vol through t-1 scales the weight that earns r_t). De-levers into vol spikes /
+    crashes, re-levers in calm — the standard managed-futures vol-control overlay."""
+    book_ret = (target.shift(1) * panel.pct_change()).sum(axis=1)
+    realized = book_ret.rolling(window).std().shift(1) * np.sqrt(periods_per_year)
+    scale = (target_vol / realized.replace(0.0, np.nan)).clip(upper=leverage).fillna(1.0)
+    return target.mul(scale, axis=0)

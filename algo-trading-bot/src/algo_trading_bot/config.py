@@ -99,6 +99,10 @@ class TSTrendConfig(BaseModel):
     # covariance, netted assuming cross-sleeve independence). Empty -> single-universe behavior.
     sleeves: dict[str, list[str]] = Field(default_factory=dict)
     max_joint_trials: int = 128  # joint (fast,slow)^K grid if <= this, else independent per-sleeve selection
+    # windows: a-priori multi-speed BLEND (experiment #9). When set, sleeves use this fixed blend with
+    # NO window search -> significance reported as un-deflated PSR (no multiple-testing penalty).
+    windows: list[list[int]] = Field(default_factory=list)
+    vol_overlay_window: int = 0  # >0: Barroso–Santa-Clara portfolio vol-scaling overlay (experiment #10), trailing days
 
 
 class BotConfig(BaseModel):

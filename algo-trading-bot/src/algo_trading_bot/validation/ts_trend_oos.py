@@ -229,3 +229,59 @@ def run_sleeved_ts_trend_validation(
         n_trials=len(trials), n_symbols=panel.shape[1],
         split_ts=test_start_ts.to_pydatetime(), test_bars=len(test_ret), trials=trials,
     )
+
+
+def run_multiwindow_ts_trend_validation(
+    config: BotConfig, start: datetime, end: datetime, *, train_frac: float = 0.6
+) -> TSTrendOOSResult:
+    """No-search multi-window sleeved validation (experiment #9 promoted). A FIXED a-priori speed
+    blend (`tstrend.windows`) is used for every sleeve — nothing is selected — so significance is the
+    un-deflated Probabilistic Sharpe (Deflated Sharpe at n_trials=1) and there is no selection PBO.
+    Optionally applies the vol-scaling overlay (`tstrend.vol_overlay_window`). The held-out segment is
+    pure OOS: no parameter is tuned on the train split, it only marks where reporting begins.
+    """
+    from ..engine.backtest import Backtester
+
+    ppy = PERIODS_PER_YEAR[config.bar_interval]
+    tr, risk, ts = config.trend, config.risk, config.tstrend
+    sleeves = {name: list(syms) for name, syms in ts.sleeves.items()}
+    windows = [tuple(w) for w in ts.windows]
+
+    store = Backtester(config).store
+    panel = store.close_panel([Symbol(s) for s in config.universe], start, end,
+                              config.bar_interval, venue=config.data_venue)
+    if panel.shape[1] < 4 or len(panel) < 200:
+        raise RuntimeError(f"need >=4 symbols and >=200 bars; got {panel.shape}.")
+
+    n = len(panel)
+    test_start_ts = panel.index[min(int(n * train_frac) + int(n * config.validation.embargo_pct), n - 1)]
+
+    res = run_sleeved_ts_trend_backtest(
+        panel, sleeves=sleeves, windows=windows, vol_window=tr.vol_window, scale=tr.scale,
+        target_vol=risk.target_annual_vol, leverage=risk.max_gross_leverage,
+        fee_bps=config.friction.taker_fee_bps, periods_per_year=ppy, cov_window=ts.cov_window,
+        shrinkage=ts.shrinkage, vol_overlay_window=ts.vol_overlay_window,
+        starting_cash=config.starting_cash)
+
+    test_ret = res.returns[res.returns.index >= test_start_ts]
+    test_eq = res.equity[res.equity.index >= test_start_ts]
+    oos = M.compute(test_eq.to_numpy(), test_ret.to_numpy(), np.array([]),
+                    periods_per_year=ppy, turnover=res.avg_turnover)
+
+    ew = panel.pct_change().mean(axis=1)
+    ew_sharpe = M.sharpe(ew[ew.index >= test_start_ts].to_numpy(), ppy)
+
+    t = test_ret.to_numpy()
+    obs = _perbar_sharpe(t)
+    # n_trials=1 -> expected_max_sharpe=0 -> Deflated Sharpe == un-deflated PSR (no selection penalty)
+    psr = (deflated_sharpe_ratio(obs, len(t), M.skew(t), M.kurtosis(t) + 3.0, 1, 0.0) if obs else 0.0)
+
+    return TSTrendOOSResult(
+        best_params={"windows": [list(w) for w in windows],
+                     "vol_overlay_window": ts.vol_overlay_window},
+        train_sharpe=0.0, oos_metrics=oos, oos_avg_turnover=res.avg_turnover,
+        equal_weight_oos_sharpe=ew_sharpe, deflated_sharpe=psr,
+        pbo=0.0, prob_oos_loss=0.0,  # no selection -> no selection-overfitting
+        n_trials=1, n_symbols=panel.shape[1],
+        split_ts=test_start_ts.to_pydatetime(), test_bars=len(test_ret), trials=[],
+    )
