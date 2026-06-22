@@ -1,0 +1,5 @@
+=== paper REPLAY vs vectorized backtest (tstrend_multiwindow) ===
+bars 2969  2015-02-04 → 2026-06-22
+paper:     end $58,405  Sharpe=1.22
+backtest:  end $58,726  Sharpe=1.21
+final-equity relative diff: 0.55%  (OK — paper tracks backtest)

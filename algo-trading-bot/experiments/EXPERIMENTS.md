@@ -444,3 +444,39 @@ zero) — *not* single-window luck nor an artifact of the n_trials=1 framing. A 
 test is a **forward paper-trade** (calendar time) on `configs/tstrend_multiwindow.toml`. The 11-experiment
 arc: significance moved not from a cleverer model but from *removing the grid search* and *risk-budgeting
 crypto vs macro as separate sleeves* — searching/fitting deflates; pre-committed/robust survives.
+
+---
+
+### #12 — Forward paper runner + a leverage-cap bug it caught (2026-06-22)
+Wired the candidate into a panel-native **daily paper runner** (it's cross-sectional, so it doesn't fit
+the single-symbol event engine). `engine/panel_paper.py` (`PanelPaperBook`: rebalance accounting, fees,
+JSON-persistable) + `scripts/paper_trade_panel.py` (`replay` = backtest==paper sanity; `step` = one bar
+forward, persisted + JSONL audit, idempotent — for a daily cron). Shares `sleeved_target_weights` with
+the backtest (NFR1). +3 tests (68 pass). Raw: `experiments/paper/`.
+
+**backtest == paper:** replay tracks the vectorized backtest to **0.55%** final equity.
+
+**Bug the paper book caught:** gross leverage hit **2.65×** on a calm day — above the 2.0 cap. The vol
+overlay (#10) multiplies weights *after* the gross cap, so on low-vol days it levered past the hard risk
+limit. Fixed: **re-cap gross at `leverage` after the overlay**. Honest impact of enforcing the cap the
+candidate is supposed to respect:
+
+| metric | before (uncapped overlay) | after (correct) |
+|--------|---------------------------|------------------|
+| OOS Sharpe (split) | 0.94 | 0.88 |
+| **PSR (no-search DSR)** | 0.954 (gate PASS) | **0.943 (gate FAIL by 0.007)** |
+| full-sample Sharpe | 1.29 | 1.21 |
+| walk-forward % positive | 89% | 83% |
+| bootstrap 90% CI | [0.73, 1.83] | [0.65, 1.73] |
+| maxDD | −24.8% | −24.5% |
+
+**Verdict: the candidate now correctly respects its 2.0× leverage cap and sits just BELOW the gate
+(PSR 0.943).** The earlier "APPROVED" (#10) was partly an artifact of the book breaching its own leverage
+limit on calm days — exactly the kind of thing a paper runner exists to catch. Properly capped, it's
+still strongly period-robust (83% of 6-mo blocks, bootstrap P(Sharpe>0)=1.000, lower bound 0.65) but is
+honestly a hair short of the formal gate, not over it.
+
+**Final state:** `configs/tstrend_multiwindow.toml` is a real, diversified, risk-capped, period-robust
+daily trend book — OOS Sharpe ~0.85–0.9, honest PSR ~0.94, −25% bear DD — the project's deployable
+*candidate*, just under the gate. It is wired for forward paper-trading (`paper_trade_panel.py step`,
+daily). The only remaining evidence is forward, in calendar time — not more backtesting.

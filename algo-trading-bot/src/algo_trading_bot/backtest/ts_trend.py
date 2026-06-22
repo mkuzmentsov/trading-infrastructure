@@ -243,6 +243,32 @@ def run_sleeved_ts_trend_backtest(
     adds a Barroso–Santa-Clara style portfolio vol-scaling overlay (experiment #10) that de-levers
     when the book's own trailing realized vol exceeds target — cutting crash drawdowns.
     """
+    target = sleeved_target_weights(
+        panel, sleeves=sleeves, sleeve_params=sleeve_params, windows=windows, vol_window=vol_window,
+        scale=scale, target_vol=target_vol, leverage=leverage, periods_per_year=periods_per_year,
+        cov_window=cov_window, shrinkage=shrinkage, vol_overlay_window=vol_overlay_window)
+    return _panel_result_from_target(panel, target, fee_bps=fee_bps,
+                                     periods_per_year=periods_per_year, starting_cash=starting_cash)
+
+
+def sleeved_target_weights(
+    panel: pd.DataFrame,
+    *,
+    sleeves: dict[str, list[str]],
+    sleeve_params: dict[str, tuple[int, int]] | None = None,
+    windows: list[tuple[int, int]] | None = None,
+    vol_window: int,
+    scale: float,
+    target_vol: float,
+    leverage: float,
+    periods_per_year: float,
+    cov_window: int = 100,
+    shrinkage: float = 0.3,
+    vol_overlay_window: int = 0,
+) -> pd.DataFrame:
+    """The (timestamp × symbol) signed target-weight matrix of the sleeved book — the SAME logic
+    the backtest and the paper runner both consume (NFR1: one weight path). The last row is the
+    current target the paper book rebalances toward."""
     budget = target_vol / np.sqrt(max(len(sleeves), 1))
     parts = []
     for name, syms in sleeves.items():
@@ -261,13 +287,15 @@ def run_sleeved_ts_trend_backtest(
     gross = combined.abs().sum(axis=1)
     factor = (leverage / gross.replace(0.0, np.nan)).clip(upper=1.0).fillna(1.0)  # global cap
     target = combined.mul(factor, axis=0)
-
     if vol_overlay_window > 0:
         target = _vol_scale_overlay(panel, target, target_vol=target_vol,
                                     periods_per_year=periods_per_year, window=vol_overlay_window,
                                     leverage=leverage)
-    return _panel_result_from_target(panel, target, fee_bps=fee_bps,
-                                     periods_per_year=periods_per_year, starting_cash=starting_cash)
+        # re-cap gross at the hard leverage limit AFTER the overlay — the vol-target can lever up on
+        # calm days and must not breach the risk cap (caught via the paper book showing 2.65x).
+        g2 = target.abs().sum(axis=1)
+        target = target.mul((leverage / g2.replace(0.0, np.nan)).clip(upper=1.0).fillna(1.0), axis=0)
+    return target
 
 
 def _vol_scale_overlay(
