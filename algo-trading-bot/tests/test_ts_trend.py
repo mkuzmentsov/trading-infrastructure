@@ -7,6 +7,7 @@ import pandas as pd
 from algo_trading_bot.backtest.ts_trend import (
     _shrunk_cov,
     correlation_aware_weights,
+    run_sleeved_ts_trend_backtest,
     run_ts_trend_backtest,
     ts_trend_forecast,
     ts_trend_weights,
@@ -21,6 +22,21 @@ def _two_asset_panel(shared_shock: bool, n=400, seed=1):
     idx = pd.date_range("2024-01-01", periods=n, freq="D", tz="UTC")
     return pd.DataFrame({"A": 100 * np.exp(np.cumsum(z1)),
                          "B": 100 * np.exp(np.cumsum(z2))}, index=idx)
+
+
+def test_sleeved_backtest_runs_and_respects_leverage():
+    # two sleeves with DIFFERENT trend windows on a 6-asset panel (3 up / 3 down)
+    panel = _panel(360)
+    sleeves = {"a": ["A", "B", "C"], "b": ["D", "E", "F"]}
+    sleeve_params = {"a": (10, 50), "b": (20, 100)}
+    res = run_sleeved_ts_trend_backtest(
+        panel, sleeves=sleeves, sleeve_params=sleeve_params, vol_window=20, scale=10.0,
+        target_vol=0.20, leverage=2.0, fee_bps=4.5, periods_per_year=365,
+        cov_window=60, shrinkage=0.3)
+    assert len(res.returns) > 100
+    assert np.isfinite(res.metrics.sharpe)
+    assert res.gross_exposure <= 2.0 + 1e-9          # global gross cap respected
+    assert (res.equity > 0).all()                    # solvent throughout
 
 
 def test_shrunk_cov_preserves_variance_symmetric():

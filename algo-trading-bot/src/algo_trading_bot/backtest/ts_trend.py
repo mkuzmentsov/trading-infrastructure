@@ -166,6 +166,17 @@ def run_ts_trend_backtest(
     if rebalance > 1:  # hold weights between rebalances
         target = target.iloc[::rebalance].reindex(target.index).ffill().fillna(0.0)
 
+    return _panel_result_from_target(panel, target, fee_bps=fee_bps,
+                                     periods_per_year=periods_per_year, starting_cash=starting_cash)
+
+
+def _panel_result_from_target(
+    panel: pd.DataFrame, target: pd.DataFrame, *,
+    fee_bps: float, periods_per_year: float, starting_cash: float,
+) -> PanelResult:
+    """Lookahead-safe net backtest of a target-weight book: weights shift one bar before
+    earning returns; turnover costs charged when the trade happens."""
+    rets = panel.pct_change()
     w_eff = target.shift(1)                                  # decided at t-1, earns r_t
     gross_ret = (w_eff * rets).sum(axis=1)
     turnover = (target - target.shift(1)).abs().sum(axis=1)
@@ -183,3 +194,43 @@ def run_ts_trend_backtest(
         gross_exposure=float(w_eff.abs().sum(axis=1).mean()),
         avg_turnover=float(turnover.mean()), metrics=report,
     )
+
+
+def run_sleeved_ts_trend_backtest(
+    panel: pd.DataFrame,
+    *,
+    sleeves: dict[str, list[str]],
+    sleeve_params: dict[str, tuple[int, int]],
+    vol_window: int,
+    scale: float,
+    target_vol: float,
+    leverage: float,
+    fee_bps: float,
+    periods_per_year: float,
+    cov_window: int = 100,
+    shrinkage: float = 0.3,
+    starting_cash: float = 10_000.0,
+) -> PanelResult:
+    """Sleeved managed-futures book (experiment #5): each sleeve trades its OWN trend window
+    and is risk-budgeted to ``target_vol/√K`` via its own shrunk covariance, then the K sleeves
+    are netted assuming cross-sleeve independence (valid when sleeves are ~uncorrelated). Gross
+    is capped globally at ``leverage``. Beats a single-window book on a heterogeneous universe.
+    """
+    budget = target_vol / np.sqrt(max(len(sleeves), 1))
+    parts = []
+    for name, syms in sleeves.items():
+        cols = [s for s in syms if s in panel.columns]
+        if not cols:
+            continue
+        sub = panel[cols]
+        fast, slow = sleeve_params[name]
+        forecast, vol = ts_trend_forecast(sub, fast, slow, vol_window, scale)
+        parts.append(correlation_aware_weights(
+            forecast, vol, sub.pct_change(), target_vol=budget, periods_per_year=periods_per_year,
+            leverage=1e9, cov_window=cov_window, shrinkage=shrinkage))  # per-sleeve: no cap
+    combined = pd.concat(parts, axis=1).reindex(columns=panel.columns).fillna(0.0)
+    gross = combined.abs().sum(axis=1)
+    factor = (leverage / gross.replace(0.0, np.nan)).clip(upper=1.0).fillna(1.0)  # global cap
+    target = combined.mul(factor, axis=0)
+    return _panel_result_from_target(panel, target, fee_bps=fee_bps,
+                                     periods_per_year=periods_per_year, starting_cash=starting_cash)

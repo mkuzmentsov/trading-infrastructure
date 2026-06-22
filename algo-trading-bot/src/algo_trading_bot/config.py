@@ -94,6 +94,11 @@ class TSTrendConfig(BaseModel):
     sizing: str = "sqrtn"      # "sqrtn" (target_vol/√N independence) | "corr" (shrunk-covariance portfolio vol-target)
     cov_window: int = 100      # trailing bars for the covariance estimate (corr sizing)
     shrinkage: float = 0.3     # Ledoit-Wolf shrinkage intensity toward constant-correlation
+    # sleeves: {name -> [symbols]}. When set, `tstrend` runs the SLEEVED book (experiment #5):
+    # per-sleeve trend window + cluster sizing (each sleeve budgeted to target_vol/√K via its own
+    # covariance, netted assuming cross-sleeve independence). Empty -> single-universe behavior.
+    sleeves: dict[str, list[str]] = Field(default_factory=dict)
+    max_joint_trials: int = 128  # joint (fast,slow)^K grid if <= this, else independent per-sleeve selection
 
 
 class BotConfig(BaseModel):

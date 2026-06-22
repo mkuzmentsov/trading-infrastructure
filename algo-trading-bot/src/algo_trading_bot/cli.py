@@ -315,7 +315,7 @@ def _cmd_xsec(args) -> int:
 
 def _cmd_tstrend(args) -> int:
     from .validation.gate import ApproveForLiveGate
-    from .validation.ts_trend_oos import run_ts_trend_validation
+    from .validation.ts_trend_oos import run_sleeved_ts_trend_validation, run_ts_trend_validation
 
     cfg = _load_config(args.config)
     if getattr(args, "sizing", None):
@@ -326,12 +326,21 @@ def _cmd_tstrend(args) -> int:
         cfg.tstrend.shrinkage = args.shrinkage
     start = _parse_dt(args.start, datetime(2000, 1, 1, tzinfo=timezone.utc))
     end = _parse_dt(args.end, datetime.now(timezone.utc))
-    r = run_ts_trend_validation(cfg, start, end, train_frac=args.train_frac)
+
+    sleeved = bool(cfg.tstrend.sleeves)
+    if sleeved:
+        r = run_sleeved_ts_trend_validation(cfg, start, end, train_frac=args.train_frac)
+    else:
+        r = run_ts_trend_validation(cfg, start, end, train_frac=args.train_frac)
 
     m = r.oos_metrics
+    mode = (f"SLEEVED ({len(cfg.tstrend.sleeves)} sleeves, cluster-sized)" if sleeved
+            else f"sizing={cfg.tstrend.sizing}")
     print("\n=== Multi-asset daily time-series trend (in-sample tune -> OOS) ===")
-    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  "
-          f"sizing={cfg.tstrend.sizing}  grid_trials={r.n_trials}")
+    print(f"universe={r.n_symbols} symbols  interval={cfg.bar_interval}  {mode}  grid_trials={r.n_trials}")
+    if sleeved:
+        print("-- sleeve windows --  " + "  ".join(
+            f"{n}={f}/{s}" for n, (f, s) in r.sleeve_params.items()))
     print(f"OOS segment starts {r.split_ts:%Y-%m-%d} ({r.test_bars} bars)")
     print(f"-- in-sample selection --  best={r.best_params}  train Sharpe={r.train_sharpe:.2f}")
     print("-- OUT-OF-SAMPLE (the number that counts) --")

@@ -245,3 +245,24 @@ on crypto (#3 ✗) or from raw uncorrelated data (#4 ✗), but from treating cry
 trend sleeves with their own horizons and risk budgets (#5 ✓): OOS Sharpe 0.38→0.79, DSR 0.609→0.702.
 Next: promote the sleeve harness to a first-class `atb` command, try independent per-sleeve selection
 (lower PBO), and broaden sleeves (FX/rates/ags as their own blocks) toward the DSR≥0.95 gate.
+
+---
+
+### #6 — Promote sleeved TSM to a first-class command (2026-06-22)
+Engineering, not a new result: moved the #5 harness into the core so it's gate-checkable like the
+other strategies. `run_sleeved_ts_trend_backtest` (backtest/ts_trend.py) + `run_sleeved_ts_trend_
+validation` (validation/ts_trend_oos.py); `TSTrendConfig.sleeves` ({name→[symbols]}) drives it — when
+set, `atb tstrend` runs the sleeved/cluster path. Config `configs/tstrend_sleeved.toml`. Factored the
+shared net-backtest into `_panel_result_from_target` (existing `run_ts_trend_backtest` unchanged in
+behavior). +1 test (60 pass).
+
+**Faithful reproduction:** `atb tstrend --config configs/tstrend_sleeved.toml` →
+OOS Sharpe **0.79**, DSR **0.702**, PBO **0.33**, crypto 20/50 · macro 20/100, 81 joint trials —
+identical to the #5 script, now through the approve-for-live gate (**REJECTED**: DSR 0.702 < 0.95,
+PBO 0.33 > 0.30). The sleeved book is the project's strongest candidate but not yet gate-clearing.
+
+**Window selection** is joint over the per-sleeve grids when `|grid|^K ≤ max_joint_trials` (128;
+K=2→81→joint), else independent per-sleeve with a local-sensitivity trial set. Bonus observation
+(independent path, `max_joint_trials=10`): same windows/OOS Sharpe 0.79, **DSR 0.767** (higher — fewer
+trials, less deflation) but **PBO 0.62** (worse) — so independent selection is *not* a clean PBO win
+as hypothesized; a proper exploration is deferred to its own experiment. Joint remains the default.
