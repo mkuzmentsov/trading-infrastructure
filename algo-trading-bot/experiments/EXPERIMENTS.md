@@ -297,3 +297,35 @@ independent bets" lever is exhausted via structure. The remaining lever toward D
 **statistical power — longer history / more OOS bars** (the OOS is only ~900 daily bars), not more
 sleeves. Note the silver lining: 3-sleeve PBO 0.14 (cleanest overfitting) — a moderate grouping is
 less overfit, it just sacrifices too much edge by under-weighting crypto.
+
+---
+
+### #8 — Longer history (extend the panel back) (2026-06-22)
+The statistical-power lever: extend the mixed panel back for more OOS bars. Found the binance crypto
+caps at 2017 (alts only 2021), so rebuilt the universe from a SINGLE source — Yahoo (crypto as
+`X-USD`, point-in-time: BTC/LTC 2014, majors 2017-11, alts 2019-21; macro 2007) — into venue
+`mixed_long` via `scripts/build_mixed_universe.py --crypto-source yahoo --venue mixed_long`. Panel:
+**3069 business days (2014-09 → 2026)** vs 2306 before. Re-ran the 2-sleeve champion; a 2017-start
+control isolates the longer-history effect from the binance→Yahoo source change. Raw: `experiments/longer_history/`.
+
+| Run | source | period | OOS bars | OOS Sharpe | DSR | PBO | maxDD |
+|-----|--------|--------|----------|------------|-----|-----|-------|
+| #5/#6 champion | binance | 2017–26 | 900 | 0.79 | 0.702 | 0.33 | −16% |
+| control (short) | yahoo | 2017–26 | 880 | 0.95 | 0.764 | 0.50 | −15% |
+| **full (long)** | yahoo | **2014–26** | **1198** | 0.72 | **0.629** | **0.28** | **−31%** |
+
+**Verdict: DISIMPROVED on the gate metric — longer history is MORE HONEST, not better.**
+- Clean within-Yahoo comparison (control vs full): more bars **lowered DSR 0.764 → 0.629** but also
+  **lowered overfitting PBO 0.50 → 0.28** (now passing). The two effects oppose.
+- Why DSR fell: the added OOS years pull in the **2021–22 crypto bear** (OOS now starts 2021-11), a
+  **−31% drawdown** the favorable 2023–26 window never saw. Statistical power ≠ automatic DSR gain
+  when the extra bars are a *harder* regime — DSR is driven more by OOS regime difficulty than bar count.
+- Implication: the champion's headline DSR 0.70 is partly **favorable-window luck**; its honest,
+  full-history edge is **~0.63 with a −31% crypto-bear DD**. More history correctly *deflated* it.
+- Source caveat: binance vs Yahoo crypto differ materially (same 2017–26 era: 0.79/0.702/0.33 vs
+  0.95/0.764/0.50) — cross-source comparison is unreliable; only the within-Yahoo long-vs-short is clean.
+
+**Net of the whole chain:** no lever cleared the DSR ≥ 0.95 gate. The honest best estimate of the
+sleeved 2-sleeve TSM is **DSR ~0.63–0.70, OOS Sharpe ~0.72–0.79, with deep (−31%) crypto-bear
+drawdowns** — a real, diversified, but sub-gate edge. The daily-trend significance ceiling is a
+genuine property of the data (one clean crypto cycle of OOS), not a modelling shortfall.

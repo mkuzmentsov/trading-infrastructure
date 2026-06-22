@@ -1,0 +1,19 @@
+
+=== Multi-asset daily time-series trend (in-sample tune -> OOS) ===
+universe=24 symbols  interval=1d  SLEEVED (2 sleeves, cluster-sized)  grid_trials=81
+-- sleeve windows --  crypto=10/50  macro=40/100
+OOS segment starts 2021-11-18 (1198 bars)
+-- in-sample selection --  best={'sleeves': {'crypto': [10, 50], 'macro': [40, 100]}}  train Sharpe=1.78
+-- OUT-OF-SAMPLE (the number that counts) --
+Sharpe=0.72  Sortino=1.00  CAGR=+14.4%  maxDD=-30.6%
+skew=-0.33  vol=21.5%  avg_turnover=0.10/bar
+equal-weight (long-only) OOS Sharpe=0.16
+Deflated Sharpe (P[true SR>0], 81 trials)=0.629
+PBO (prob. of backtest overfitting, CSCV)=0.28   P(OOS loss)=0.00
+
+-- approve-for-live gate (§4) --
+REJECTED
+PASS  positive_oos_sharpe: OOS Sharpe=0.72
+PASS  beats_baseline_oos: OOS Sharpe=0.72 vs baseline=0.00
+FAIL  deflated_sharpe: DSR=0.629 (need >= 0.95)
+PASS  pbo: PBO=0.28 (need <= 0.3)

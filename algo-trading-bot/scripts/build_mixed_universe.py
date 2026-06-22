@@ -12,6 +12,7 @@ Usage:  PYTHONPATH=src python3 scripts/build_mixed_universe.py
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import urllib.request
@@ -51,20 +52,38 @@ def fetch_yahoo_daily(ticker: str, start: datetime, end: datetime) -> pd.Series:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--crypto-source", choices=["binance", "yahoo"], default="binance",
+                    help="binance (store, BTC 2017 / alts 2021) or yahoo (X-USD, BTC 2014, point-in-time)")
+    ap.add_argument("--venue", default="mixed", help="store venue to write (e.g. mixed, mixed_long)")
+    ap.add_argument("--start-year", type=int, default=2017)
+    args = ap.parse_args()
+
     store = PointInTimeStore("./data")
-    start = datetime(2017, 1, 1, tzinfo=timezone.utc)
+    start = datetime(args.start_year, 1, 1, tzinfo=timezone.utc)
     end = datetime.now(timezone.utc)
 
-    # 1) crypto closes from the existing binance store. Sample on a BUSINESS-DAY calendar
-    #    (weekdays) so macro has no forced weekend zero-returns — those would understate macro
-    #    vol and over-size it under inverse-vol weighting. Crypto's weekend move lands in the
-    #    Friday->Monday return. ppy stays 1d/365 (uniform across all three universes; DSR/PBO
-    #    are per-bar so the comparison is valid).
-    crypto = store.close_panel([Symbol(s) for s in CRYPTO], start, end, "1d", venue="binance")
-    crypto.index = pd.to_datetime(crypto.index, utc=True).normalize()
+    # 1) crypto closes. Sample on a BUSINESS-DAY calendar (weekdays) so macro has no forced
+    #    weekend zero-returns (those understate macro vol -> over-size it). Crypto's weekend move
+    #    lands in the Friday->Monday return. ppy stays 1d/365 (uniform; DSR/PBO are per-bar).
+    if args.crypto_source == "binance":
+        crypto = store.close_panel([Symbol(s) for s in CRYPTO], start, end, "1d", venue="binance")
+        crypto.index = pd.to_datetime(crypto.index, utc=True).normalize()
+    else:  # yahoo: X-USD per name, point-in-time (each from its listing)
+        cols = {}
+        for sym in CRYPTO:
+            try:
+                s = fetch_yahoo_daily(f"{sym}-USD", start, end)
+                cols[sym] = s
+                print(f"  {sym}-USD  {s.index[0].date()} -> {s.index[-1].date()} ({len(s)})")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  {sym}-USD FAILED: {exc}")
+        crypto = pd.DataFrame(cols)
+        crypto.index = crypto.index.normalize()
+    # calendar starts where crypto first exists (both sleeves present from the start)
     cal = pd.bdate_range(crypto.index.min(), crypto.index.max(), tz="UTC")
     crypto = crypto.reindex(cal).ffill()
-    print(f"crypto panel: {crypto.shape[1]} symbols, {len(cal)} business days "
+    print(f"crypto panel ({args.crypto_source}): {crypto.shape[1]} symbols, {len(cal)} business days "
           f"({cal[0].date()} -> {cal[-1].date()})")
 
     # 2) macro closes from Yahoo, reindexed onto the business-day calendar (ffill holidays only)
@@ -88,19 +107,19 @@ def main() -> int:
     print(f"\navg pairwise corr WITHIN crypto = {crypto_avg:+.2f}")
     print(f"avg corr crypto vs macro-basket  = {xcorr:+.2f}   (lower = more diversification)")
 
-    # 4) write everything into venue='mixed' (o=h=l=c=close; ts==knowable_at, point-in-time)
+    # 4) write everything into the target venue (o=h=l=c=close; ts==knowable_at, point-in-time)
     full = pd.concat([crypto, macro], axis=1)
     n_written = 0
     for sym in full.columns:
         col = full[sym].dropna()
         bars = [
             Bar(Symbol(sym), ts.to_pydatetime(), float(c), float(c), float(c), float(c),
-                0.0, VenueId("mixed"), knowable_at=ts.to_pydatetime())
+                0.0, VenueId(args.venue), knowable_at=ts.to_pydatetime())
             for ts, c in col.items()
         ]
         store.append_bars(bars, "1d")
         n_written += len(bars)
-    print(f"\nwrote {n_written} bars across {full.shape[1]} symbols under venue='mixed'")
+    print(f"\nwrote {n_written} bars across {full.shape[1]} symbols under venue='{args.venue}'")
     return 0
 
 
