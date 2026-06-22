@@ -1,0 +1,42 @@
+# Broadened sleeved TSM (experiment #7): macro split into asset-class blocks so each is an
+# independent risk sleeve (equal risk budget target_vol/√K). 9^6 >> max_joint_trials -> the
+# validator uses independent per-sleeve window selection automatically.
+name = "tstrend_sleeved6"
+horizon = "position"
+universe = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "TRX", "ATOM", "BCH", "ETC", "XLM", "SPY", "QQQ", "TLT", "IEF", "GLD", "DBC", "USO", "UUP"]
+data_venue = "mixed"
+bar_interval = "1d"
+starting_cash = 10000.0
+
+[venue]
+name = "hyperliquid"
+testnet = true
+max_capital_quote = 10000.0
+
+[trend]
+ema_fast = 20
+ema_slow = 100
+vol_window = 48
+scale = 10.0
+
+[xsec]
+rebalance = 1
+
+[friction]
+taker_fee_bps = 4.5
+
+[risk]
+max_gross_leverage = 2.0
+target_annual_vol = 0.20
+
+[tstrend]
+cov_window = 100
+shrinkage = 0.3
+
+[tstrend.sleeves]
+crypto = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "TRX", "ATOM", "BCH", "ETC", "XLM"]
+equities = ["SPY", "QQQ"]
+rates = ["TLT", "IEF"]
+gold = ["GLD"]
+commodities = ["DBC", "USO"]
+fx = ["UUP"]

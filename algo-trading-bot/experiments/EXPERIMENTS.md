@@ -266,3 +266,34 @@ K=2→81→joint), else independent per-sleeve with a local-sensitivity trial se
 (independent path, `max_joint_trials=10`): same windows/OOS Sharpe 0.79, **DSR 0.767** (higher — fewer
 trials, less deflation) but **PBO 0.62** (worse) — so independent selection is *not* a clean PBO win
 as hypothesized; a proper exploration is deferred to its own experiment. Joint remains the default.
+
+---
+
+### #7 — Broaden the sleeves (asset-class blocks) (2026-06-22)
+Test the "more independent bets → higher DSR" hypothesis: split macro into separate risk sleeves
+(equities / rates / gold / commodities / fx) alongside crypto. Config-only — the sleeved validator
+already handles K sleeves and auto-selects joint vs independent window search by trial count.
+Configs `tstrend_sleeved6.toml` (6 sleeves) and `tstrend_sleeved3.toml` (3 sleeves, `max_joint_trials`
+raised to force joint). Raw: `experiments/broadened_sleeves/`.
+
+| Grouping | selection | OOS Sharpe | DSR | PBO | trials |
+|----------|-----------|------------|-----|-----|--------|
+| **2-sleeve (crypto / macro) — #5 champion** | joint | **0.79** | **0.702** | 0.33 | 81 |
+| 3-sleeve (crypto / financials / real-macro) | joint | 0.61 | 0.511 | 0.14 | 729 |
+| 6-sleeve (crypto + 5 asset classes) | independent | −0.07 | 0.343 | 0.54 | 49 |
+
+**Verdict: DISIMPROVED — broadening beyond 2 sleeves hurt; 2-sleeve is the sweet spot.**
+- More sleeves monotonically lowered OOS Sharpe (0.79 → 0.61 → −0.07) and DSR (0.702 → 0.511 → 0.343).
+- The 3-sleeve run uses **joint** selection (729), so this is *not* just independent-selection overfit:
+  the **grouping itself** hurts. Splitting macro gives each macro block an equal risk budget
+  `target_vol/√K`, which **over-allocates to the weaker macro trends and dilutes crypto** (where the
+  trend edge concentrates): crypto's risk share falls 1/√2 (71%) → 1/√3 (58%) → 1/√6 (41%).
+- At 6 sleeves it compounds with **per-sleeve window overfitting** — 6 independent (fast,slow) choices,
+  incl. single-name gold/fx sleeves (per-asset tuning) → PBO 0.54, OOS Sharpe negative.
+- More sleeves also means more trials → heavier DSR deflation (729-trial penalty visible in the 3-sleeve).
+
+**Champion stays the 2-sleeve sleeved TSM (`configs/tstrend_sleeved.toml`, DSR 0.702).** The "more
+independent bets" lever is exhausted via structure. The remaining lever toward DSR ≥ 0.95 is
+**statistical power — longer history / more OOS bars** (the OOS is only ~900 daily bars), not more
+sleeves. Note the silver lining: 3-sleeve PBO 0.14 (cleanest overfitting) — a moderate grouping is
+less overfit, it just sacrifices too much edge by under-weighting crypto.
