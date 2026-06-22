@@ -1,0 +1,27 @@
+name = "tstrend_mixed"
+universe = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "TRX", "ATOM", "BCH", "ETC", "XLM", "SPY", "QQQ", "TLT", "IEF", "GLD", "DBC", "USO", "UUP"]
+horizon = "position"
+data_venue = "mixed"
+bar_interval = "1d"
+starting_cash = 10000.0
+
+[venue]
+name = "hyperliquid"
+testnet = true
+max_capital_quote = 10000.0
+
+[trend]
+ema_fast = 20
+ema_slow = 100
+vol_window = 48
+scale = 10.0
+
+[xsec]
+rebalance = 1
+
+[friction]
+taker_fee_bps = 4.5
+
+[risk]
+max_gross_leverage = 2.0
+target_annual_vol = 0.20

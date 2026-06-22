@@ -171,3 +171,40 @@ Command: `atb tstrend --config configs/tstrend_1d.toml --sizing corr`. Raw: `exp
   the daily TSM is genuinely **uncorrelated markets / longer history**, not a smarter risk model on
   the same correlated crypto basket. Corr sizing kept as an option (`--sizing corr`) for when a truly
   diversified universe exists.
+
+---
+
+### #4 — Add uncorrelated markets (macro) to the TSM (2026-06-22)
+The lever #3 pointed to: bring in genuinely uncorrelated assets so the diversification premium can
+actually appear. Fetched 8 macro daily proxies from Yahoo (SPY, QQQ, TLT, IEF, GLD, DBC, USO, UUP =
+US/intl equities, long/mid bonds, gold, broad commodities, oil, US dollar) via
+`scripts/build_mixed_universe.py`, aligned onto a **business-day** calendar (no weekend zero-returns),
+written under venue `mixed`. **Premise confirmed:** avg pairwise corr WITHIN crypto = **+0.56**, avg
+corr crypto-vs-macro = **+0.02** — genuinely uncorrelated. Raw: `experiments/uncorrelated_markets/`.
+
+| Universe (business-day cal) | best window | OOS Sharpe | DSR | PBO | maxDD | EW OOS Sharpe |
+|------------------------------|-------------|------------|-----|-----|-------|---------------|
+| crypto (16) | 10/50 | **0.38** | **0.609** | 0.04 | −12.4% | 0.79 |
+| macro (8) | 20/200 | 0.34 | 0.623 | 0.42 | −10.8% | 1.68 |
+| **mixed (24) √N** | 10/100 | **0.16** | **0.512** | 0.29 | −16.1% | 0.91 |
+| mixed (24) corr sizing | 10/100 | 0.26 | 0.546 | 0.32 | −23.1% | 0.91 |
+
+**Verdict: DISIMPROVED — uncorrelated markets did NOT lift the DSR; mixing actually HURT.**
+Mixed DSR 0.512 < crypto-only 0.609, and mixed OOS Sharpe 0.16 is **below BOTH** components (crypto
+0.38, macro 0.34) — the opposite of a diversification premium (two uncorrelated ~0.35-Sharpe books
+*should* combine toward ~0.5). Three diagnosed causes:
+1. **Single global trend window (the smoking gun).** Crypto's best (fast,slow) is **10/50** (crypto
+   trends fast); macro's is **20/200** (bonds/gold trend slow). The TSM forces ONE window on the whole
+   universe → mixed picks **10/100**, a compromise that fits neither → it underperforms both sleeves.
+2. **√N mis-sizes the heterogeneous book** (16 correlated crypto + 8 uncorrelated macro ≠ 24 independent
+   bets). Corr sizing (#3) recovers some — mixed Sharpe 0.16→0.26 — its first sign of value, on the
+   universe it was designed for — but still below crypto-only with worse DD (−23%) and PBO.
+3. **Macro trend had a weak OOS window** (2023–26 was tough for CTAs): macro buy-&-hold OOS Sharpe 1.68
+   but *trend* on macro only 0.34, and overfit (PBO 0.42, 8 names). Uncorrelated *noise* dilutes; only
+   uncorrelated *edge* diversifies.
+
+**Conclusion:** uncorrelated markets are **necessary but not sufficient**. Bolting macro onto a
+single-window, √N-sized crypto TSM makes it worse. The diversification premium needs **per-asset-class
+trend windows** (let crypto run fast, macro run slow) and **cluster-aware sizing** — not just more data.
+That is the indicated next experiment (#5): per-sleeve trend horizons + corr/cluster sizing on the
+mixed universe. Data + configs (`tstrend_crypto/macro/mixed`, venue `mixed`) are in place to run it.
