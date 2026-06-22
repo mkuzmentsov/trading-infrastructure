@@ -264,9 +264,10 @@ class KrakenSpot:
     def price(self, coin: str) -> float:
         return float(self._ex.fetch_ticker(self.symbol(coin))["last"])
 
-    def quote(self, coin: str) -> tuple[float, float]:
+    def bbo(self, coin: str) -> tuple[float, float]:
         """(best_bid, best_ask) for the spot pair. Falls back to last if a side is missing,
-        so the basis gate and the marketable-limit hedge have a real price to work from."""
+        so the basis gate and the marketable-limit hedge have a real price to work from.
+        (Named ``bbo`` — ``quote`` is taken by the quote-currency attribute.)"""
         t = self._ex.fetch_ticker(self.symbol(coin))
         last = float(t.get("last") or 0.0)
         bid = float(t.get("bid") or last)

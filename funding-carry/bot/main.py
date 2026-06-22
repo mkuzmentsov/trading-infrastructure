@@ -221,7 +221,7 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
         # mid, so the trade starts down by the cross-venue basis + spread. Read the real ask and
         # refuse to leg in when spot is too rich vs the perp — funding can't amortize a bad entry.
         try:
-            kr_bid, kr_ask = kr.quote(coin)
+            kr_bid, kr_ask = kr.bbo(coin)
         except Exception as e:  # noqa: BLE001
             log.error("ABORT open %s: no Kraken quote — %s", coin, e)
             return
@@ -265,7 +265,7 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
             kr.sell(coin, amount)
         else:
             try:
-                kr_bid, _ = kr.quote(coin)
+                kr_bid, _ = kr.bbo(coin)
                 kr.sell(coin, amount, limit_px=kr_bid * (1 - slip))
             except Exception as e:  # noqa: BLE001
                 log.warning("quote failed closing %s, falling back to market sell — %s", coin, e)
@@ -285,7 +285,7 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
         d = float(act["delta_notional"])  # >0 => buy spot, <0 => sell spot
         log.info("REBALANCE-SPOT %s %s≈$%.0f — %s", coin, "buy" if d > 0 else "sell", abs(d), why)
         try:
-            kr_bid, kr_ask = kr.quote(coin)
+            kr_bid, kr_ask = kr.bbo(coin)
         except Exception:  # noqa: BLE001
             kr_bid = kr_ask = px
         if d > 0:
