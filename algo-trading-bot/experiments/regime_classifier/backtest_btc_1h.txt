@@ -1,0 +1,20 @@
+
+=== Backtest report ===
+universe=['BTC'] venue=hyperliquid interval=1h
+bars=21577  2024-01-01 -> 2026-06-18
+start_equity=10,000  end_equity=8,500  total_return=-15.0%
+trades=4585  turnover=155.4x
+-- metrics --
+CAGR=-6.4%  vol=2.1%  Sharpe=-3.20  Sortino=-2.25
+maxDD=-16.3% (dur 19642 bars)  hit=12.1%  PF=0.71
+skew=+1.31  kurtosis=+77.88
+-- per-regime breakdown (bars · share · ann.Sharpe · total ret in regime) --
+   trend_up    bars= 2697 ( 12%)  Sharpe=+5.66  ret= +6.3%
+   trend_down  bars= 2179 ( 10%)  Sharpe=+3.80  ret= +3.2%
+   range       bars=12054 ( 56%)  Sharpe=-12.86  ret=-21.9%
+   high_vol    bars= 4548 ( 21%)  Sharpe=-1.17  ret= -0.8%
+   unknown     bars=   98 (  0%)  Sharpe=+0.00  ret= +0.0%
+-- provenance (§3.4) --
+snapshot=fdd6672566c28e08  commit=b527ff7  config=1fa64b3762f5f165
+
+Note: one strategy, costs modeled. Beat this baseline OOS after costs before any ML ships (principle #4).

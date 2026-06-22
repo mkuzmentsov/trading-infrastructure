@@ -1,0 +1,14 @@
+
+=== Backtest report ===
+universe=['BTC'] venue=hyperliquid interval=1h
+bars=21577  2024-01-01 -> 2026-06-18
+start_equity=10,000  end_equity=10,202  total_return=+2.0%
+trades=11398  turnover=89.2x
+-- metrics --
+CAGR=+0.8%  vol=3.7%  Sharpe=0.24  Sortino=0.30
+maxDD=-5.0% (dur 10871 bars)  hit=17.1%  PF=1.19
+skew=+0.57  kurtosis=+18.09
+-- provenance (§3.4) --
+snapshot=fdd6672566c28e08  commit=b527ff7  config=1fa64b3762f5f165
+
+Note: one strategy, costs modeled. Beat this baseline OOS after costs before any ML ships (principle #4).

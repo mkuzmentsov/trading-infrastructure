@@ -66,6 +66,7 @@ class TradingEngine:
         self.leverage_val: list[float] = []      # gross exposure / equity per bar (§2.7 / stress)
         self.orders_per_bar: list[int] = []
         self.trades: list[dict] = []
+        self.regime_val: list[str] = []          # detected regime per bar (for per-regime breakdown §3.3)
 
     def run(self, events) -> None:
         """Consume an ordered event iterator to exhaustion (backtest) or forever (live)."""
@@ -105,6 +106,7 @@ class TradingEngine:
         if hasattr(self.oms.adapter, "update_market"):
             self.oms.adapter.update_market(sym, bar.close, bar.ts)
 
+        regime = self.regime_gate.detector.detect(feats)
         if feats.get("ready", 0.0) >= 1.0:
             state = MarketState(clock=self.clock, latest_bar=bar, features=feats)
             forecasts = []
@@ -112,7 +114,6 @@ class TradingEngine:
                 fc = strat.on_data(state)
                 if fc is None:
                     continue
-                regime = self.regime_gate.detector.detect(feats)
                 forecasts.append(self.regime_gate.apply(fc, strat.tier, regime))
 
             combined = self.combiner.combine(forecasts, self.clock.now())
@@ -142,3 +143,4 @@ class TradingEngine:
         self.equity_val.append(nav)
         self.leverage_val.append(gross / nav if nav > 0 else float("inf"))
         self.orders_per_bar.append(n_fills)
+        self.regime_val.append(regime.value)

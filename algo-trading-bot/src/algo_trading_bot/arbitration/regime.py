@@ -18,14 +18,37 @@ class RegimeDetector(Protocol):
 
 
 class TrendRangeDetector:
-    """Reference detector: classify TREND_* vs RANGE vs HIGH_VOL from features such
-    as ADX, realized-vol percentile, Hurst exponent, efficiency ratio."""
+    """Classify TREND_UP / TREND_DOWN / RANGE / HIGH_VOL from causal regime features.
+
+    Two orthogonal axes, both supplied by ``RollingFeaturePipeline``:
+      - trend strength: Kaufman ``efficiency_ratio`` (≈1 clean trend, ≈0 chop).
+      - volatility state: ``vol_pct`` — percentile of current realized vol vs its trailing
+        distribution.
+
+    Decision (precedence top-down):
+      1. ``vol_pct >= vol_pct_high``                  -> HIGH_VOL  (de-risk everything but CORE)
+      2. ``efficiency_ratio >= er_trend``             -> TREND_UP / TREND_DOWN by EMA-spread sign
+      3. otherwise                                    -> RANGE     (gates the FOUNDATION trend off)
+
+    Thresholds are fixed a-priori from convention (NOT tuned on the test set) to keep the
+    overfitting surface small — ER 0.30 is the usual Kaufman trend cutoff; vol_pct 0.90 flags
+    the top decile of realized vol. Returns UNKNOWN until ``regime_ready`` (warmup), which
+    permits the trend baseline through, matching prior behavior during warmup.
+    """
+
+    def __init__(self, er_trend: float = 0.30, vol_pct_high: float = 0.90) -> None:
+        self.er_trend = er_trend
+        self.vol_pct_high = vol_pct_high
 
     def detect(self, features: dict[str, float]) -> Regime:
-        # v0.1: no regime classifier yet -> UNKNOWN, which permits the Tier-1 trend
-        # baseline through the gate. A real ADX/Hurst/efficiency-ratio classifier
-        # replaces this when the regime-gate slice lands.
-        return Regime.UNKNOWN
+        if features.get("regime_ready", 0.0) < 1.0:
+            return Regime.UNKNOWN
+        if features.get("vol_pct", 0.0) >= self.vol_pct_high:
+            return Regime.HIGH_VOL
+        if features.get("efficiency_ratio", 0.0) >= self.er_trend:
+            trending_up = features.get("ema_fast", 0.0) >= features.get("ema_slow", 0.0)
+            return Regime.TREND_UP if trending_up else Regime.TREND_DOWN
+        return Regime.RANGE
 
 
 # Which tiers are permitted in which regime. Tactical (mean-reversion) is gated OFF

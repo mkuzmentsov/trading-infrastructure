@@ -25,7 +25,7 @@ class FeaturePipeline(Protocol):
 
 
 class _SymbolState:
-    __slots__ = ("ema_fast", "ema_slow", "prev_close", "rets", "n")
+    __slots__ = ("ema_fast", "ema_slow", "prev_close", "rets", "n", "closes", "vol_hist")
 
     def __init__(self) -> None:
         self.ema_fast: float | None = None
@@ -33,15 +33,29 @@ class _SymbolState:
         self.prev_close: float | None = None
         self.rets: deque[float] = deque()
         self.n: int = 0
+        self.closes: deque[float] = deque()     # for the Kaufman efficiency ratio
+        self.vol_hist: deque[float] = deque()    # trailing ret_vol distribution -> percentile
 
 
 class RollingFeaturePipeline:
-    """Reference pipeline: per-symbol EMAs + realized vol, strictly causal."""
+    """Reference pipeline: per-symbol EMAs + realized vol + regime features, strictly causal.
 
-    def __init__(self, fast: int = 20, slow: int = 100, vol_window: int = 48) -> None:
+    Regime features (consumed by ``TrendRangeDetector``):
+      - ``efficiency_ratio`` — Kaufman ER over ``er_window``: |net move| / sum|bar moves|.
+        ~1 = clean trend, ~0 = chop/range. The trend-strength axis.
+      - ``vol_pct`` — percentile rank of the current ``ret_vol`` within its trailing
+        ``vol_pct_window`` distribution (computed vs PAST values only). The high-vol axis.
+      - ``regime_ready`` — 1.0 once both have enough history to be meaningful.
+    """
+
+    def __init__(self, fast: int = 20, slow: int = 100, vol_window: int = 48,
+                 er_window: int = 20, vol_pct_window: int = 100, vol_pct_min: int = 40) -> None:
         self.fast = fast
         self.slow = slow
         self.vol_window = vol_window
+        self.er_window = er_window
+        self.vol_pct_window = vol_pct_window
+        self.vol_pct_min = vol_pct_min
         self._a_fast = 2.0 / (fast + 1)
         self._a_slow = 2.0 / (slow + 1)
         self._state: dict[Symbol, _SymbolState] = {}
@@ -64,16 +78,36 @@ class RollingFeaturePipeline:
 
         ret_vol = _std(st.rets) if len(st.rets) >= 2 else 0.0
         ready = st.n >= self.slow and len(st.rets) >= self.vol_window and ret_vol > 0
+
+        # --- regime features (causal) ---
+        st.closes.append(c)
+        if len(st.closes) > self.er_window + 1:
+            st.closes.popleft()
+        efficiency_ratio = _efficiency_ratio(st.closes, self.er_window)
+
+        # percentile of current ret_vol vs the trailing distribution (PAST only -> no lookahead)
+        vol_pct = _percentile_rank(st.vol_hist, ret_vol) if st.vol_hist else 0.5
+        if ret_vol > 0:
+            st.vol_hist.append(ret_vol)
+            if len(st.vol_hist) > self.vol_pct_window:
+                st.vol_hist.popleft()
+
+        regime_ready = (
+            ready and len(st.closes) > self.er_window and len(st.vol_hist) >= self.vol_pct_min
+        )
         return {
             "close": c,
             "ema_fast": st.ema_fast,
             "ema_slow": st.ema_slow,
             "ret_vol": ret_vol,  # per-bar stdev of log returns
             "ready": 1.0 if ready else 0.0,
+            "efficiency_ratio": efficiency_ratio,
+            "vol_pct": vol_pct,
+            "regime_ready": 1.0 if regime_ready else 0.0,
         }
 
     def warmup_bars(self) -> int:
-        return max(self.slow, self.vol_window)
+        return max(self.slow, self.vol_window, self.er_window + 1)
 
 
 def _std(values) -> float:
@@ -83,3 +117,22 @@ def _std(values) -> float:
     mean = sum(values) / n
     var = sum((v - mean) ** 2 for v in values) / (n - 1)
     return math.sqrt(var)
+
+
+def _efficiency_ratio(closes, window: int) -> float:
+    """Kaufman efficiency ratio over the last ``window`` bars: net directional move
+    divided by the total path length. 0 when the path hasn't formed yet."""
+    if len(closes) <= window:
+        return 0.0
+    seq = list(closes)[-(window + 1):]
+    net = abs(seq[-1] - seq[0])
+    path = sum(abs(seq[i] - seq[i - 1]) for i in range(1, len(seq)))
+    return net / path if path > 0 else 0.0
+
+
+def _percentile_rank(history, value: float) -> float:
+    """Fraction of ``history`` <= ``value`` (∈[0,1]). Trailing distribution only."""
+    n = len(history)
+    if n == 0:
+        return 0.5
+    return sum(1 for h in history if h <= value) / n

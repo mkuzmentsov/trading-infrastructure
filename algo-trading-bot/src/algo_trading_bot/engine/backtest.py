@@ -55,6 +55,7 @@ class BacktestResult:
     returns: pd.Series
     trades: pd.DataFrame
     metrics: M.MetricsReport
+    regime: pd.Series | None = None     # detected regime per bar (index aligned to equity)
 
 
 class Backtester:
@@ -142,6 +143,7 @@ class Backtester:
         equity = pd.Series(engine.equity_val, index=pd.to_datetime(engine.equity_ts), name="equity")
         returns = equity.pct_change().dropna()
         trades = pd.DataFrame(engine.trades)
+        regime = pd.Series(engine.regime_val, index=pd.to_datetime(engine.equity_ts), name="regime")
 
         ppy = PERIODS_PER_YEAR[cfg.bar_interval]
         trade_pnls = trades["realized"].to_numpy() if not trades.empty else np.array([])
@@ -150,7 +152,7 @@ class Backtester:
             equity.to_numpy(), returns.to_numpy(), trade_pnls,
             periods_per_year=ppy, turnover=turnover,
         )
-        return BacktestResult(self._provenance(symbols, start, end, venue), equity, returns, trades, report)
+        return BacktestResult(self._provenance(symbols, start, end, venue), equity, returns, trades, report, regime)
 
     # --- reproducibility (§3.4) ---
     def _provenance(self, symbols, start, end, venue) -> RunProvenance:

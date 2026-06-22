@@ -1,0 +1,21 @@
+
+=== Validation (in-sample tune -> out-of-sample test) ===
+universe=['BTC'] interval=1d  grid_trials=9
+OOS segment starts 2023-01-07 (1260 bars after embargo)
+-- in-sample selection --
+best params={'ema_fast': 10, 'ema_slow': 60}  train Sharpe=1.06
+-- OUT-OF-SAMPLE (the number that counts) --
+Sharpe=0.62  Sortino=0.82  CAGR=+1.7%  maxDD=-3.1%
+skew=+1.05  hit=25.0%  PF=1.83
+untuned-default OOS Sharpe=0.38   buy&hold OOS Sharpe=1.04
+Deflated Sharpe (P[true SR>0], 9 trials)=0.732
+PBO (prob. of backtest overfitting, CSCV)=0.21   P(OOS loss)=0.10
+
+-- approve-for-live gate (§4) --
+REJECTED
+PASS  positive_oos_sharpe: OOS Sharpe=0.62
+PASS  beats_baseline_oos: OOS Sharpe=0.62 vs baseline=0.00
+FAIL  deflated_sharpe: DSR=0.732 (need >= 0.95)
+PASS  pbo: PBO=0.21 (need <= 0.3)
+
+Note: regime, stress and paper checks are not yet wired — this is a partial gate. PBO above quantifies how overfit the grid search itself was (CSCV, §4.2).

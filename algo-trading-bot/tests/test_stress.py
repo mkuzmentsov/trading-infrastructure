@@ -13,7 +13,14 @@ import numpy as np
 
 from algo_trading_bot.config import BotConfig, RiskConfig, VenueConfig
 from algo_trading_bot.core.events import MarketEvent
-from algo_trading_bot.core.types import Bar, Symbol, VenueId
+from algo_trading_bot.core.types import Bar, Regime, Symbol, VenueId
+
+
+class _Passthrough:
+    """Regime detector that gates nothing — used to isolate the risk layer in stress tests."""
+
+    def detect(self, features: dict) -> Regime:
+        return Regime.UNKNOWN
 from algo_trading_bot.engine.backtest import Backtester
 from algo_trading_bot.validation.stress import (
     SCENARIOS,
@@ -67,6 +74,11 @@ def test_breaker_fires_and_flattens_on_deep_crash(tmp_path):
     crashed, _ = flash_crash(bars, cfg, at=0.62, depth=0.35, width=6)
 
     engine = Backtester(cfg).build_engine()
+    # Isolate the drawdown breaker (the risk layer). The regime gate is a higher layer that
+    # would flatten the trend book on the high-vol crash *before* the breaker is needed — its
+    # behavior is covered in test_regime.py. Passthrough it here so the crash actually reaches
+    # the breaker we mean to test.
+    engine.regime_gate.detector = _Passthrough()
     engine.run(MarketEvent(b) for b in crashed)
 
     eq = engine.equity_val

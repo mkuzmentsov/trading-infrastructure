@@ -115,6 +115,34 @@ def _cmd_fetch(args) -> int:
     return 0
 
 
+def _print_regime_breakdown(result, bar_interval: str) -> None:
+    """Per-regime metric breakdown (§3.3/§4.7) — exposes which regimes carry the PnL and
+    whether the gate is flattening the strategy where it should. Bar return at t is grouped
+    by the regime detected at t (the regime that gated the position held into t's return)."""
+    regime = getattr(result, "regime", None)
+    if regime is None or regime.empty:
+        return
+    import numpy as np
+    from .data.bars import PERIODS_PER_YEAR
+
+    ppy = PERIODS_PER_YEAR.get(bar_interval, 252)
+    rets = result.returns
+    reg = regime.reindex(rets.index).fillna("unknown")
+    order = ["trend_up", "trend_down", "range", "high_vol", "unknown"]
+    present = [r for r in order if (reg == r).any()]
+    if len(present) <= 1:
+        return  # nothing to break down (gate inactive / single regime)
+    print("-- per-regime breakdown (bars · share · ann.Sharpe · total ret in regime) --")
+    n = len(reg)
+    for r in present:
+        mask = (reg == r).to_numpy()
+        rr = rets.to_numpy()[mask]
+        share = mask.sum() / n
+        sharpe = float(rr.mean() / rr.std() * np.sqrt(ppy)) if rr.std() > 0 else 0.0
+        total = float(np.prod(1.0 + rr) - 1.0)
+        print(f"   {r:10s}  bars={mask.sum():5d} ({share:4.0%})  Sharpe={sharpe:+5.2f}  ret={total:+6.1%}")
+
+
 def _cmd_backtest(args) -> int:
     from .engine.backtest import Backtester
 
@@ -137,6 +165,7 @@ def _cmd_backtest(args) -> int:
     print(f"maxDD={m.max_drawdown:.1%} (dur {m.drawdown_duration} bars)  "
           f"hit={m.hit_rate:.1%}  PF={m.profit_factor:.2f}")
     print(f"skew={m.skew:+.2f}  kurtosis={m.kurtosis:+.2f}")
+    _print_regime_breakdown(result, cfg.bar_interval)
     print("-- provenance (§3.4) --")
     print(f"snapshot={p.data_snapshot_id}  commit={p.git_commit}  config={p.config_hash}")
     print("\nNote: one strategy, costs modeled. Beat this baseline OOS after costs "
