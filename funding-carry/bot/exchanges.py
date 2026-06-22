@@ -117,6 +117,11 @@ class HyperliquidPerp:
         d = self._sz_dec.get(coin, 4)
         return round(sz, d)
 
+    def round_size(self, coin: str, sz: float) -> float:
+        """Public: round a coin size to HL's lot for this coin. Used to size the hedge leg to
+        the SAME rounded quantity the perp short will use, so the two legs stay delta-matched."""
+        return self._round_sz(coin, sz)
+
     def _round_px(self, coin: str, px: float) -> float:
         """Hyperliquid rejects prices that aren't on a valid tick. The rule:
         ≤5 significant figures AND ≤ (6 − szDecimals) decimal places for perps
@@ -258,6 +263,15 @@ class KrakenSpot:
 
     def price(self, coin: str) -> float:
         return float(self._ex.fetch_ticker(self.symbol(coin))["last"])
+
+    def quote(self, coin: str) -> tuple[float, float]:
+        """(best_bid, best_ask) for the spot pair. Falls back to last if a side is missing,
+        so the basis gate and the marketable-limit hedge have a real price to work from."""
+        t = self._ex.fetch_ticker(self.symbol(coin))
+        last = float(t.get("last") or 0.0)
+        bid = float(t.get("bid") or last)
+        ask = float(t.get("ask") or last)
+        return bid, ask
 
     def balance(self, coin: str) -> float:
         if not self._have_keys:

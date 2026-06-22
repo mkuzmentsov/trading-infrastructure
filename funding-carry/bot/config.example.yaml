@@ -55,6 +55,9 @@ max_basis_alert_bps: 50         # |perp - index| premium beyond this -> ALERT on
 # falling back to IOC-taker if the maker order doesn't fill within `maker_wait_seconds`.
 maker_wait_seconds: 120
 hl_slippage_bps: 30             # max slippage for the IOC taker fallback
+max_basis_open_bps: 30          # GATE: skip opening a pair if (Kraken ask − HL mid) exceeds this — the
+                                # cross-venue entry basis would start the trade underwater. The spot
+                                # hedge legs in as a marketable-limit capped at ask*(1+hl_slippage_bps).
 
 # Endpoints / credentials (fill the credential fields in config.yaml, never commit)
 hyperliquid:

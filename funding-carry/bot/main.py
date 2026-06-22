@@ -180,7 +180,7 @@ def save_state(path: Path, state: dict) -> None:
 
 
 def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state: dict,
-            slippage_bps: float, perp_positions: dict) -> None:
+            slippage_bps: float, perp_positions: dict, max_basis_open: float = 0.0030) -> None:
     coin = act["coin"]
     px = float(mids.get(coin, 0.0))
     slip = slippage_bps / 1e4
@@ -208,25 +208,46 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
         lev = int(act.get("leverage", 0))
         log.info("OPEN %s notional≈$%.0f%s — %s", coin, notional,
                  f" L={lev}x" if lev > 0 else "", why)
-        # In auto-sizing mode the leverage is dynamic per-open; in fixed mode
-        # it was already set at startup. Setting again is idempotent on HL,
-        # so we always call when an action carries an explicit leverage.
-        if lev > 0:
+
+        # Size BOTH legs to the same HL-rounded coin quantity so the hedge is exactly
+        # delta-matched (HL rounds the short to its lot; the spot buy must match that lot,
+        # not notional/px, or a small residual delta leaks in).
+        sz = hl.round_size(coin, notional / px)
+        if sz <= 0:
+            log.error("ABORT open %s: size rounds to 0 (notional $%.2f @ %.4f)", coin, notional, px)
+            return
+
+        # Entry-basis gate: opening longs spot at the Kraken ASK and shorts the perp at the HL
+        # mid, so the trade starts down by the cross-venue basis + spread. Read the real ask and
+        # refuse to leg in when spot is too rich vs the perp — funding can't amortize a bad entry.
+        try:
+            kr_bid, kr_ask = kr.quote(coin)
+        except Exception as e:  # noqa: BLE001
+            log.error("ABORT open %s: no Kraken quote — %s", coin, e)
+            return
+        basis = (kr_ask - px) / px if px > 0 else 0.0
+        if basis > max_basis_open:
+            log.warning("SKIP open %s: entry basis %.1fbps > %.1fbps cap "
+                        "(kr_ask=%.6f hl_mid=%.6f) — would start underwater",
+                        coin, basis * 1e4, max_basis_open * 1e4, kr_ask, px)
+            return
+
+        if lev > 0:  # idempotent on HL; auto-sizing sets leverage per-open
             try:
                 hl.set_leverage(coin, lev)
             except Exception as e:  # noqa: BLE001
                 log.warning("set_leverage %s=%dx before open failed: %s", coin, lev, e)
-        # short HL perp (IOC taker for v1; maker-with-fallback is a TODO).
-        # Hedge-leg ordering matters: only buy the Kraken spot if the HL short
-        # actually opened — otherwise a rejected short would leave a naked long.
+
+        # Leg-in order matters: short HL first (IOC), and only buy the spot hedge if it filled —
+        # a rejected short must not leave a naked long.
         try:
-            hl.open_short(coin, notional, px, limit_px=px * (1 - slip), tif="Ioc")
+            hl.open_short(coin, sz * px, px, limit_px=px * (1 - slip), tif="Ioc")
         except HLOrderError as e:
-            log.error("ABORT open %s: HL short rejected, skipping Kraken buy — %s",
-                      coin, e)
+            log.error("ABORT open %s: HL short rejected, skipping Kraken buy — %s", coin, e)
             return
-        # buy Kraken spot
-        kr.buy(coin, notional / px)
+        # Hedge: MARKETABLE-LIMIT buy capped at ask*(1+slip) — fills against the book now but caps
+        # the spread/slippage paid, instead of an uncapped market order. Same coin qty as the short.
+        kr.buy(coin, sz, limit_px=kr_ask * (1 + slip))
         return
 
     if kind == "close_pair":
@@ -235,24 +256,42 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
         pos = perp_positions.get(coin)
         if pos:
             hl.close_short(coin, pos, limit_px=px * (1 + slip), tif="Ioc")
-        # sell whatever spot we hold
-        kr.sell(coin, kr.balance(coin) or (act.get("spot_coins") or 0.0))
+        amount = kr.balance(coin) or (act.get("spot_coins") or 0.0)
+        if amount <= 0:
+            return
+        # Normal close: marketable-LIMIT sell capped at bid*(1-slip) to bound the spread paid on
+        # the way out (symmetric to the entry). Emergency: MARKET — getting flat fast beats bps.
+        if emergency:
+            kr.sell(coin, amount)
+        else:
+            try:
+                kr_bid, _ = kr.quote(coin)
+                kr.sell(coin, amount, limit_px=kr_bid * (1 - slip))
+            except Exception as e:  # noqa: BLE001
+                log.warning("quote failed closing %s, falling back to market sell — %s", coin, e)
+                kr.sell(coin, amount)
         return
 
     if kind == "deleverage":
         reduce_notional = float(act["reduce_notional"])
         log.warning("DELEVERAGE %s reduce≈$%.0f — %s", coin, reduce_notional, why)
-        hl.reduce_short(coin, reduce_notional, px, limit_px=px * (1 + slip), tif="Ioc")
-        kr.sell(coin, reduce_notional / px)
+        sz = hl.round_size(coin, reduce_notional / px)  # match the spot cut to the perp lot
+        hl.reduce_short(coin, sz * px, px, limit_px=px * (1 + slip), tif="Ioc")
+        # MARKET sell: deleverage is risk reduction under margin stress — fill certainty trumps slippage.
+        kr.sell(coin, sz)
         return
 
     if kind == "rebalance_spot":
         d = float(act["delta_notional"])  # >0 => buy spot, <0 => sell spot
         log.info("REBALANCE-SPOT %s %s≈$%.0f — %s", coin, "buy" if d > 0 else "sell", abs(d), why)
+        try:
+            kr_bid, kr_ask = kr.quote(coin)
+        except Exception:  # noqa: BLE001
+            kr_bid = kr_ask = px
         if d > 0:
-            kr.buy(coin, d / px)
+            kr.buy(coin, d / px, limit_px=kr_ask * (1 + slip))
         else:
-            kr.sell(coin, -d / px)
+            kr.sell(coin, -d / px, limit_px=kr_bid * (1 - slip))
         return
 
     log.error("unknown action kind: %s", kind)
@@ -421,7 +460,8 @@ def main() -> int:
                             a["spot_coins"] = spot_coins
                         execute(a, hl=hl, kr=kr, mids=mids, state=state,
                                 slippage_bps=float(cfg.get("hl_slippage_bps", 30)),
-                                perp_positions=perp_pos)
+                                perp_positions=perp_pos,
+                                max_basis_open=float(cfg.get("max_basis_open_bps", 30)) / 1e4)
                 else:
                     acts = []
                 snap["coins"][c] = {
