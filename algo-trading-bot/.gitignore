@@ -6,6 +6,9 @@
 /runs/
 *.parquet
 
+# Generated chart/replay artifacts (regenerate via scripts/chart_*.py, backtest_last_month.py)
+/replays/
+
 # Live/paper runtime state + decision logs
 /state/
 
