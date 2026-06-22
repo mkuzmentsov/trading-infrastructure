@@ -409,3 +409,38 @@ NOT read it as a validated live green light.** Honest accounting:
 search), 60d vol overlay — is a real, diversified, near-gate trend edge (OOS Sharpe ~0.9, honest PSR
 ~0.90–0.95, −25% bear DD). It is the deployable *candidate*; the remaining work is honest forward
 validation, not more in-sample lifting.
+
+---
+
+### #11 — Walk-forward / bootstrap validation of the candidate (2026-06-22)
+The honest out-of-research test the #10 gate-pass demanded — methods that make NO by-hand choices and
+don't depend on the one 60/40 split. Implemented the roadmap walk-forward harness
+(`validation/walk_forward.py`: rolling/expanding blocks, fit→eval; no-op fit = period-robustness pass)
+and a block-bootstrap Sharpe CI (`validation/stats.block_bootstrap_sharpe`, roadmap §5b). Ran the
+multi-window candidate (`scripts/walk_forward_validate.py`). Raw: `experiments/walk_forward/`. +3 tests (65 pass).
+
+| Check | Result |
+|-------|--------|
+| **Full sample** (all 3069 bars OOS, no fit) | Sharpe **1.29**, PSR 1.000 |
+| **Walk-forward** (18 × 6-mo OOS blocks) | median +1.12, **89% positive** (16/18), worst −1.05 (2022-09→2023-03) |
+| **Per-year** (2014–26) | **positive 11 / 13 years**; 2022 crypto bear **+1.63** (trend shorted the crash); negative only 2015 (−0.04, flat) & 2023 (−0.87) |
+| **Block-bootstrap Sharpe** (21-d blocks, 3000×) | point 1.29, **90% CI [0.73, 1.83]**, P(Sharpe>0)=1.000 |
+| maxDD (full) | −24.8% |
+
+**Verdict: the candidate SURVIVES honest validation — strongest evidence in the project.** The edge is
+**period-robust** (89% of independent 6-mo blocks, 11/13 years, bootstrap lower bound 0.73 well above
+zero) — *not* single-window luck nor an artifact of the n_trials=1 framing. A trend book that made
++1.63 Sharpe through the 2022 bear is doing the thing trend-following is supposed to do.
+
+**Honest caveats that remain (so this stays a *candidate*, not a deployed strategy):**
+- Full-sample Sharpe 1.29 > recent-split OOS 0.94 because **early crypto years (2016–21) were easier**;
+  the recent regime (2023 −0.87, 2025 +0.66) is harder → **temper forward expectation to ~0.7–0.9**.
+- The 12-year history informed the broader design (sleeve defs, cov/overlay params), so even full-sample
+  isn't fully naive OOS — though period-robustness across *every* sub-window is hard to fake.
+- −24.8% DD concentrated in the 2022–23 transition; **execution realism** (daily rebalance of 24
+  instruments incl. shorting alts, slippage/borrow) is modeled only as 4.5bps — live will be worse.
+
+**The backtest research is done.** No more in-sample lifting is warranted: the only remaining honest
+test is a **forward paper-trade** (calendar time) on `configs/tstrend_multiwindow.toml`. The 11-experiment
+arc: significance moved not from a cleverer model but from *removing the grid search* and *risk-budgeting
+crypto vs macro as separate sleeves* — searching/fitting deflates; pre-committed/robust survives.
