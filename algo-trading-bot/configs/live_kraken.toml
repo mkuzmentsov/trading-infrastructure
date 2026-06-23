@@ -1,0 +1,34 @@
+# LIVE Kraken Futures — real money, small capital ($80 execution test). BTC 1d soft-gated trend
+# (the only live-executable, venue-fitting option; NOT a validated edge — see experiments/).
+# testnet=false => mainnet. Keys via env (ATB_KRAKENFUTURES_API_KEY/_SECRET). Position sizing
+# uses the REAL account equity at runtime (starting_cash below is only a fallback).
+name = "live_kraken_btc"
+horizon = "position"
+universe = ["BTC"]
+data_venue = "krakenfutures"
+bar_interval = "1d"
+starting_cash = 80.0
+data_dir = "/app/data"
+
+[venue]
+name = "krakenfutures"
+testnet = false
+max_capital_quote = 80.0
+
+[trend]
+ema_fast = 20
+ema_slow = 100
+vol_window = 48
+scale = 10.0
+
+[friction]
+taker_fee_bps = 5.0
+
+[risk]
+max_gross_leverage = 2.0
+target_annual_vol = 0.20
+kelly_fraction = 0.5
+drawdown_derisk = 0.10
+drawdown_halt = 0.20
+min_trade_notional = 10.0
+rebalance_deadband = 0.05

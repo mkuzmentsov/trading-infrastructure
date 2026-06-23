@@ -1,0 +1,71 @@
+# LIVE Kraken Futures BTC daily-trend bot — Hetzner k3s.
+# Single trader (replicas:1 + Recreate): two pods would double-trade the same account and
+# contend on the RWO volume. State + data on one 10Gi PVC (Hetzner min) via subPaths, so a
+# restart resumes from persisted state AND reconciles the real position/equity from the venue.
+#
+# Secret 'atb-kraken-creds' (ATB_KRAKENFUTURES_API_KEY/_SECRET) must exist first — see
+# secret.example.yaml. Real-money: the bot sizes off the live account balance; testnet=false.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: algo-trading
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atb-state
+  namespace: algo-trading
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: hcloud-volumes
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atb-kraken-btc
+  namespace: algo-trading
+  labels: {app: atb-kraken-btc}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # never two traders on one account
+  selector:
+    matchLabels: {app: atb-kraken-btc}
+  template:
+    metadata:
+      labels: {app: atb-kraken-btc}
+    spec:
+      containers:
+        - name: bot
+          image: mkuzmentsov/algo-trading-bot:0.1
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              mkdir -p /app/state /app/data
+              GP=/app/state/live_kraken_btc_gate_pass.json
+              if [ ! -f "$GP" ]; then
+                printf '%s' '{"override":"manual small-capital execution test ($80) — NOT a validated gate pass; single-asset trend is gate-rejected on DSR. See experiments/EXPERIMENTS.md","approved_by":"operator"}' > "$GP"
+                echo "seeded manual gate-pass override at $GP"
+              fi
+              atb fetch --venue krakenfutures --symbols BTC --interval 1d --start 2022-01-01 --data-dir /app/data || echo "WARN: data fetch failed; using cached /app/data"
+              exec atb live --config configs/live_kraken.toml --source live --state-dir /app/state
+          env:
+            - name: ATB_KRAKENFUTURES_API_KEY
+              valueFrom: {secretKeyRef: {name: atb-kraken-creds, key: api_key}}
+            - name: ATB_KRAKENFUTURES_API_SECRET
+              valueFrom: {secretKeyRef: {name: atb-kraken-creds, key: api_secret}}
+          volumeMounts:
+            - {name: atb-state, mountPath: /app/state, subPath: state}
+            - {name: atb-state, mountPath: /app/data,  subPath: data}
+          resources:
+            requests: {cpu: "50m", memory: "128Mi"}
+            limits:   {cpu: "500m", memory: "512Mi"}
+      volumes:
+        - name: atb-state
+          persistentVolumeClaim:
+            claimName: atb-state
