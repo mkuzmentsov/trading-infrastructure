@@ -17,6 +17,14 @@ class FakeExchange:
         self.canceled = []
         self._trades = []
         self._positions = []
+        self._balance = {}
+        self._now_ms = 1_000_000
+
+    def milliseconds(self):
+        return self._now_ms
+
+    def fetch_balance(self):
+        return self._balance
 
     def create_order(self, symbol, otype, side, amount, price=None, params=None):
         self.created.append({"symbol": symbol, "type": otype, "side": side,
@@ -33,11 +41,40 @@ class FakeExchange:
         return self._positions
 
     def fetch_my_trades(self, since=None):
-        return self._trades
+        # ccxt semantics: only trades at/after `since`
+        return [t for t in self._trades if since is None or t["timestamp"] >= since]
 
 
 def _broker():
     return CcxtBroker("kraken", client=FakeExchange())
+
+
+def test_equity_reads_real_balance():
+    b = _broker()
+    b.client._balance = {"total": {"USD": 81.37}}
+    assert b.equity() == 81.37
+    # flex/multi-collateral account: portfolioValue in info
+    b.client._balance = {"info": {"accounts": {"flex": {"portfolioValue": "123.5"}}}, "total": {}}
+    assert b.equity() == 123.5
+    # unavailable -> 0.0 (caller keeps prior capital)
+    b.client._balance = {"total": {}}
+    assert b.equity() == 0.0
+
+
+def test_restart_cursor_skips_pre_restart_fills():
+    # a trade exists from BEFORE restart; the engine reconciles position from the venue, so this
+    # fill must NOT be replayed. seen_through_now() advances the cursor past it.
+    b = _broker()
+    b.client._now_ms = 5_000
+    b.client._trades = [{"id": "t1", "timestamp": 4_000, "order": "o1", "symbol": "BTC/USD",
+                         "side": "buy", "amount": 0.1, "price": 100.0, "fee": {"cost": 0.05}}]
+    b.seen_through_now()                       # restart: cursor -> 5_000
+    assert b.poll_fills() == []               # the old (t=4_000) trade is skipped
+    # a NEW post-restart fill IS applied
+    b.client._trades.append({"id": "t2", "timestamp": 6_000, "order": "o2", "symbol": "BTC/USD",
+                             "side": "sell", "amount": 0.1, "price": 101.0, "fee": {"cost": 0.05}})
+    fills = b.poll_fills()
+    assert len(fills) == 1 and fills[0].order_id == "o2"
 
 
 def test_place_maps_side_and_clientid():

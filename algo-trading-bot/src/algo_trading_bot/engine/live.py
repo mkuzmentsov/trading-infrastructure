@@ -60,6 +60,24 @@ class LiveRunner:
             )
         return int(st.get("bars_processed", 0))
 
+    def _sync_equity(self, engine, adapter, *, at: str) -> None:
+        """Point the vol-target sizer at the REAL account equity (collateral + unrealized PnL)
+        instead of cfg.starting_cash. ``capital`` always tracks venue equity; ``cash`` is only
+        seeded when flat (with open positions, equity already includes their MTM)."""
+        eq = adapter.equity()
+        if eq <= 0:
+            if at == "startup":
+                print(f"[{self.config.name}] WARN venue equity unavailable — "
+                      f"sizing off cfg value ${engine.sizer.capital:,.2f}")
+            return
+        prev = engine.sizer.capital
+        engine.sizer.capital = eq
+        if at == "startup":
+            if not engine.portfolio.positions:
+                engine.portfolio.cash = eq
+            print(f"[{self.config.name}] live capital synced to venue equity "
+                  f"${eq:,.2f} (cfg was ${prev:,.2f})")
+
     def _persist(self, engine, bars_processed: int, last_ts) -> None:
         st = {
             "cash": engine.portfolio.cash,
@@ -112,6 +130,13 @@ class LiveRunner:
                 if venue_pos:
                     engine.portfolio.positions.update(venue_pos)
                 engine.oms.on_restart()
+                # Pre-restart fills are already baked into the venue position we just reconciled;
+                # advance the fill cursor to now so poll_fills doesn't replay & double-count them.
+                if hasattr(adapter, "seen_through_now"):
+                    adapter.seen_through_now()
+                # Size off the REAL account equity, not cfg.starting_cash. Set the book's cash
+                # and the sizer's capital from the venue; refreshed each bar in the loop below.
+                self._sync_equity(engine, adapter, at="startup")
             print(f"[{self.config.name}] mode={self.mode} source=live warmed={len(stored)} "
                   f"restored_bars={restored} cash={engine.portfolio.cash:,.0f}")
             trading_iter = self._live_iter(last_warm)
@@ -129,6 +154,10 @@ class LiveRunner:
         i = 0
         last_ts = None
         for bar in trading_iter:
+            # Track the real account each bar so vol-targeting sizes off the live balance, not a
+            # stale number (cheap: one fetch_balance per daily/hourly bar).
+            if self.mode == "live" and adapter is not None and self.source == "live":
+                self._sync_equity(engine, adapter, at="bar")
             n_before = len(engine.trades)
             engine.handle(MarketEvent(bar))
             # Surface any fills this bar as explicit TRADE lines + `fill` audit records.

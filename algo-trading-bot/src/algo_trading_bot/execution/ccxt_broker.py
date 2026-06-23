@@ -92,6 +92,38 @@ class CcxtBroker:
                                 avg_price=float(p.get("entryPrice") or 0.0))
         return out
 
+    def seen_through_now(self) -> None:
+        """Move the fill cursor to 'now' so poll_fills ignores pre-restart trades. On restart the
+        engine reconciles positions from the venue, so every fill before this instant is already
+        reflected — replaying them via fetch_my_trades would double-count and corrupt the position.
+        Only fills AFTER restart should be applied (NFR4)."""
+        try:
+            self._last_trade_ms = int(self.client.milliseconds())
+        except Exception:  # noqa: BLE001
+            import time
+            self._last_trade_ms = int(time.time() * 1000)
+
+    def equity(self) -> float:
+        """Real account equity in the quote currency (collateral + unrealized PnL), via ccxt
+        ``fetch_balance``. Used to size live positions off the ACTUAL balance, not a config
+        constant. Returns 0.0 if it can't be determined (caller keeps the prior capital)."""
+        try:
+            bal = self.client.fetch_balance()
+        except Exception:  # noqa: BLE001
+            return 0.0
+        # Kraken Futures (flex/multi-collateral) reports portfolioValue in info; otherwise fall
+        # back to the total USD/USDT/USDC balance ccxt normalizes.
+        info = bal.get("info", {}) or {}
+        for acct in (info.get("accounts", {}) or {}).values():
+            bs = (acct or {}).get("balanceValue") or (acct or {}).get("portfolioValue")
+            if bs:
+                return float(bs)
+        total = bal.get("total", {}) or {}
+        for q in ("USD", "USDT", "USDC", "ZUSD"):
+            if total.get(q):
+                return float(total[q])
+        return 0.0
+
     def poll_fills(self) -> list[Fill]:
         if not getattr(self.client, "has", {}).get("fetchMyTrades", True):
             return []
