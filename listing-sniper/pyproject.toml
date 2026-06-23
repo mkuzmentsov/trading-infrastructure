@@ -1,0 +1,17 @@
+[project]
+name = "listing-sniper"
+version = "0.1.0"
+description = "Trade Binance new-token listings — announcement feed, dataset, characterization, executor."
+requires-python = ">=3.11"
+dependencies = []   # core (announcement feed) is stdlib-only; heavy stacks are opt-in extras
+
+[project.optional-dependencies]
+data = ["pandas>=2.2", "pyarrow>=16.0", "ccxt>=4.3"]   # dataset backfill + characterization
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
