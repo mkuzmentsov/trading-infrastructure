@@ -226,6 +226,26 @@ up a naïve short, peak timing is unpredictable (min 1 → min 1392), and this i
 not have had a shortable perp). **Not a slam dunk** — Phase 2 must price the perp short + funding +
 survivorship before any money. Naïve long-the-open is rejected already.
 
+## 7c. Phase-2 input — the perp + funding (built — `scripts/characterize_perp.py`)
+The short is the actionable side, so we checked the USDⓈ-M perp + funding for the same listings (21
+with a perp, survivors):
+
+| metric (median, perp) | value |
+|---|---|
+| perp peak_ret / drawdown-from-peak | +10.8% / −25.2% |
+| perp red @ 24h | **52%** (vs spot 74%) |
+| **perp-vs-spot listing lag** | **−5.6 days** (only **10%** list spot+perp simultaneously) |
+| funding to a short over 24h | **+0.12%** median; **67% of perps PAY the short**; worst −10.8% |
+
+**Key insight (reshapes the whole thesis):** most "Binance Will List" *spot* announcements are for
+tokens that **already traded as a Binance perp days earlier** — so the spot "open" is *continuation*,
+not fresh price discovery, and the spot "74% red" was inflated by it. On the perp itself the drift is
+**weaker (52% red)** and carries the **same moonshot right tail** (TRUMP +237%, ASTER +99% @24h) that
+liquidates a naïve short. Funding is a *mild tailwind* for shorts (67% pay the short) but with a nasty
+squeeze tail (−10.8%). **Conclusion:** the only genuinely tradeable population is the slice where
+**spot+perp list simultaneously (lag≈0 = truly new tokens)** — Phase 2 must filter to that subset and
+re-characterize, then size the short for the right tail. The naïve "short every listing" is not it.
+
 ## 8. Suggested first concrete steps
 1. `announcement_watcher.py` — poll the CMS API, parse new listings (symbol, ts, spot/perp), persist
    + log. (Also doubles as the live feed for Phase 3.) **Cheap, high-value, do this first.**

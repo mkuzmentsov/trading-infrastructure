@@ -105,6 +105,25 @@ def parse_open_time(body: str) -> datetime | None:
     return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
 
 
+def new_spot_listings(pages: int = 6, page_size: int = 50, *,
+                      http: HttpGet = _http_get_json) -> list[Listing]:
+    """Genuine new-spot listings across ``pages`` of the feed: 'Binance Will List …' with exactly
+    one ticker, de-duped by ticker. Drops Earn/Margin/JPY/bStocks/TradFi/notice noise — the clean
+    population for the characterization study."""
+    out: list[Listing] = []
+    seen: set[str] = set()
+    for p in range(1, pages + 1):
+        for art in fetch_articles(NEW_LISTING, page_size, p, http=http):
+            lst = parse_listing(art)
+            if "will list" not in lst.title.lower() or len(lst.tickers) != 1:
+                continue
+            if lst.tickers[0] in seen:
+                continue
+            seen.add(lst.tickers[0])
+            out.append(lst)
+    return out
+
+
 class AnnouncementWatcher:
     """Polls the feed and returns only listings not seen before. Pre-load ``seen`` from persisted
     state so a restart doesn't re-emit (and re-trade) old announcements. State persistence is the

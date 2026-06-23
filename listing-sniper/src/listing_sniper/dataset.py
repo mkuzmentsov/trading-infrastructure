@@ -22,6 +22,7 @@ from typing import Callable
 HttpGet = Callable[[str], object]
 _SPOT = "https://api.binance.com/api/v3/klines"
 _FUT = "https://fapi.binance.com/fapi/v1/klines"
+_FUNDING = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 _HORIZONS_MIN = {"ret_5m": 5, "ret_15m": 15, "ret_1h": 60, "ret_4h": 240, "ret_24h": 1440}
 
@@ -60,6 +61,26 @@ def first_day_closes(symbol: str, *, futures: bool = False, minutes: int = 1440,
         rows = binance_klines(symbol, "1m", nxt, 1000, futures=futures, http=http)
         closes += [float(r[4]) for r in rows]
     return listing_ms, closes[:minutes]
+
+
+def binance_funding(symbol: str, start_ms: int = 0, limit: int = 1000, *,
+                    http: HttpGet = _http_get_json) -> list:
+    """Realized funding-rate events for a USDⓈ-M perp (each = a settlement). Empty if no perp."""
+    q = urllib.parse.urlencode({"symbol": symbol, "startTime": start_ms, "limit": limit})
+    try:
+        rows = http(f"{_FUNDING}?{q}")
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 404):       # no such perp
+            return []
+        raise
+    return rows if isinstance(rows, list) else []
+
+
+def cumulative_funding(rates) -> float:
+    """Funding return to a constant SHORT over a window. Binance convention: fundingRate > 0 means
+    longs pay shorts, so a short RECEIVES it → short's funding return = +sum(rate). Positive = the
+    short is paid to hold; negative = the short pays. The whole question for the fade thesis."""
+    return float(sum(float(r) for r in rates))
 
 
 def listing_metrics(closes) -> dict:

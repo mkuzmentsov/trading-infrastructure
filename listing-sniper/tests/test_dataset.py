@@ -2,7 +2,7 @@
 
 import math
 
-from listing_sniper.dataset import binance_klines, listing_metrics
+from listing_sniper.dataset import binance_klines, cumulative_funding, listing_metrics
 
 
 def _ramp(a, b, n):
@@ -40,6 +40,12 @@ def test_horizons_nan_when_series_too_short():
     m = listing_metrics(_ramp(1.0, 1.1, 30))   # only 30 bars -> 1h/4h/24h are NaN
     assert not math.isnan(m["ret_5m"]) and not math.isnan(m["ret_15m"])
     assert math.isnan(m["ret_1h"]) and math.isnan(m["ret_24h"])
+
+
+def test_cumulative_funding_short_convention():
+    # short receives positive funding, pays negative -> net = sum
+    assert math.isclose(cumulative_funding(["0.01", "-0.005", "0.02"]), 0.025, abs_tol=1e-12)
+    assert cumulative_funding([]) == 0.0
 
 
 def test_binance_klines_uses_injected_http():

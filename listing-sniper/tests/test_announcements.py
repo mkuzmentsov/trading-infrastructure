@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 from listing_sniper.announcements import (
     AnnouncementWatcher,
     fetch_articles,
+    new_spot_listings,
     parse_listing,
     parse_open_time,
 )
@@ -96,6 +97,25 @@ def test_watcher_dedups_across_polls():
     feed.insert(0, _art(12, "Binance Will List Ccc (CCC)"))  # a newer one appears
     fresh = w.poll()
     assert [l.tickers[0] for l in fresh] == ["CCC"]
+
+
+def test_new_spot_listings_filters_to_will_list_single_ticker():
+    page = {1: [
+        _art(1, "Binance Will List Foo (FOO) with Seed Tag"),          # keep
+        _art(2, "Binance Futures Will Launch USDⓈ-Margined FOO Perpetual"),  # drop (perp)
+        _art(3, "Binance Will Add Bar (BAR) on Earn"),                  # drop (not 'will list')
+        _art(4, "Binance Will List Multi (AAA) and (BBB)"),            # drop (2 tickers)
+        _art(5, "Binance Will List Foo (FOO) again"),                  # drop (dup ticker)
+        _art(6, "Binance Will List Baz (BAZ)"),                         # keep
+    ]}
+
+    def fake_http(url):
+        import re
+        p = int(re.search(r"pageNo=(\d+)", url).group(1))
+        return {"data": {"articles": page.get(p, [])}}
+
+    out = new_spot_listings(pages=1, http=fake_http)
+    assert [l.tickers[0] for l in out] == ["FOO", "BAZ"]
 
 
 def test_watcher_preloaded_seen_suppresses():

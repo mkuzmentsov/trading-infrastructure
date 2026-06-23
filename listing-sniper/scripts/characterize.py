@@ -15,27 +15,10 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from listing_sniper.announcements import fetch_articles, parse_listing
+from listing_sniper.announcements import new_spot_listings
 from listing_sniper.dataset import first_day_closes, listing_metrics
 
 _QUOTES = ("USDT", "FDUSD", "USDC")
-
-
-def genuine_spot_listings(pages: int, page_size: int = 50) -> list:
-    """New spot listings only: 'Binance Will List …' with exactly one ticker (drops Earn/Margin/
-    JPY/bStocks/TradFi/notice noise)."""
-    out, seen = [], set()
-    for p in range(1, pages + 1):
-        for art in fetch_articles(48, page_size, p):
-            lst = parse_listing(art)
-            if "will list" not in lst.title.lower() or len(lst.tickers) != 1:
-                continue
-            t = lst.tickers[0]
-            if t in seen:
-                continue
-            seen.add(t)
-            out.append(lst)
-    return out
 
 
 def main() -> int:
@@ -44,7 +27,7 @@ def main() -> int:
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
-    listings = genuine_spot_listings(args.pages)
+    listings = new_spot_listings(args.pages)
     print(f"genuine 'Will List' spot listings found: {len(listings)}  "
           f"(announcement pages={args.pages})")
 
