@@ -33,9 +33,24 @@ class CoinState:
     # Per-coin leverage cap override; 0 = fall back to cfg.max_leverage.
     # Useful for high-vol alts where you want a tighter cap than majors.
     max_leverage_override: float = 0.0
+    # Kraken Earn FLEX APY earned on the long-spot leg (0 if disabled / no flex
+    # strategy for this coin). The spot hedge sits idle otherwise, so this stacks
+    # on top of the funding carry with no extra directional risk.
+    flex_earn_apy: float = 0.0
+    # Rotation: main.py sets this when a much-better candidate is waiting and the
+    # slots are full — close this leg to free its capital. (Decision + hysteresis
+    # live in main.py; here we just emit the close.)
+    rotate_out: bool = False
     @property
     def spot_notional(self) -> float:
         return self.spot_coins * self.mark_px
+    @property
+    def effective_apr(self) -> float:
+        """Total delta-neutral yield used for SELECTION ranking: the funding carry
+        plus the flex-earn APY on the spot we have to hold anyway. Note the open/
+        exit *gates* still key off funding alone (carry discipline — earn is a bonus,
+        not a reason to hold a perp short that's bleeding funding)."""
+        return self.smoothed_funding_apr + self.flex_earn_apy
     @property
     def has_perp(self) -> bool:
         return self.perp_size != 0.0
@@ -113,6 +128,14 @@ def decide(st: CoinState, cfg: Cfg) -> list[dict]:
 
     if st.regime_exited:
         return acts  # stay flat until re-entry
+
+    # 2b. rotation: a much-better coin is waiting and capital is capped — close
+    # this leg to free it for the better one (main.py applies the margin + min-hold
+    # hysteresis before setting rotate_out; off by default).
+    if st.rotate_out and (st.has_perp or st.spot_notional > cfg.min_notional_to_act):
+        acts.append({"kind": "close_pair", "coin": st.coin,
+                     "why": "rotate-out: a candidate beats this leg's effective APR by >= rotate margin"})
+        return acts
 
     # 3. deleverage / emergency on margin stress
     if st.has_perp:

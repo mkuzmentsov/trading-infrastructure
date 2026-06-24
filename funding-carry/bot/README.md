@@ -14,6 +14,18 @@ drawdown in the 2025–26 regime. So the bot just opens the basket and holds, wi
   fills/rounding/deleverage).
 - **kill switch** — `max_consecutive_errors` failed loops in a row → attempt to
   flatten everything.
+- **rotation** (`rotate_enabled`, default off) — with `select_top_n` set, hold the
+  N best (funding+earn) coins; once full, switch out of the weakest *mature* held
+  leg when a candidate beats it by ≥ `rotate_margin_apr` ("much higher"). Min-hold +
+  re-entry cooldown (`rotate_min_hold_hours`) prevent churn. Default off — naive
+  rotation lost to always-hold in the v1 backtest, so it only fires on a large edge.
+- **Kraken Earn stacking** (`earn_enabled`, default off) — the long-spot hedge
+  otherwise sits idle, so when enabled the bot sweeps it into Kraken Earn **FLEX**
+  (instant-unstake) strategies for staking APY on top of the funding, and
+  deallocates just-in-time before any spot sell. Flex-only so the hedge stays
+  exit-able. Selection then ranks coins on **funding + flex-earn** APR (e.g. AVAX:
+  ~11% funding + ~10% earn). Validate the live APYs/asset-codes first with
+  `python3 ../kraken_earn_probe.py --config config.yaml`, then flip it on.
 
 Kraken Pro spot fees are covered by your KFEE credit; the HL leg pays ~1 bp maker
 (carry isn't latency-sensitive). Run `leverage: 2.0` — margin = 50% of notional,

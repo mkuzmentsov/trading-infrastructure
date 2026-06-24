@@ -297,6 +297,33 @@ def execute(act: dict, *, hl: HyperliquidPerp, kr: KrakenSpot, mids: dict, state
     log.error("unknown action kind: %s", kind)
 
 
+def sweep_earn(kr: KrakenSpot, coins: list[str]) -> None:
+    """Park idle long-spot into Kraken Earn FLEX so the hedge leg earns staking
+    APY instead of sitting passive. Allocates up to (1 - earn_min_wallet_frac) of
+    each coin's holding, leaving a small wallet buffer so routine rebalances don't
+    need a deallocation round-trip. Deallocation is handled just-in-time by
+    KrakenSpot.sell(). Best-effort: a failure on one coin is logged and skipped."""
+    if not kr.earn_enabled:
+        return
+    for c in coins:
+        try:
+            if kr.flex_apy(c) <= 0:   # no instant strategy for this coin
+                continue
+            total = kr.balance(c)     # wallet + already-allocated
+            if total <= 0:
+                continue
+            keep = total * kr.earn_min_wallet_frac
+            wallet = kr.wallet_balance(c)
+            allocatable = wallet - keep
+            target_gap = total * (1.0 - kr.earn_min_wallet_frac) - kr.earn_allocated(c)
+            amt = min(allocatable, target_gap)
+            if amt <= 0:
+                continue
+            kr.allocate(c, amt)
+        except Exception as e:  # noqa: BLE001
+            log.warning("earn sweep %s failed: %s", c, e)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.getenv("FC_CONFIG", "config.yaml"))
@@ -319,7 +346,10 @@ def main() -> int:
                          vault_address=hl_cfg.get("vault_address", ""),
                          dry_run=dry)
     kr = KrakenSpot(kr_cfg.get("api_key", ""), kr_cfg.get("api_secret", ""),
-                    quote=kr_cfg.get("quote", "USD"), dry_run=dry)
+                    quote=kr_cfg.get("quote", "USD"), dry_run=dry,
+                    earn_enabled=bool(cfg.get("earn_enabled", False)),
+                    earn_flex_only=bool(cfg.get("earn_flex_only", True)),
+                    earn_min_wallet_frac=float(cfg.get("earn_min_wallet_frac", 0.05)))
 
     sizing_mode = str(cfg.get("sizing_mode", "fixed")).lower()
     if sizing_mode not in ("fixed", "auto"):
@@ -330,6 +360,13 @@ def main() -> int:
     # open positions always stay selected (no churn-style rotation — that's
     # what the v1 backtest's threshold sweeps showed loses to always-hold).
     select_top_n = int(cfg.get("select_top_n", 0))
+    # Rotation (opt-in): once the N slots are full, switch out of the weakest held
+    # leg into a candidate whose effective APR (funding + flex earn) is MUCH higher.
+    # Off by default — the v1 backtest showed naive churn loses to always-hold, so
+    # this only fires on a large, sustained edge with a min-hold + re-entry cooldown.
+    rotate_enabled = bool(cfg.get("rotate_enabled", False))
+    rotate_margin_apr = float(cfg.get("rotate_margin_apr", 0.10))      # "much higher" gate
+    rotate_min_hold_hours = float(cfg.get("rotate_min_hold_hours", 24.0))
 
     scfg = Cfg(
         leverage=float(cfg.get("leverage", 2.0)),
@@ -362,9 +399,19 @@ def main() -> int:
               f"spot_buffer=${spot_buffer_usd:.0f} weights={weights}") if sizing_mode == "auto"
              else f" leverage={scfg.leverage}x notionals={targets}")
     log.info("kraken quote=%s (spot pairs trade as COIN/%s)", kr.quote, kr.quote)
+    if kr.earn_enabled:
+        log.info("kraken EARN enabled (flex_only=%s, keep %.0f%% in wallet) — long-spot legs "
+                 "earn staking APY; selection ranks on funding+earn",
+                 kr.earn_flex_only, kr.earn_min_wallet_frac * 100)
+    else:
+        log.info("kraken Earn disabled (set earn_enabled: true to stack staking yield on the spot leg)")
     if select_top_n > 0:
         log.info("select_top_n=%d (sticky: hold opens, refill empty slots from APR leaderboard)",
                  select_top_n)
+        if rotate_enabled:
+            log.info("rotation ENABLED: switch out of the weakest held leg when a candidate beats "
+                     "it by >= %.1fpp effective APR (min-hold %.0fh, same cooldown before re-entry)",
+                     rotate_margin_apr * 100, rotate_min_hold_hours)
 
     # In 'fixed' mode the leverage setting is static, so do it once at startup.
     # In 'auto' it's computed per-open and applied by execute() right before
@@ -376,6 +423,12 @@ def main() -> int:
             except Exception as e:  # noqa: BLE001
                 log.warning("set_leverage %s: %s", c, e)
 
+    # Manual pause flag (set by control.py from inside the pod). Lives on the
+    # EPHEMERAL container fs by default, NOT the state PVC, so it does NOT persist
+    # across pod restarts / redeploys — a fresh deploy always starts trading.
+    pause_file = os.getenv("FC_PAUSE_FILE", "/tmp/fc_pause")
+    log.info("pause flag: %s (present => trading disabled; cleared on redeploy)", pause_file)
+
     loop_s = int(cfg.get("loop_seconds", 60))
     max_errs = int(cfg.get("max_consecutive_errors", 10))
     basis_alert = float(cfg.get("max_basis_alert_bps", 50)) / 1e4
@@ -384,6 +437,9 @@ def main() -> int:
     while True:
         t0 = time.time()
         try:
+            paused = os.path.exists(pause_file)
+            if paused:
+                log.warning("PAUSED (%s present) — trading disabled; monitoring only", pause_file)
             fw.refresh(coins)
             mids = md.mids()
             funding_now = md.funding()
@@ -391,13 +447,19 @@ def main() -> int:
             acct_val = hl.account_value()
             kr_usd = kr.usd_balance()
 
-            # Pre-compute smoothed funding for every coin (needed by both the
-            # selection ranker and the per-coin processing below).
+            # Pre-compute smoothed funding + flex-earn APY for every coin. The
+            # selection ranker scores on EFFECTIVE apr (funding carry + the flex
+            # earn we collect on the spot leg we'd hold anyway), so a coin with
+            # modest funding but rich Earn can out-rank a bare-funding major.
             smoothed_aprs: dict[str, float] = {}
+            flex_aprs: dict[str, float] = {}
+            effective_aprs: dict[str, float] = {}
             for c in coins:
                 fh_c = float(funding_now.get(c, 0.0))
                 sm_c, _ = fw.stats(c, fh_c)
                 smoothed_aprs[c] = sm_c
+                flex_aprs[c] = kr.flex_apy(c)
+                effective_aprs[c] = sm_c + flex_aprs[c]
 
             # Sticky top-N selection: coins with an open position stay in the
             # set; empty slots are filled by the highest-APR coins that aren't
@@ -406,11 +468,54 @@ def main() -> int:
                             if (p := perp_pos.get(c)) is not None and p.size != 0.0}
             regime_off = {c for c in coins
                           if bool(state.get("regime_exited", {}).get(c, False))}
+
+            # Rotation bookkeeping (kept in fc_state.json so it survives restarts):
+            #  - opened_at: first time we saw each position, for the min-hold guard.
+            #  - rotate_cooldown: a coin we just rotated OUT of, blocked from being
+            #    re-picked for rotate_min_hold_hours (kills A->B->A churn).
+            now = time.time()
+            min_hold_s = rotate_min_hold_hours * 3600
+            opened_at = state.setdefault("opened_at", {})
+            for c in has_position:
+                opened_at.setdefault(c, now)
+            for c in list(opened_at):
+                if c not in has_position:
+                    opened_at.pop(c, None)
+            cooldown = state.setdefault("rotate_cooldown", {})
+            for c in list(cooldown):
+                if now - cooldown[c] >= min_hold_s:
+                    cooldown.pop(c, None)
+
+            rotate_out_coins: set[str] = set()
             if select_top_n > 0:
-                eligible = [c for c in coins if c not in has_position and c not in regime_off]
-                eligible.sort(key=lambda c: smoothed_aprs.get(c, -1.0), reverse=True)
-                new_picks = eligible[: max(0, select_top_n - len(has_position))]
+                eligible = [c for c in coins
+                            if c not in has_position and c not in regime_off
+                            and not (c in cooldown and now - cooldown[c] < min_hold_s)]
+                eligible.sort(key=lambda c: effective_aprs.get(c, -1.0), reverse=True)
+                free_slots = max(0, select_top_n - len(has_position))
+                new_picks = eligible[:free_slots]
                 selected = has_position | set(new_picks)
+
+                # Rotation: when full, if the best OPENABLE candidate (funding>0 so
+                # it can actually open) beats the weakest MATURE held leg by >=
+                # rotate_margin_apr in effective APR, close that leg. Its capital
+                # frees and the candidate opens next loop once it settles.
+                if rotate_enabled and free_slots == 0:
+                    openable = [c for c in eligible if funding_now.get(c, 0.0) > 0]
+                    mature = [c for c in has_position
+                              if now - opened_at.get(c, now) >= min_hold_s]
+                    if openable and mature:
+                        best_c = openable[0]
+                        worst = min(mature, key=lambda c: effective_aprs.get(c, 0.0))
+                        gain = effective_aprs.get(best_c, 0.0) - effective_aprs.get(worst, 0.0)
+                        if gain >= rotate_margin_apr:
+                            rotate_out_coins.add(worst)
+                            cooldown[worst] = now
+                            log.info("ROTATE %s -> %s: effective APR %.1f%% -> %.1f%% "
+                                     "(+%.1fpp >= margin %.1fpp) — closing %s to free its slot",
+                                     worst, best_c, effective_aprs.get(worst, 0.0) * 100,
+                                     effective_aprs.get(best_c, 0.0) * 100, gain * 100,
+                                     rotate_margin_apr * 100, worst)
             else:
                 selected = set(coins) - regime_off  # legacy: all non-exited
 
@@ -425,6 +530,7 @@ def main() -> int:
                         for c in coins}
 
             snap = {"ts": int(t0),
+                    "paused": paused,
                     "hl_account_value": round(acct_val, 2),
                     "kr_quote_balance": round(kr_usd, 2),
                     "kr_quote": kr.quote,
@@ -447,13 +553,15 @@ def main() -> int:
                     kr_usd_slice=kr_slice[c],
                     hl_margin_slice=hl_slice[c],
                     max_leverage_override=max_lev_override[c],
+                    flex_earn_apy=flex_aprs[c],
+                    rotate_out=(c in rotate_out_coins),
                 )
                 # NOTE: a precise perp/spot basis ("premium") would come from
                 # meta_and_asset_ctxs (markPx vs oraclePx); for v1 we skip the
                 # basis alert and rely on the close-only-on-your-terms discipline.
                 # Non-selected coins (top-N watchlist losers, this loop) get
                 # observed-only — no actions, just a STATE entry for visibility.
-                if c in selected:
+                if c in selected and not paused:
                     acts = decide(cs, scfg)
                     for a in acts:
                         if a["kind"] == "close_pair":
@@ -467,14 +575,22 @@ def main() -> int:
                 snap["coins"][c] = {
                     "px": px, "funding_hr_bps": round(fh * 1e4, 3),
                     "funding_apr": round(sm_apr, 4), "below_exit_h": below_h,
+                    "flex_earn_apr": round(flex_aprs[c], 4),
+                    "effective_apr": round(effective_aprs[c], 4),
+                    "earn_allocated": round(kr.earn_allocated(c), 6) if kr.earn_enabled else 0.0,
                     "perp_notional": round(cs.perp_notional, 1),
                     "spot_notional": round(cs.spot_notional, 1),
                     "delta": round(cs.spot_notional - cs.perp_notional, 1),
                     "liq_room": round(cs.liq_room_frac, 3),
                     "regime_exited": cs.regime_exited,
                     "selected": c in selected,
+                    "rotate_out": c in rotate_out_coins,
                     "n_actions": len(acts),
                 }
+            # Park idle long-spot into Earn FLEX (no-op unless earn_enabled). Done
+            # after the action pass so any just-bought hedge gets swept this loop.
+            if not paused:
+                sweep_earn(kr, list(selected))
             save_state(state_path, state)
             log.info("STATE %s", json.dumps(snap))
             consec_err = 0

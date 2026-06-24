@@ -31,6 +31,18 @@ assets:
   #   weight: 0.5
 
 leverage: 2.0            # used in sizing_mode: fixed; ignored in auto
+
+# Selection + rotation (needs select_top_n > 0).
+# select_top_n: hold the N highest-(funding+earn) coins. Sticky by default: an
+#   open leg stays held; empty slots refill from the leaderboard.
+# rotation: once the N slots are full, switch OUT of the weakest held leg into a
+#   candidate whose effective APR (funding + flex earn) is MUCH higher. Off by
+#   default — naive churn lost to always-hold in the v1 backtest, so this only
+#   fires on a large, mature edge and won't re-enter a just-rotated coin too soon.
+select_top_n: 1                 # 0 = open every listed asset; 1 = hold the single best match
+rotate_enabled: false           # master switch for switching to a better match
+rotate_margin_apr: 0.10         # only switch if the candidate beats the held leg by >= this (10pp = "much higher")
+rotate_min_hold_hours: 24       # don't rotate a leg younger than this; also the re-entry cooldown after rotating out
 # Liquidation-room thresholds, both expressed as (liq_px - mark_px) / mark_px for
 # the HL short. Larger = safer; smaller = stressed. At L=2 a fresh position has
 # ~50% liq-room, so 0.15 leaves a lot of head-room before any action fires.
@@ -46,6 +58,20 @@ funding_smooth_hours: 24
 funding_exit_apr: 0.0           # close if smoothed annualized funding <= this for...
 funding_exit_persist_hours: 48  # ...this many hours
 funding_reentry_apr: 0.03       # re-open when smoothed annualized funding >= this
+
+# --- Kraken Earn (optional yield on the idle long-spot hedge) ---
+# The Kraken spot you hold to hedge the short sits passive. When enabled, the bot
+# sweeps that spot into Kraken Earn FLEX (instant-unstake) strategies to collect
+# staking APY on top of the HL funding, and deallocates just-in-time before any
+# spot sell (rebalance / deleverage / close / kill-switch). Flex-only by design so
+# the hedge stays exit-able — bonded products lock for days and would strand a leg.
+# Sticky top-N selection then ranks coins by (smoothed funding APR + flex earn APR).
+# VALIDATE FIRST: run `python3 kraken_earn_probe.py --config config.yaml` with your
+# keys to confirm the live strategies/APYs and asset-code mapping, THEN flip this on.
+earn_enabled: false        # master switch (default off — back-compat: balance()/sell() behave as before)
+earn_flex_only: true       # only use instant-unstake strategies (keep the hedge liquid)
+earn_min_wallet_frac: 0.05 # keep this fraction of each coin's spot un-allocated in the wallet
+                           # so small rebalances don't trigger a deallocation round-trip
 
 # Kill switch
 max_consecutive_errors: 10      # this many failed loops in a row -> attempt to flatten everything & alert
