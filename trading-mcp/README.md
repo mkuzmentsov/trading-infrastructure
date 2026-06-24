@@ -53,9 +53,9 @@ It binds to `127.0.0.1:8765` (loopback only — not reachable from the LAN). On 
 
 ```
 INFO trading-mcp: Registered 39 tools from trading_mcp.exchanges.binance
-INFO trading-mcp: Registered 12 tools from trading_mcp.exchanges.kraken
-INFO trading-mcp: Registered 18 tools from trading_mcp.exchanges.hyperliquid
-INFO trading-mcp: Registered 15 tools from trading_mcp.exchanges.whitebit
+INFO trading-mcp: Registered 17 tools from trading_mcp.exchanges.kraken
+INFO trading-mcp: Registered 19 tools from trading_mcp.exchanges.hyperliquid
+INFO trading-mcp: Registered 18 tools from trading_mcp.exchanges.whitebit
 INFO trading-mcp: Registered 13 tools from trading_mcp.exchanges.aggregator
 ```
 
@@ -107,15 +107,17 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Promotions:** `binance_list_promotions`
 
-### Kraken (12)
+### Kraken (17)
 
 **Balances:** `kraken_get_balances`, `kraken_get_balances_ex`
 
 **Spot trading:** `kraken_place_spot_order` (limit/market; `validate=True` = Kraken-side dry-run), `kraken_cancel_order`, `kraken_get_open_orders`
 
+**Funding (deposit/withdraw):** `kraken_get_deposit_methods`, `kraken_get_deposit_address`, `kraken_get_withdraw_addresses`, `kraken_withdraw` (`confirm=False` = WithdrawInfo preview; whitelisted-`key` only), `kraken_get_withdraw_status`
+
 **Earn:** `kraken_list_earn_strategies`, `kraken_list_earn_allocations`, `kraken_get_earn_allocation_status`, `kraken_get_earn_deallocate_status`, `kraken_earn_allocate`, `kraken_earn_deallocate`, `kraken_find_best_earn_rates`
 
-### Hyperliquid (18)
+### Hyperliquid (19)
 
 **Market data:** `hyperliquid_get_meta`, `hyperliquid_get_spot_meta`, `hyperliquid_get_all_mids`, `hyperliquid_get_funding_rates`, `hyperliquid_get_funding_history`
 
@@ -123,17 +125,19 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Trading:** `hyperliquid_place_perp_order`, `hyperliquid_market_close_position`, `hyperliquid_cancel_perp_order`, `hyperliquid_set_leverage`
 
-**Transfers:** `hyperliquid_bridge_usdc`, `hyperliquid_vault_transfer` (dry-run unless `confirm=True`), `hyperliquid_withdraw_usdc` (dry-run unless `confirm=True`)
+**Transfers:** `hyperliquid_bridge_usdc`, `hyperliquid_vault_transfer` (dry-run unless `confirm=True`), `hyperliquid_withdraw_usdc` (dry-run unless `confirm=True`), `hyperliquid_get_deposit_info` (CEX→HL caveat: deposits credit the sender, so route via your own Arbitrum wallet)
 
 **Discovery:** `hyperliquid_find_best_funding_rates`
 
 > HLP vault address is hard-coded as the default for `hyperliquid_vault_transfer`. HLP has a **4-day unlock period** from the most recent deposit — verify before subscribing.
 
-### WhiteBIT (15)
+### WhiteBIT (18)
 
 **Balances:** `whitebit_get_main_balance`, `whitebit_get_trade_balance`, `whitebit_get_collateral_balance`
 
 **Spot trading:** `whitebit_place_limit_order`, `whitebit_place_market_order`, `whitebit_cancel_order`, `whitebit_get_active_orders`
+
+**Funding (deposit/withdraw/transfer):** `whitebit_get_deposit_address`, `whitebit_withdraw` (dry-run unless `confirm=True`), `whitebit_transfer` (internal main↔spot↔collateral)
 
 **Crypto Lending (Smart-Flex earn):** `whitebit_list_lending_plans`, `whitebit_get_lending_investments`, `whitebit_lending_invest`, `whitebit_lending_withdraw`, `whitebit_lending_close`, `whitebit_get_lending_payment_history`
 

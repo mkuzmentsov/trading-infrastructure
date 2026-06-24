@@ -22,6 +22,7 @@ import hmac
 import json
 import os
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -246,6 +247,71 @@ def register(mcp: FastMCP) -> int:
             "/api/v4/main-account/smart-flex/investments/payment-history", params
         )
 
+    # ----- Funding: deposit / withdraw / internal transfer --------------
+
+    @mcp.tool()
+    def whitebit_get_deposit_address(ticker: str, network: str | None = None) -> Any:
+        """WhiteBIT deposit address for `ticker` (e.g. "USDT"). `network` is
+        required for multi-network assets (e.g. "ARBITRUM", "ERC20", "TRC20").
+        Give this address to the SENDING venue to move funds INTO WhiteBIT."""
+        params: dict[str, Any] = {"ticker": ticker.upper()}
+        if network:
+            params["network"] = network
+        return _private("/api/v4/main-account/address", params)
+
+    @mcp.tool()
+    def whitebit_withdraw(
+        ticker: str,
+        amount: float,
+        address: str,
+        network: str | None = None,
+        memo: str | None = None,
+        unique_id: str | None = None,
+        confirm: bool = False,
+    ) -> Any:
+        """Withdraw crypto from WhiteBIT (main balance) to `address`.
+
+        amount must INCLUDE the network fee. `network` is required for
+        multi-network assets (USDT defaults to ERC20). `memo` only for memoable
+        coins. `unique_id` is auto-generated if omitted.
+
+        Safety: confirm=False (default) returns the intended params WITHOUT
+        sending. Set confirm=True to actually submit."""
+        params: dict[str, Any] = {
+            "ticker": ticker.upper(),
+            "amount": str(amount),
+            "address": address,
+            "unique_id": unique_id or uuid.uuid4().hex,
+        }
+        if network:
+            params["network"] = network
+        if memo:
+            params["memo"] = memo
+        if not confirm:
+            return {
+                "dry_run": True,
+                "would_withdraw": params,
+                "warning": "Set confirm=True to submit. amount must include the network fee.",
+            }
+        return _private("/api/v4/main-account/withdraw", params)
+
+    @mcp.tool()
+    def whitebit_transfer(
+        ticker: str, amount: float, from_account: str, to_account: str
+    ) -> Any:
+        """Move funds between WhiteBIT balances. from_account/to_account ∈
+        {"main", "spot", "collateral"}. Trading uses "spot"; Crypto Lending uses
+        "main" — so fund lending/withdrawals on main, and spot orders on spot."""
+        return _private(
+            "/api/v4/main-account/transfer",
+            {
+                "ticker": ticker.upper(),
+                "amount": str(amount),
+                "from": from_account.lower(),
+                "to": to_account.lower(),
+            },
+        )
+
     @mcp.tool()
     def whitebit_smart_staking_info() -> dict[str, Any]:
         """WhiteBIT **Smart Staking** (the staking product) has no REST API as of
@@ -265,4 +331,4 @@ def register(mcp: FastMCP) -> int:
             ],
         }
 
-    return 15
+    return 18

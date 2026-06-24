@@ -393,6 +393,25 @@ def register(mcp: FastMCP) -> int:
             }
         return _exchange().send_usd(destination, amount)
 
+    @mcp.tool()
+    def hyperliquid_get_deposit_info() -> dict[str, Any]:
+        """How to deposit USDC INTO Hyperliquid (for moving capital from another
+        venue). HL is non-custodial: USDC (Arbitrum) is sent to the bridge, which
+        credits the SENDING wallet's HL account. So you CANNOT deposit straight
+        from a CEX (Kraken/WhiteBIT) — the exchange's hot wallet would be credited,
+        not you. Route: withdraw from the CEX to YOUR OWN Arbitrum wallet, then send
+        from that wallet to the bridge. HL -> CEX works directly via
+        hyperliquid_withdraw_usdc."""
+        return {
+            "asset": "USDC",
+            "network": "Arbitrum One",
+            "bridge_address": "0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7",
+            "min_deposit_usdc": 5,
+            "credits": "the sending wallet's HL account",
+            "cex_deposit_supported": False,
+            "note": "Withdraw CEX -> your own Arbitrum wallet -> HL bridge.",
+        }
+
     # ----- Discovery helpers --------------------------------------------
 
     @mcp.tool()
@@ -423,4 +442,4 @@ def register(mcp: FastMCP) -> int:
         rows.sort(key=lambda r: r["hourly"], reverse=(side.lower() == "short"))
         return {"side": side.lower(), "top": rows[:top_n]}
 
-    return 18
+    return 19

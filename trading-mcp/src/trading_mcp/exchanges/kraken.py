@@ -174,6 +174,63 @@ def register(mcp: FastMCP) -> int:
         """All open Kraken spot orders (keyed by txid)."""
         return _private("/0/private/OpenOrders")
 
+    # ----- Funding: deposit / withdraw (cross-venue transfers) ----------
+
+    @mcp.tool()
+    def kraken_get_deposit_methods(asset: str) -> dict[str, Any]:
+        """Deposit methods (networks + fees) for an asset, e.g. "USDC", "USDT"."""
+        return _private("/0/private/DepositMethods", {"asset": asset.upper()})
+
+    @mcp.tool()
+    def kraken_get_deposit_address(
+        asset: str, method: str, new: bool = False
+    ) -> dict[str, Any]:
+        """Kraken deposit address for asset+method (method from
+        kraken_get_deposit_methods, e.g. "USDC (Arbitrum One)"). Give this address
+        to the SENDING venue to move funds INTO Kraken. new=True forces a fresh one."""
+        params: dict[str, Any] = {"asset": asset.upper(), "method": method}
+        if new:
+            params["new"] = True
+        return _private("/0/private/DepositAddresses", params)
+
+    @mcp.tool()
+    def kraken_get_withdraw_addresses(asset: str | None = None) -> dict[str, Any]:
+        """List Kraken's pre-whitelisted withdrawal addresses. The `key` (the
+        description you set in the UI) is what kraken_withdraw requires — Kraken
+        only withdraws to addresses whitelisted there."""
+        params: dict[str, Any] = {}
+        if asset:
+            params["asset"] = asset.upper()
+        return _private("/0/private/WithdrawAddresses", params)
+
+    @mcp.tool()
+    def kraken_withdraw(
+        asset: str, key: str, amount: float, confirm: bool = False
+    ) -> dict[str, Any]:
+        """Withdraw `amount` of `asset` to a PRE-WHITELISTED address named `key`
+        (its description in the Kraken UI; list via kraken_get_withdraw_addresses).
+
+        Safety: confirm=False (default) returns a WithdrawInfo fee/limit PREVIEW
+        without sending. Set confirm=True to actually submit. Kraken refuses
+        withdrawals to addresses not whitelisted in the UI."""
+        params = {"asset": asset.upper(), "key": key, "amount": str(amount)}
+        if not confirm:
+            preview = _private("/0/private/WithdrawInfo", params)
+            return {
+                "dry_run": True,
+                "preview": preview,
+                "warning": "Set confirm=True to actually submit this withdrawal.",
+            }
+        return _private("/0/private/Withdraw", params)
+
+    @mcp.tool()
+    def kraken_get_withdraw_status(asset: str | None = None) -> dict[str, Any]:
+        """Recent Kraken withdrawal statuses — use to confirm a transfer left."""
+        params: dict[str, Any] = {}
+        if asset:
+            params["asset"] = asset.upper()
+        return _private("/0/private/WithdrawStatus", params)
+
     # ----- Earn (allocate / deallocate) ---------------------------------
 
     @mcp.tool()
@@ -233,4 +290,4 @@ def register(mcp: FastMCP) -> int:
             ],
         }
 
-    return 12
+    return 17
