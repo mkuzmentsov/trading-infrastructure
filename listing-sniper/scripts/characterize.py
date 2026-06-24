@@ -1,78 +1,58 @@
-"""Phase-1 characterization (the GO/NO-GO): is the new-listing 'pump then bleed' real, and how big?
+"""Characterize the listing dataset (reads the parquet from build_dataset.py — no network).
 
-Backfills genuine new SPOT listings from the announcement feed, pulls each one's first trading day
-of 1m closes from Binance (first kline = the open), computes per-listing metrics, and prints the
-distribution. Survivorship-biased toward survivors (delisted dumpers are gone) — an UPPER bound.
+The headline split: GENUINELY-NEW listings (spot+perp within ~1h = real price discovery) vs
+CONTINUATIONS (perp already traded days earlier). The naive 'all listings' stats conflate them.
 
-Usage:  PYTHONPATH=src python3 scripts/characterize.py [--pages 6] [--out data/listings.parquet]
+Usage:  PYTHONPATH=src python3 scripts/characterize.py [--data data/listings.parquet]
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
 
 import pandas as pd
 
-from listing_sniper.announcements import new_spot_listings
-from listing_sniper.dataset import first_day_closes, listing_metrics
 
-_QUOTES = ("USDT", "FDUSD", "USDC")
+def _block(df: pd.DataFrame, label: str) -> None:
+    n = len(df)
+    if n == 0:
+        print(f"\n[{label}] (none)"); return
+    print(f"\n[{label}]  n={n}")
+    print(f"  spot: peak {df['spot_peak_ret'].median():+.0%} | ret@24h {df['spot_ret_24h'].median():+.1%} | "
+          f"red@24h {(df['spot_ret_24h'] < 0).mean():.0%} | dumped-from-open {df['spot_dumped_from_open'].mean():.0%}")
+    perp = df[df["has_perp"]]
+    if len(perp):
+        print(f"  perp: peak {perp['perp_peak_ret'].median():+.0%} | ret@24h {perp['perp_ret_24h'].median():+.1%} | "
+              f"red@24h {(perp['perp_ret_24h'] < 0).mean():.0%}")
+        print(f"  short funding/24h: median {perp['short_funding_24h'].median():+.2%} | "
+              f"pays-short {(perp['short_funding_24h'] > 0).mean():.0%} | worst {perp['short_funding_24h'].min():+.1%}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pages", type=int, default=6)
-    ap.add_argument("--out", default="")
+    ap.add_argument("--data", default="data/listings.parquet")
+    ap.add_argument("--new-lag-min", type=float, default=60.0, help="|lag| <= this = genuinely-new")
     args = ap.parse_args()
 
-    listings = new_spot_listings(args.pages)
-    print(f"genuine 'Will List' spot listings found: {len(listings)}  "
-          f"(announcement pages={args.pages})")
+    df = pd.read_parquet(args.data)
+    print(f"listings: {len(df)}  ({df['open_date'].min()} → {df['open_date'].max()})  "
+          f"with perp: {df['has_perp'].mean():.0%}")
 
-    rows = []
-    for lst in listings:
-        for q in _QUOTES:
-            open_ms, closes = first_day_closes(lst.tickers[0] + q, futures=False, minutes=1500)
-            if closes:
-                break
-        m = listing_metrics(closes)
-        if not m:
-            continue
-        m["ticker"] = lst.tickers[0]
-        m["pair"] = lst.tickers[0] + q
-        m["open_date"] = datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc).date().isoformat()
-        rows.append(m)
+    lag = df["lag_min"].abs()
+    new = df[df["has_perp"] & (lag <= args.new_lag_min)]
+    cont = df[df["has_perp"] & (lag > args.new_lag_min)]
+    _block(df, "ALL listings (conflated — don't trust this one)")
+    _block(new, f"GENUINELY-NEW (spot+perp within {args.new_lag_min:.0f}m)")
+    _block(cont, "CONTINUATION (perp predates spot)")
 
-    if not rows:
-        print("no klines resolved (symbols may be delisted/renamed)."); return 1
-    df = pd.DataFrame(rows).sort_values("open_date")
-    n = len(df)
-    print(f"resolved klines for {n}/{len(listings)} listings\n")
-
-    def med(c):
-        return df[c].median()
-
-    print("=== first-day pattern (medians across listings) ===")
-    print(f"  peak_ret           {med('peak_ret'):+.1%}   (median time-to-peak {med('time_to_peak_min'):.0f} min)")
-    print(f"  drawdown_from_peak {med('dd_from_peak'):+.1%}")
-    print(f"  ret @ 15m / 1h / 24h: {med('ret_15m'):+.1%} / {med('ret_1h'):+.1%} / {med('ret_24h'):+.1%}")
-    print(f"  end-of-day ret     {med('end_ret'):+.1%}")
-    print(f"  'dumped from open' rate: {df['dumped_from_open'].mean():.0%}")
-    print(f"  share red at 24h (ret_24h<0): {(df['ret_24h'] < 0).mean():.0%}")
-
-    print("\n=== sample (most recent 12) ===")
-    cols = ["open_date", "pair", "peak_ret", "time_to_peak_min", "ret_1h", "ret_24h", "dumped_from_open"]
-    with pd.option_context("display.max_rows", 20, "display.width", 140):
-        print(df[cols].tail(12).to_string(index=False,
-              formatters={"peak_ret": "{:+.0%}".format, "ret_1h": "{:+.0%}".format,
-                          "ret_24h": "{:+.0%}".format}))
-
-    if args.out:
-        df.to_parquet(args.out)
-        print(f"\nsaved -> {args.out}")
-    print("\n⚠ survivorship-biased (delisted dumpers excluded) -> treat as an upper bound. PLAN.md §4.")
+    print("\n=== genuinely-new sample ===")
+    cols = ["open_date", "pair", "lag_min", "perp_peak_ret", "perp_ret_24h", "short_funding_24h"]
+    with pd.option_context("display.width", 130):
+        print(new[cols].to_string(index=False, formatters={
+            "perp_peak_ret": "{:+.0%}".format, "perp_ret_24h": "{:+.0%}".format,
+            "short_funding_24h": "{:+.2%}".format, "lag_min": "{:.0f}".format}))
+    print("\n⚠ survivorship-biased (delisted dumpers gone). PLAN.md §4.")
     return 0
 
 

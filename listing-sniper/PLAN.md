@@ -246,6 +246,34 @@ squeeze tail (−10.8%). **Conclusion:** the only genuinely tradeable population
 **spot+perp list simultaneously (lag≈0 = truly new tokens)** — Phase 2 must filter to that subset and
 re-characterize, then size the short for the right tail. The naïve "short every listing" is not it.
 
+## 7d. VERDICT (Phase-1 GO/NO-GO) — the easy thesis is a mirage ⛔
+Full dataset (`scripts/build_dataset.py` → 132 'Will List' listings, 2020-2026; analysed by
+`characterize.py`), split by perp-vs-spot **lag** (our proxy for 'already priced'):
+
+| bucket | n | spot ret@24h | red@24h | perp red@24h | short funding/24h |
+|--------|---|--------------|---------|--------------|-------------------|
+| ALL (conflated) | 132 | −10% | 76% | 55% | +0.12% |
+| **GENUINELY-NEW** (spot+perp ≤60m) | **8** | **+1.7%** | **38%** | **50%** | **−0.56% (short PAYS)** |
+| CONTINUATION (perp predates spot) | 95 | −11.3% | 75% | 56% | +0.12% |
+
+**The headline "short the listing → 76% red" is ENTIRELY a CONTINUATION artifact** — tokens already
+trading as a perp for days, just gaining a spot market. That is not a listing trade; it's shorting an
+already-priced token (no edge from the listing, available any day).
+
+**For genuinely-new tokens** (the actual idea): median **+1.7%** @24h, only **38% red**, the perp a
+**coin flip (50%)**, the short **pays** funding (−0.56%, worst −10.8%), and a heavy moonshot tail
+(RE +80%, APE +59% @24h) that liquidates a short. There are only **~8 such listings in 6 years**
+(~1/yr) — even with an edge, the opportunity count is negligible. Add survivorship bias (delisted
+dumpers gone → if anything the genuinely-new short looks *better* than reality) and it's worse.
+
+**Recommendation: NO-GO on the executor as originally imagined** (short the new-listing dump). The
+data does not support it. Honest residual angles, all weak / small-sample, *not* worth building now:
+- first-**minutes** fade (we have 1m data; 24h horizon may hide a brief early fade) — but tiny-N + execution-bound;
+- **long**-momentum on genuinely-new (+33% median peak) — but ~1/yr and huge variance.
+
+What this exercise *did* deliver: a clean, tested data harness (announcement feed + dataset +
+characterization) that **answered the question for ~$0 and zero risk** — which is the whole point.
+
 ## 8. Suggested first concrete steps
 1. `announcement_watcher.py` — poll the CMS API, parse new listings (symbol, ts, spot/perp), persist
    + log. (Also doubles as the live feed for Phase 3.) **Cheap, high-value, do this first.**
