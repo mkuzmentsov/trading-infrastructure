@@ -53,9 +53,9 @@ It binds to `127.0.0.1:8765` (loopback only — not reachable from the LAN). On 
 
 ```
 INFO trading-mcp: Registered 39 tools from trading_mcp.exchanges.binance
-INFO trading-mcp: Registered 6 tools from trading_mcp.exchanges.kraken
+INFO trading-mcp: Registered 12 tools from trading_mcp.exchanges.kraken
 INFO trading-mcp: Registered 18 tools from trading_mcp.exchanges.hyperliquid
-INFO trading-mcp: Registered 5 tools from trading_mcp.exchanges.whitebit
+INFO trading-mcp: Registered 15 tools from trading_mcp.exchanges.whitebit
 INFO trading-mcp: Registered 13 tools from trading_mcp.exchanges.aggregator
 ```
 
@@ -107,11 +107,13 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Promotions:** `binance_list_promotions`
 
-### Kraken (6)
+### Kraken (12)
 
 **Balances:** `kraken_get_balances`, `kraken_get_balances_ex`
 
-**Earn:** `kraken_list_earn_strategies`, `kraken_list_earn_allocations`, `kraken_get_earn_allocation_status`, `kraken_find_best_earn_rates`
+**Spot trading:** `kraken_place_spot_order` (limit/market; `validate=True` = Kraken-side dry-run), `kraken_cancel_order`, `kraken_get_open_orders`
+
+**Earn:** `kraken_list_earn_strategies`, `kraken_list_earn_allocations`, `kraken_get_earn_allocation_status`, `kraken_get_earn_deallocate_status`, `kraken_earn_allocate`, `kraken_earn_deallocate`, `kraken_find_best_earn_rates`
 
 ### Hyperliquid (18)
 
@@ -127,13 +129,17 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 > HLP vault address is hard-coded as the default for `hyperliquid_vault_transfer`. HLP has a **4-day unlock period** from the most recent deposit — verify before subscribing.
 
-### WhiteBIT (5)
+### WhiteBIT (15)
 
 **Balances:** `whitebit_get_main_balance`, `whitebit_get_trade_balance`, `whitebit_get_collateral_balance`
 
+**Spot trading:** `whitebit_place_limit_order`, `whitebit_place_market_order`, `whitebit_cancel_order`, `whitebit_get_active_orders`
+
+**Crypto Lending (Smart-Flex earn):** `whitebit_list_lending_plans`, `whitebit_get_lending_investments`, `whitebit_lending_invest`, `whitebit_lending_withdraw`, `whitebit_lending_close`, `whitebit_get_lending_payment_history`
+
 **Fees:** `whitebit_get_fee_schedule`
 
-**Smart Staking:** `whitebit_smart_staking_info` (returns a link — no REST API exists)
+**Smart Staking:** `whitebit_smart_staking_info` (the staking product has no REST API — but Lending above does)
 
 ### Aggregator (13)
 

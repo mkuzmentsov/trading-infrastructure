@@ -1,8 +1,13 @@
-"""WhiteBIT exchange tools — balances + fee/market info.
+"""WhiteBIT exchange tools — spot trading + balances + fee/market info.
 
-Smart Staking is intentionally NOT exposed: WhiteBIT does not publish a REST
-API for it (all `*/smart-staking/*` paths return 404). The Smart Staking
-catalog must be browsed via the web UI at https://whitebit.com/staking.
+Spot trading uses the v4 trade account: orders need the API key's "Trade"
+permission and funds on the TRADE account (move from main with the WhiteBIT
+transfer endpoint / UI). Markets are named like "BTC_USDT".
+
+Crypto Lending (Smart-Flex earn) IS exposed: flexible-term lending on the main
+balance via `/api/v4/main-account/smart-flex/*` (list plans / invest / withdraw /
+close). The separate "Smart Staking" product still has no REST API (its
+`*/smart-staking/*` paths 404) — browse that one at https://whitebit.com/staking.
 
 Env vars:
     WHITEBIT_API_KEY
@@ -107,18 +112,157 @@ def register(mcp: FastMCP) -> int:
         Useful for figuring out cross-exchange transfer costs."""
         return _private("/api/v4/main-account/fee")
 
+    # ----- Spot trading (v4 trade account) ------------------------------
+
+    @mcp.tool()
+    def whitebit_place_limit_order(
+        market: str,
+        side: str,
+        amount: float,
+        price: float,
+        post_only: bool = False,
+        ioc: bool = False,
+        client_order_id: str | None = None,
+    ) -> Any:
+        """Place a WhiteBIT spot LIMIT order.
+
+        market: e.g. "BTC_USDT".  side: "buy" | "sell".
+        amount: size in the BASE asset.  price: limit price.
+        post_only: maker-only (rejected if it would take).  ioc: immediate-or-cancel.
+        """
+        params: dict[str, Any] = {
+            "market": market.upper(),
+            "side": side.lower(),
+            "amount": str(amount),
+            "price": str(price),
+        }
+        if post_only:
+            params["postOnly"] = True
+        if ioc:
+            params["ioc"] = True
+        if client_order_id:
+            params["clientOrderId"] = client_order_id
+        return _private("/api/v4/order/new", params)
+
+    @mcp.tool()
+    def whitebit_place_market_order(market: str, side: str, amount: float) -> Any:
+        """Place a WhiteBIT spot MARKET order by BASE-asset amount (stock_market).
+
+        market: e.g. "BTC_USDT".  side: "buy" | "sell".  amount: BASE asset size.
+        """
+        return _private(
+            "/api/v4/order/stock_market",
+            {"market": market.upper(), "side": side.lower(), "amount": str(amount)},
+        )
+
+    @mcp.tool()
+    def whitebit_cancel_order(market: str, order_id: int) -> Any:
+        """Cancel a WhiteBIT spot order by market + orderId."""
+        return _private(
+            "/api/v4/order/cancel", {"market": market.upper(), "orderId": order_id}
+        )
+
+    @mcp.tool()
+    def whitebit_get_active_orders(market: str, limit: int = 100) -> Any:
+        """Active (unfilled) WhiteBIT spot orders for a market (e.g. "BTC_USDT")."""
+        return _private(
+            "/api/v4/orders", {"market": market.upper(), "limit": min(max(limit, 1), 100)}
+        )
+
+    # ----- Crypto Lending (Smart-Flex earn) -----------------------------
+    # Flexible-term lending on the MAIN balance. Funds earn interest and can be
+    # withdrawn anytime (flex). Endpoints are signed; flex plans are open to all
+    # authenticated keys (the fixed-term `smart/` plans are B2B-only and not
+    # exposed here). A plan is identified by its `plan` UUID everywhere.
+
+    @mcp.tool()
+    def whitebit_list_lending_plans(
+        ticker: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Any:
+        """List WhiteBIT Crypto Lending (Smart-Flex) plans with their APR and
+        the `plan` UUID needed to invest. `ticker` filters by asset (e.g. "USDT")."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        return _private("/api/v4/main-account/smart-flex/plans", params)
+
+    @mcp.tool()
+    def whitebit_get_lending_investments(
+        ticker: str | None = None,
+        status: int | None = None,
+        plan: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
+        """Your WhiteBIT Crypto Lending positions. `status`: 1=ACTIVE, 0=CLOSED.
+        Filter by `ticker` or `plan` (UUID)."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        if status is not None:
+            params["investmentStatus"] = status
+        if plan:
+            params["plan"] = plan
+        return _private("/api/v4/main-account/smart-flex/investments", params)
+
+    @mcp.tool()
+    def whitebit_lending_invest(
+        plan: str, amount: float, with_reinvest: bool = False
+    ) -> Any:
+        """Invest (lend) `amount` into a WhiteBIT Smart-Flex plan by its `plan`
+        UUID (from whitebit_list_lending_plans). Funds come from the MAIN balance.
+        with_reinvest=True compounds interest automatically."""
+        params: dict[str, Any] = {"plan": plan, "amount": str(amount)}
+        if with_reinvest:
+            params["withReinvest"] = True
+        return _private("/api/v4/main-account/smart-flex/investments/invest", params)
+
+    @mcp.tool()
+    def whitebit_lending_withdraw(plan: str, amount: float) -> Any:
+        """Withdraw `amount` from a WhiteBIT Smart-Flex lending position (by `plan`
+        UUID) back to the main balance. Flex = available anytime."""
+        return _private(
+            "/api/v4/main-account/smart-flex/investments/withdraw",
+            {"plan": plan, "amount": str(amount)},
+        )
+
+    @mcp.tool()
+    def whitebit_lending_close(plan: str) -> Any:
+        """Fully close a WhiteBIT Smart-Flex lending position (by `plan` UUID) and
+        return all funds to the main balance."""
+        return _private(
+            "/api/v4/main-account/smart-flex/investments/close", {"plan": plan}
+        )
+
+    @mcp.tool()
+    def whitebit_get_lending_payment_history(
+        ticker: str | None = None, limit: int = 100, offset: int = 0
+    ) -> Any:
+        """Interest-payment history for WhiteBIT Crypto Lending (earnings accrued)."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if ticker:
+            params["ticker"] = ticker.upper()
+        return _private(
+            "/api/v4/main-account/smart-flex/investments/payment-history", params
+        )
+
     @mcp.tool()
     def whitebit_smart_staking_info() -> dict[str, Any]:
-        """WhiteBIT Smart Staking is **not available via REST API** as of
-        2026-05. All `*/smart-staking/*` paths return 404. Use the web UI."""
+        """WhiteBIT **Smart Staking** (the staking product) has no REST API as of
+        2026-06 — browse it in the web UI. NOTE: WhiteBIT **Crypto Lending**
+        (Smart-Flex) IS available via API — use `whitebit_list_lending_plans` /
+        `whitebit_lending_invest` for that yield instead."""
         return {
-            "available_via_api": False,
-            "reason": "WhiteBIT does not expose smart-staking endpoints via REST",
+            "smart_staking_available_via_api": False,
             "browse_url": "https://whitebit.com/staking",
-            "alternative": (
-                "Use `binance_find_best_earn_rates` and "
-                "`kraken_find_best_earn_rates` for API-accessible yield"
-            ),
+            "lending_available_via_api": True,
+            "lending_tools": [
+                "whitebit_list_lending_plans",
+                "whitebit_get_lending_investments",
+                "whitebit_lending_invest",
+                "whitebit_lending_withdraw",
+                "whitebit_lending_close",
+            ],
         }
 
-    return 5
+    return 15
