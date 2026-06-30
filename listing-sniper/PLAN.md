@@ -274,6 +274,63 @@ data does not support it. Honest residual angles, all weak / small-sample, *not*
 What this exercise *did* deliver: a clean, tested data harness (announcement feed + dataset +
 characterization) that **answered the question for ~$0 and zero risk** — which is the whole point.
 
+## 7e. Re-examination — the LONG side + funding (2026-06-30, from the algo-trading-bot session)
+
+Revisited `data/listings.parquet` (132 spot / 103 perp) chasing the user's "buy new listing, hold for
++100%" idea. Confirmed the easy theses are dead AND found where any edge actually lives (the long tail).
+
+**Retail-entry LONG (buy at first observable 1-min close — the earliest a retail order lands):**
+- peak gain from entry: median **+5.4%**, only **3.0% (4/132) ever reach +100%**, 7.6% reach +50%.
+- buy & hold: 1h median −6%, 24h −10%, **EOD −12% (76% red)**. The +100% lives in the first *seconds*
+  (auction/first ticks), before the 1-min close — "open is the high", quantified. A +100%/−50% bracket
+  is −EV (TP fires ≤3%; need >33% for a 2:1 bracket).
+
+**SHORT the perp (the only shortable instrument; spot has no borrow) — corrected funding sign:**
+`short_funding_24h` = funding the SHORT collects (rate>0 ⇒ longs pay shorts). Short P&L = −perp_ret +
+funding. Result: median +1.2%, **mean −5.0%**, worst **−236%** (a squeeze). Funding does NOT rescue it —
+65% of perps pay the short (median +0.12%) but the MEAN funding is −0.74% (rare −31% flips), so adding it
+correctly makes the short slightly *worse*. Confirms §7d: short is −EV, pennies in front of a steamroller.
+
+**LONG the perp — where any edge would be (positive mean, but a lottery):**
+- funding to long: median **−0.1%** (long usually PAYS — positive funding is the norm), but **35%** of
+  listings (heavily-shorted dumps) PAY the long, up to **+31%/24h**. Mean funding to long +0.7% (tail-driven).
+- total (price+funding): median **−1.2%**, **mean +5.0%**, 46% positive, max **+236%**.
+- **It's a positive-skew LOTTERY, not an edge:** the entire +5% mean rests on the top 3 of 103 outcomes
+  (+236/+96/+88%); **remove them and the mean is +0.9%** (noise after costs). Survivorship-fragile.
+
+**Updated verdict:** still NO-GO as a steady edge. But the *long* side (not the short) is the only place
+with a positive mean, it's funding-assisted in the dump cases, and it's a fat-tail lottery whose viability
+hinges on TWO unresolved things: (1) **sub-second entry** — can you catch the moonshots before the 1-min
+close? (needs tick/aggTrades data — the queued next test); (2) **are 3/103 moonshots repeatable** or 2021
+survivorship? (needs MORE listings, not just finer data). Until both are answered, it's a lottery ticket.
+
+## 7f. Sub-second TICK entry test — DEAD (2026-06-30, `scripts/tick_entry.py`)
+
+Pulled perp `aggTrades` from data.binance.vision (futures/um/daily; ~22MB/listing, download→slice→discard;
+**42 of 103 had aggTrades**, 61 404'd = older listings, skews recent). For each: entry at delays
+{first-tick, 5s, 30s, 60s, 5min}, **2-hour hold**, real path-dependent +100%/−50% bracket on the tick path.
+
+| entry | peak median | **% hit +100% (2h)** | bracket mean |
+|-------|------------:|---------------------:|-------------:|
+| first tick | +3.8% | **0.0%** | −0.2% |
+| 5s | +4.0% | **0.0%** | +0.2% |
+| 30s | +3.6% | **0.0%** | +0.1% |
+| 60s | +4.0% | **0.0%** | +0.3% |
+| 5 min | +3.4% | **0.0%** | +0.0% |
+
+- **Latency is IRRELEVANT** — every delay gives ~4% median peak / ~0% bracket. There's no early pump to
+  catch faster; the premise of sub-second entry is wrong.
+- **+100% fires 0% of the time in 2h** across all 42 listings, every entry. Bracket is a coin-flip around
+  zero (50% green, mean ~0%, carried by a few +30/+22% tails → remove top 3 = −2%).
+- **Why:** the moonshots (TRUMP +237%, APE +95%) are 24-HOUR runs, not first-hours pumps; the first tick is
+  often the auction HIGH, so entering there = buying the top and grinding sideways.
+- **VERDICT: "buy a new listing, hold a couple hours for +100%" is empirically impossible (0/42).** Latency
+  can't manufacture a move that isn't there. The only +100% lives at the 24h horizon = the 3/103 survivorship
+  LOTTERY already characterized (§7e: long perp 24h mean +5%, median −1%). BOTH doors closed with data.
+  Residual (not worth building): a 24h-hold lottery on EVERY listing, sized as fully-losable — pure variance,
+  unproven repeatability. The harness (announcements + 1m dataset + funding + tick entry) answered the whole
+  space for ~$0.
+
 ## 8. Suggested first concrete steps
 1. `announcement_watcher.py` — poll the CMS API, parse new listings (symbol, ts, spot/perp), persist
    + log. (Also doubles as the live feed for Phase 3.) **Cheap, high-value, do this first.**
