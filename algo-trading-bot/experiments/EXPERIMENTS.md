@@ -480,3 +480,420 @@ honestly a hair short of the formal gate, not over it.
 daily trend book — OOS Sharpe ~0.85–0.9, honest PSR ~0.94, −25% bear DD — the project's deployable
 *candidate*, just under the gate. It is wired for forward paper-trading (`paper_trade_panel.py step`,
 daily). The only remaining evidence is forward, in calendar time — not more backtesting.
+
+---
+
+## PLANNED — "How do I get the Binance-leaderboard numbers" roadmap (2026-06-28)
+
+Context: user saw Binance copy-trading accounts posting +2,500% / 30d, 88% win rate, 10–20× leverage,
+and asked to replicate them — risk-accepting. **Framing (not negotiable, it's just arithmetic):** those
+ROIs are a *survivorship + leverage* artifact, not a strategy. 88% win + 31% MDD + 10–20× lev is the
+martingale/grid signature — wins almost daily, then gives back principal on one move; the accounts that
+already did that aren't on the leaderboard. So we do NOT chase a coin-flip at 20×. We do three things,
+**in order**: (1) scale the *real* edge (`tstrend_multiwindow`) the only honest way — leverage/vol-target
++ compounding; (2) study the copy-traders with real data so the blow-up risk is *visible*, not assumed;
+(3) ring-fence a small degen sleeve that bets a real edge at high size with a hard kill-switch.
+
+These rows are **proposals** (hypothesis + how-to-measure + decision rule), not results. Run #13 first.
+User OK'd 1m-interval data (see #16). Each follows the same baseline-first / verdict workflow as above.
+
+### DIRECTION 1 — Scale the real edge (START HERE)
+The candidate already has the edge. "Bigger dollars" comes from **leverage × compounding × time**, which
+*scales* a Sharpe-0.8 book — it does NOT raise Sharpe, and it scales drawdown linearly + ruin super-linearly.
+The knobs are `[risk] target_annual_vol` (0.20) and `max_gross_leverage` (2.0) in `tstrend_multiwindow.toml`.
+
+#### #13 — Leverage / vol-target FRONTIER ⭐ (the core "scale" experiment) — DONE (2026-06-28)
+- **Did:** `scripts/leverage_frontier.py` sweeps `target_annual_vol` ∈ {0.15,0.20,0.30,0.40,0.60} × gross
+  cap ∈ {2,3,4,6}× on the full 2014–26 panel (3069 bars, every bar OOS — windows pre-committed, nothing
+  fit). Per cell: Sharpe, compounded CAGR, realized gross leverage, full-sample maxDD, and a **block-
+  bootstrap (21-day blocks, 8000 resamples) 1-year drawdown distribution** → 5th-pct "bad-year" DD +
+  P[1-yr path breaches −50% / −80% / −100% (liquidation)]. Raw: `experiments/leverage_frontier/frontier.txt`.
+
+| tgtVol | cap | Sharpe | CAGR | realLev | maxDD | badYrDD | P<−50% | P_ruin |
+|-------:|----:|-------:|-----:|--------:|------:|--------:|-------:|-------:|
+| 0.15 | 2× | 1.26 | 13.9% | 1.43× | −19.2% | −18.8% | 0% | 0% |
+| 0.20 | 2× | 1.21 | 16.2% | 1.71× | −24.5% | −22.8% | 0% | 0% | ← baseline |
+| 0.20 | 3× | 1.25 | 18.7% | 1.95× | −24.8% | −25.0% | 0% | 0% |
+| **0.30** | **4×** | **1.26** | **27.6%** | 2.87× | −35.2% | −34.8% | 0.1% | 0% | ← best Sharpe×CAGR |
+| 0.40 | 6× | 1.25 | 36.4% | 3.90× | −44.3% | −45.0% | 2.1% | 0% |
+| 0.60 | 6× | 1.21 | 45.3% | 5.12× | −59.7% | −56.4% | 11.6% | 0% | ← aggressive |
+
+- **Result — hypothesis CONFIRMED.** Sharpe is **flat (~0.96–1.26) across the entire grid**: leverage only
+  *scales* the edge, it does not create or destroy it (exactly the honest signature). CAGR runs 14%→45%,
+  maxDD 19%→60%, moving together. Top-right (0.60/6×) shows the predicted **volatility-drag rolloff** —
+  realized 5.12× but CAGR gains decelerate and Sharpe slips while bad-year DD blows out to −56%.
+- **The headline finding for the user's question:** **P_ruin = 0% in every cell**, even at 5.12× realized
+  leverage. A *diversified, vol-targeted, 24-asset daily* book essentially cannot be liquidated in a
+  bootstrapped year — the polar opposite of the Binance-leaderboard accounts (single-direction, 10–20×,
+  martingale) whose whole return *is* ruin risk. Same nominal "leverage," categorically different survival.
+- **Caveat (honesty):** these CAGRs are full-sample compounded with pre-committed-but-crypto-bull-heavy
+  history; temper forward to the #11 walk-forward Sharpe (~0.7–0.9), so a forward CAGR roughly ~0.6–0.7× the
+  table. The DD/ruin columns are the durable part — those are what sizing must respect.
+- **Recommended operating points (user picks by bad-year DD tolerance, per the decision rule):**
+  *conservative* tv0.20/cap3× (CAGR ~19%, bad-yr −25%); *efficient sweet-spot* **tv0.30/cap4× (highest
+  Sharpe 1.26, CAGR ~28%, bad-yr −35%)**; *aggressive* tv0.40/cap6× (CAGR ~36%, bad-yr −45%). Beyond that,
+  0.60/6× buys little Sharpe for a −56% bad year — the drag wall.
+- **Verdict: IMPROVED / characterized.** Establishes the dial. Next: #14 (fractional-Kelly + compounding —
+  is tv0.30/cap4× actually near half-Kelly?) then #15 (DD-throttle to push the safe ceiling higher).
+
+#### #14 — Fractional-Kelly + compounding check for the chosen point — DONE (2026-06-28)
+User chose the **aggressive 0.40/6×** operating point from #13 → `configs/tstrend_multiwindow_aggr.toml`
+(target_vol 0.40, gross cap 6×). #14 locates the Kelly peak to confirm the pick is on the safe (sub-Kelly)
+side. `scripts/kelly_compounding.py` traces realized-vol → compounded-CAGR by sweeping target_vol with a
+non-binding cap (the book already compounds, equity = Π(1+r)). Raw: `experiments/kelly_compounding/kelly_curve.txt`.
+
+| target_vol | realized vol | real lev | Sharpe | CAGR | maxDD |
+|-----------:|-------------:|---------:|-------:|-----:|------:|
+| 0.20 | 22% | 2.0× | 1.17 | 18.0% | −24.8% |
+| **0.40** | **43%** | **4.0×** | **1.18** | **34.7%** | **−44.7%** | ← chosen |
+| 0.70 | 75% | 7.0× | 1.20 | 55.8% | −68.0% |
+| 1.10 | 117% | 10.9× | 1.23 | **69.4%** (PEAK) | −86.8% |
+| 1.40 | 146% | 13.6× | 1.25 | 68.5% | −93.8% |
+| 1.80 | 177% | 16.2× | 1.24 | 48.3% (drag) | −97.9% |
+
+- **Result — both predictions CONFIRMED.** (1) The **empirical Kelly peak** is at ~117% realized vol /
+  10.9× leverage (CAGR 69%) — and full-Kelly vol ≈ Sharpe (1.18), exactly the growth-theory relation.
+  (2) **Past the peak CAGR FALLS** (1.40→68.5%, 1.80→48.3%) while maxDD keeps climbing to −98% — the
+  volatility-drag wall, demonstrated not asserted. Analytic cross-check agrees: k* = μ/σ² = **2.98×** the
+  chosen sizing (full-Kelly ≈ 3× current → ~128% vol, matching the 117% peak).
+- **Where 0.40/6× sits:** realized 43% vol = **0.36× of full-Kelly on full-sample** (deeply sub-half-Kelly,
+  safe). On the HONEST forward Sharpe (~0.8, per #11), full-Kelly vol ≈ 0.80 so half-Kelly ≈ 0.40 → the
+  chosen point is **≈ half-Kelly forward** — the textbook prudent ceiling (~¾ the growth at ~½ the DD).
+  Either lens says it is well-chosen and NOT over-levered.
+- **Why not chase the 10.9× peak:** its −87% drawdown is unsurvivable psychologically, AND it's only optimal
+  on the optimistic full-sample Sharpe; at the honest forward Sharpe the peak moves *below* 10.9×, so sitting
+  there forward would be PAST Kelly = pure drag. Half-Kelly is the correct stopping point.
+- **Verdict: CONFIRMED — 0.40/6× is the aggressive-but-sane ceiling (≈ half-Kelly forward).** Compounding is
+  already on (geometric equity). No fractional-Kelly *sizing mode* needed — the target_vol dial already
+  expresses it; documented that tv ≈ forward-Sharpe × (Kelly fraction). Next: #15 (DD-throttle to cut the
+  −45% bad year without giving up the growth — buys back headroom toward a higher safe point).
+
+#### #15 — Drawdown-throttle overlay — DONE: DEAD END (2026-06-28) ✗
+- **Did:** `scripts/dd_throttle.py` adds a causal HWM de-lever overlay (factor ramps 1→floor between a
+  `start` and `halt` drawdown) on the 0.40/6× book. Part A: throttle vs off at fixed sizing. Part B: the
+  real test — run the firm throttle at HIGHER target-vol and see if any row matches off@0.40's −45% bad
+  year at MORE CAGR (= headroom bought). Bad-year DD bootstrapped on raw blocks with the throttle applied
+  to each path. Raw: `experiments/dd_throttle/throttle.txt`.
+
+| variant @ tv0.40 | Sharpe | CAGR | maxDD | badYrDD |
+|------------------|-------:|-----:|------:|--------:|
+| **off** | **1.25** | **36.4%** | −44.3% | −45.0% |
+| gentle 15→40 | 1.10 | 26.9% | −37.4% | −37.1% |
+| firm 10→30 | 0.97 | 17.5% | −29.9% | −29.8% |
+
+  Headroom test (firm throttle, higher tv): tv0.55→CAGR 13.4%/badYr −32%, tv0.70→CAGR 16.0%/badYr −34%.
+  None beats off@0.40 (36.4% CAGR). No higher-leverage row recovers the lost growth.
+- **Result — hypothesis REJECTED.** The throttle **lowers Sharpe monotonically** (1.25→1.10→0.97) and buys
+  **zero** leverage headroom: it trades CAGR for DD at *worse* than 1:1, and you cannot lever back to the
+  same CAGR. Strictly dominated by the clean book.
+- **Why (the lesson):** this is a **trend-following** book — its drawdowns are *followed by its best runs*
+  (the trend reverses and the book is already positioned for it; it shorted the 2022 crash, +1.63 that
+  year per #11). An equity-curve throttle de-levers into exactly those troughs → it **sells the recovery**.
+  Drawdown-control overlays help mean-reverting/martingale books; they HURT trend. (Contrast: the
+  leaderboard martingales *would* be "helped" by a throttle — because their drawdowns are terminal, not
+  followed by recovery. Different sign of edge, opposite overlay.)
+- **Verdict: DISIMPROVED — do NOT add the throttle.** The scaled real-edge book stays clean:
+  `configs/tstrend_multiwindow_aggr.toml` (0.40/6×, vol-overlay only). Useful negative result: confirms the
+  −45% bad year is *structural* to running trend at half-Kelly and can't be overlay-engineered away without
+  killing the edge — it must be accepted (it's the price of the 0% ruin) or sized down (#13's lower rows).
+
+#### #16 — 1m / intraday probe — DONE: signal@1m DEAD, exec@1m deferred (2026-06-28) ✗
+- **Did (a) signal at 1m:** ran the trend engine on `binance__BTC__1m` (43,201 bars, 30 days 2026-05-19→06-18,
+  the only 1m data on disk) net of 4.5bps taker, `atb backtest` + `atb validate`. Raw: `experiments/onemin_probe/`.
+
+| 1m trend | trades | turnover | OOS Sharpe | hit | DSR | gate |
+|----------|-------:|---------:|-----------:|----:|----:|------|
+| untuned | 17,531 | 210× | −164 | 3.4% | — | — |
+| tuned (ema 10/240, slowest the grid allows) | — | — | **−105** | 6.6% | 0.000 | REJECTED |
+
+  buy&hold over the same (bull) window: OOS Sharpe **+3.82**. P(OOS loss)=1.00, PBO 0.00 (not overfit — just
+  genuinely bad). The tuner fled to the slowest slow-EMA to trade less and *still* lost — every 1m crossing
+  is whipsaw, and 210× turnover × 4.5bps eats the book alive.
+- **Result — hypothesis CONFIRMED: no edge at 1m, fully fee-dominated.** Consistent with
+  [[perp-scalper-findings]] and [[listing-sniper-findings]] — intraday direction is a coin-flip and costs
+  win. More trades = more bleed, not more edge. **Do not pursue 1m signals.**
+- **(b) execution at 1m — DEFERRED, not run.** The only *sensible* 1m use is modeling better fills/slippage
+  on the **daily** book's rebalances (not generating signal). Can't test rigorously now: only 30 days of 1m,
+  BTC alone, vs the 24-symbol daily universe. Would need intraday bars for the full universe to estimate the
+  slippage saving — left as a future data-fetch task, NOT claimed. (Expected payoff is small: the daily book
+  rebalances once/day, so execution refinement is a few bps, not an edge.)
+- **Verdict: DISIMPROVED for signal; the daily horizon stays the home of the edge.** Closes Direction 1.
+
+#### #16b — Full frequency ladder 5m/15m/1h (user asked; data from data.binance.vision) — DONE (2026-06-28) ✗
+- **Did:** pulled long-history spot BTCUSDT klines from data.binance.vision (`scripts/fetch_binance_vision.py`,
+  2022-01→2026-05, 4.4y, venue `bvision`, files `bvision__BTC__{5m,15m,1h}.parquet`; 5m=464k bars) and ran the
+  same `backtest`+`validate` trend probe at each. Configs `btc_{5m,15m,1h}_bv.toml`. Raw:
+  `experiments/onemin_probe/frequency_ladder.txt` (+ `validate_5m.txt`).
+
+| interval | bars | backtest Sharpe | OOS (tuned) | buy&hold OOS | gate |
+|----------|-----:|----------------:|------------:|-------------:|------|
+| **1d** (the edge) | 3,228 | **+0.68** | **+0.62** | +1.04 | the one that works |
+| 1h | 38,687 | −2.38 | −2.68 | +0.55 | REJECTED, DSR 0.000 |
+| 15m | 154,747 | −6.20 | −0.85 | +0.55 | REJECTED, DSR 0.000 |
+| 5m | 464,240 | −10.38 | −0.21 | +0.55 | REJECTED, DSR 0.000 |
+| 1m | 43,201 | −163 | −105 | +3.82 | REJECTED, DSR 0.000 |
+
+- **Result — MONOTONIC and decisive: no intraday timeframe has a trend edge, and finer = worse.** Backtest
+  Sharpe degrades smoothly −2.4→−6.2→−10.4→−163 as the bar shrinks. Tuned-OOS at 5m/15m only creeps toward
+  ~0 because the grid flees to the slowest EMA (10/240) = "trade less / approximate flat" — still negative,
+  never positive, never beats buy&hold. All four DSR = 0.000.
+- **Mechanism (per-regime breakdown):** in TRENDING bars the intraday signal is genuinely positive (1h
+  trend_up Sharpe +7.18 / +10.9%), but RANGE bars are **57–61% of all intraday bars** and bleed it out (1h
+  range −12.0 / −30.9%). Finer bars = more range/noise = more whipsaw = more fee bleed. The **daily** bar
+  averages through intraday noise, which is exactly why the same signal survives at 1d. **The edge is a
+  horizon property; it does not exist intraday.**
+- **Verdict: DISIMPROVED at every intraday frequency. Final answer to "what about 5m/15m/1h": no.** The
+  scaled daily book (`tstrend_multiwindow_aggr.toml`) remains the only home of the edge. Reusable bulk
+  downloader added (`fetch_binance_vision.py`) for any future long-history intraday work.
+
+### DIRECTION 2 — Study the copy-traders (make the risk visible)
+Goal: turn "+2,500% looks great" into a quantified P(blow-up) the user can *see* before risking a dollar.
+
+#### #17 — Reconstruct a leaderboard account's risk profile
+- **Do:** pull a few top accounts (e.g. 榴莲基金 / ETH詹哥) via Binance copy-trade public API or scrape;
+  characterize per-trade leverage, frequency, win/loss size asymmetry, max adverse excursion; rebuild the
+  equity path and estimate risk-of-ruin.
+- **Hypothesis:** the 88% win / 31% MDD profile resolves to martingale/averaging-down: many small wins,
+  rare huge losses, expectancy fragile to one trend. Quantify P(−80% within 90d) for that leverage.
+
+#### #18 — Survivorship correction on the leaderboard itself
+- **Do:** snapshot N "High ROI" accounts now; re-snapshot over weeks; track how many vanish / collapse.
+- **Hypothesis:** the *cohort* expected ROI of "copy a current top account" — including the ones that later
+  blow up and drop off — is far below the visible survivors, plausibly negative net of the DD you inherit
+  as a late copier. This is the number that actually predicts the user's outcome, and the leaderboard hides it.
+
+### DIRECTION 3 — Ring-fenced "degen" sleeve (high risk, can't sink the ship)
+Only after #13–#14 set the core book. The whole point is *containment*: a −100% here must not touch core.
+
+#### #19 — Hard-capped, segregated sleeve + kill-switch — DONE (2026-06-28)
+- **Built:** `src/algo_trading_bot/risk/sleeve.py` — `SegregatedSleeves` composes two fully independent
+  `PanelPaperBook`s (core + degen) and reuses the existing `DrawdownBreaker` as the kill-switch. `step()`
+  rebalances core unconditionally, gates degen by its own breaker factor, and liquidates the degen sleeve
+  (flatten + floor at 0 + permanent halt) on an isolated-margin floor breach. Default alloc 3%, degen DD
+  tiers derisk −50% / halt −90%. +6 tests `tests/test_sleeve.py` (full suite 76 pass).
+- **The three guarantees, each unit-pinned:**
+  1. **Separate cash** — a total degen wipeout leaves `core.equity` byte-identical (test asserts core cash
+     literally never moves through a degen blow-up).
+  2. **Bounded loss** — degen equity is floored at 0 (isolated margin: the exchange liquidates the
+     *subaccount*, can't claw from core); a 20× position through a −90% move loses the sleeve, ≤ the 5%
+     allocation, never a cent more.
+  3. **Permanent kill-switch** — on deep DD the breaker halts; a halted sleeve stays flat even on a juicy
+     signal at a recovered price, and only an explicit `reset_degen()` (ops decision, never automatic)
+     re-arms it. Also refuses any `degen_fraction > 0.25` at construction.
+- **Verdict: DONE — the ring-fence is real and proven.** The high-risk outlet now physically cannot harm
+  the core book, so the risk appetite has a safe home. Next: #20 (a high-leverage strategy to run *inside*
+  it, with real liquidation modeling from `markPriceKlines` + `liquidationSnapshot`), then #21 (ruin sizing).
+  Data note: for #20/#21 pull perps from `data.binance.vision/data/futures/um/...` (USDT-M mark price +
+  liquidation snapshots), not spot klines — `fetch_binance_vision.py` is the starting point to extend.
+
+#### #20 — High-leverage strategy inside the sleeve, with REAL liquidation — DONE (2026-06-28)
+- **Did:** pulled 6.4y BTC USDT-M perp price + **mark price** (`scripts/fetch_binance_vision.py --market um`,
+  venues `umperp`/`ummark`; liquidationSnapshot is 404 — Binance discontinued it, but mark-price OHLC is the
+  faithful liquidation trigger). `scripts/degen_liquidation.py` runs the sleeve at leverage L∈{2,3,5,10,20}
+  rebalanced daily, **liquidated when the day's MARK adverse excursion (from open) ≥ 1/L − maint(0.5%)** —
+  the real Binance isolated-margin mechanic. TREND (EMA 20/100 sign) vs NAIVE (always long). 20k bootstrapped
+  1-yr sleeve paths → full terminal-multiple distribution. Raw: `experiments/degen_sleeve/liquidation.txt`.
+
+| mode | lev | P(liquidated) | median | 95th-pct | mean |
+|------|----:|--------------:|-------:|---------:|-----:|
+| trend | 2× | **0%** | **1.24×** | 8.7× | 2.54× |
+| trend | 3× | 0% | 0.77× | 14.7× | 4.09× |
+| trend | 5× | 27% | 0.02× | 9.7× | 10.3× |
+| trend | 10× | **99.8%** | 0.00× | 0.00× | 0.04× |
+| trend | 20× | **100%** | 0.00× | 0.00× | 0.00× |
+| naive | 10× | 99.6% | 0.00× | 0.00× | **29.3×** (mean!) |
+| naive | 20× | 100% | 0.00× | 0.00× | 0.00× |
+
+- **Result — the leverage cliff is real, steep, and quantitative.** P(liquidation within a year): ~0% at 2–3×,
+  27–38% at 5×, **~100% at 10× and 20×.** The leaderboard's exact leverage (10–20×) = **near-certain ruin
+  within a year**, regardless of signal. (And this is the *optimistic* bound: daily re-levering pushes the liq
+  price away after good moves; a statically-held position liquidates even faster.)
+- **Does a real edge help?** A little, only at modest leverage: TREND liquidates less than NAIVE (5×: 27% vs
+  38%) because it goes flat/short in downtrends. But by 10× both are ~100% liquidated — **leverage dominates;
+  signal quality becomes irrelevant.** A good edge cannot out-run a 5% wick at 20×.
+- **The mean is a lie (the survivorship lesson, made of numbers):** naive 10× has **mean 29×** while median 0,
+  P(liq) 99.6%, P(>1×) 0.2%. The "mean" is entirely a handful of moonshot paths — the 0.2% who post the
+  screenshot. The other 99.6% are liquidated and invisible. **That IS the Binance leaderboard.**
+- **Verdict: a high-leverage directional sleeve has NEGATIVE typical outcome (median 0 past 5×); it is a
+  lottery ticket, not a strategy.** The only sane uses of the sleeve: (a) modest leverage (2–3×) on the real
+  edge — 0% liq, positive median — but that's barely "degen"; or (b) treat it as an explicit lottery sized at
+  fully-losable capital (#21). Either way the #19 ring-fence is what makes (b) survivable. Next: #21 formalize
+  the sizing/ruin rule from this distribution.
+
+#### #21 — Risk-of-ruin & sizing rule (capstone of Direction 3) — DONE (2026-06-28)
+- **Did:** `scripts/degen_sizing.py` turns #20's distribution into a dollar sizing rule on a real bankroll
+  ($100k, 3% = $3k stake) and applies two formal lenses: repeated-betting ln-growth g=E[ln(mult)] (ruin →
+  g=−∞) and the one-shot dollar payoff distribution. Raw: `experiments/degen_sleeve/sizing.txt`.
+
+| lev | P(total loss) | P(≥2×) | median $ | mean $ | 99th-pct $ | ln-growth g |
+|----:|--------------:|-------:|---------:|-------:|-----------:|------------:|
+| 2× | 0% | 34% | $3,721 | $7,612 | $59,264 | **+0.229** |
+| 3× | 0% | 30% | $2,322 | $12,269 | $147,521 | −0.244 |
+| 5× | 27% | 12% | $62 | $30,787 | $242,947 | −∞ (ruin) |
+| 10× | 99.8% | 0% | $0 | $132 | $0 | −∞ (ruin) |
+| 20× | 100% | 0% | $0 | $0 | $0 | −∞ (ruin) |
+
+- **The rule, derived not asserted:**
+  * **COMPOUND only at ≤2×.** 2× is the *highest* leverage that is both 0%-liquidation AND growth-positive
+    (g=+0.23). Even **3× is growth-NEGATIVE** (g=−0.24) despite 0% liquidation — on a single BTC perp the
+    fee/whipsaw drag makes the typical (median 0.77×) outcome a slow bleed. ≥5× has g=−∞ (ruin): **repeated
+    high-leverage betting is mathematically certain ruin regardless of signal.** The "don't roll it" wall.
+  * **LOTTERY (≥5×): size = fully-losable capital only.** Typical outcome is $0; the bet is the $3k stake, and
+    it must be chosen by its *payoff distribution* (e.g. 5× has a 12% chance of ≥2× and a thin 99th-pct of
+    $243k) — **never by the mean/95th**, which are pure survivorship. The leaderboard sells you that mean.
+- **Bonus insight (ties back to Direction 1):** a single-asset perp is growth-negative above 2×, yet the CORE
+  book runs ~4× *realized* leverage safely (#13, 0% ruin) — because it's **diversified across 24 vol-targeted
+  assets**. Diversification, not leverage, is what buys safe size. The degen sleeve proves the converse.
+- **Verdict: DONE. Direction 3 complete.** The ring-fence (#19) + the liquidation reality (#20) + this sizing
+  rule (#21) give the risk appetite a mathematically safe home: compound the real edge at ≤2× in the sleeve,
+  OR buy an explicit lottery ticket capped at fully-losable capital — and the core book is untouchable either
+  way. The honest answer to "I'm OK with risk": good — here's how to express it without ever blowing up.
+
+---
+
+### #24 — Intraday MEAN-REVERSION at 5m/1h (the right hypothesis for intraday) — DONE (2026-06-29)
+User pushed to try 5m/1h again. Re-running TREND there is settled (#16b: dead). The honest untested
+question is the OPPOSITE signal: #16b showed intraday is 57-61% range/chop — where mean-reversion earns.
+`scripts/intraday_meanrev.py` fades short-term dislocations (`pos = −tanh(z/1.5)`, z over a-priori
+lookbacks 24/48/96, risk-scaled, lookahead-safe) on BTC 5m/1h (bvision, 4.4y). Reports GROSS Sharpe (does
+it predict?) vs NET at maker(0bps) and taker(4.5bps). Raw: `experiments/intraday_meanrev/meanrev.txt`.
+
+| interval | lookback | GROSS Sharpe | net@maker(0) | net@taker(4.5) | turnover/bar |
+|----------|---------:|-------------:|-------------:|---------------:|-------------:|
+| **5m** | 24 | **+0.74** | +0.74 | **−20.6** | 23.5% |
+| 5m | 48 | +0.43 | +0.43 | −14.7 | 16.6% |
+| 5m | 96 | +0.49 | +0.49 | −10.2 | 11.8% |
+| 1h | 24 | −0.45 | −0.45 | −2.35 | 22.6% |
+| 1h | 48 | −0.19 | −0.19 | −1.49 | 15.6% |
+| 1h | 96 | −0.23 | −0.23 | −1.10 | 10.5% |
+
+- **Result — FIRST positive intraday signal in the whole probe, but it's an EXECUTION problem, not a signal
+  problem.** At **5m the MR signal genuinely predicts**: GROSS Sharpe +0.43–0.74, *positive across all three
+  lookbacks* (robust, not a single-window fluke). **Taker fees annihilate it** (net −10 to −21; 12–24%
+  turnover *per 5-min bar* is brutal). At **1h the edge is gone** (gross negative) — reversion is a
+  ~minutes-scale phenomenon that has decayed by the hourly bar.
+- **Honest caveat — do NOT read net@maker=+0.74 as capturable.** Maker fee = 0 here, but passive fills carry
+  **adverse selection** (you get filled precisely when the move keeps going against you) and **non-fill risk**,
+  neither modeled. Real maker net is below gross and unproven; capturing it means competing on latency/queue
+  position with co-located market-makers — an HFT game, not a retail edge, and a crowded/decaying one.
+- **Verdict: there is real 5m mean-reversion alpha, but it lives entirely inside the bid-ask/fee, so it is
+  NOT capturable as a taker and unproven as a maker.** This refines #16b rather than overturning it: intraday
+  isn't *signal-empty*, it's *cost-dominated* — the daily trend book remains the only signal that is positive
+  NET after realistic costs. Next step (now built, below): a maker/limit execution study.
+
+#### #24b — 5m MR under PASSIVE (maker) execution — DONE: borderline / unresolved (2026-06-29)
+`scripts/intraday_maker.py`: limit-order fill model on the 5m bars — post at the prior close, fill only if
+the bar's range reaches it (conditional fills = adverse selection), maker fee 1/2bps. Two signals: the
+continuous tanh, and a low-turnover **threshold** version (enter |z|>2, exit |z|<0.5 — the realistic way
+to trade a costly edge). Raw: `experiments/intraday_meanrev/maker.txt`.
+
+| signal | lookback | GROSS | taker 4.5 | maker 1bp | maker 2bp | trades/yr |
+|--------|---------:|------:|----------:|----------:|----------:|----------:|
+| continuous | 48 | +0.43 | −14.7 | −3.16 | −6.51 | (every bar) |
+| **threshold** | **48** | **+0.90** | −4.01 | **−0.29** | −1.39 | **2,213** |
+| threshold | 24 | +0.42 | −7.72 | −1.55 | −3.37 | 3,565 |
+| threshold | 96 | +0.32 | −2.51 | −0.37 | −1.00 | 1,291 |
+
+- **Result — moved from "clearly dead" to "borderline / unresolved."** The low-turnover threshold version
+  cuts trading to ~2k trades/yr and has a STRONG gross Sharpe (+0.32 to +0.90, positive across lookbacks),
+  and at **1bp maker sits near breakeven (lb48 −0.29)**. The continuous signal stays clearly negative
+  (overtrades). So the binding constraint is purely execution cost, and it's *close*.
+- **The unresolved crux (why I will NOT call this a win):** my maker model is **pessimistic on spread capture**
+  (fills at the prior close = earns NO spread) and **optimistic on fills** (full fill on touch, no queue /
+  partial-fill / adverse-selection-vs-spread tradeoff). A real maker *earns* ~half the spread (~+0.5–1bp/trade
+  on BTC) — which at 2k trades/yr could plausibly flip lb48 positive — BUT only on **adversely-selected**
+  fills (you get hit when the move continues against you). Whether the earned spread beats the adverse
+  selection is **the entire question, and 5m OHLC fundamentally cannot answer it.** It needs tick/order-book
+  data (binance.vision `bookTicker`/`aggTrades`) or a live maker test.
+- **Verdict: 5m MR is a genuine but UNPROVEN market-making edge** (resolved in #24c below).
+
+#### #24c — RESOLVED with real tick data: 5m MR is a fee-tier edge, not capturable retail (2026-06-29)
+Settled the spread-vs-adverse-selection crux by pulling real best-bid/ask. Downloaded one day of Binance
+USDT-M `bookTicker` (`futures/um/daily/BTCUSDT/2024-03-15`, 300MB, **26.6M quotes**) and measured the spread,
+then mapped net Sharpe across maker fee tiers. Raw: `experiments/intraday_meanrev/maker_fee_tiers.txt`.
+
+- **Measured BTC perp spread: median 0.0147 bps, mean 0.048 bps** — i.e. **one tick** ($0.10 on $71k). The
+  half-spread a maker could earn is **~0.007 bps ≈ zero.** BTC is the most liquid crypto instrument, so there
+  is essentially **no spread to capture** — passive posting buys only the fee reduction, not price improvement.
+- **Net Sharpe by maker fee tier (lb48 threshold, gross +0.90):**
+
+| maker fee | net Sharpe | Binance um tier |
+|----------:|-----------:|-----------------|
+| 0.0 bp | +0.80 | VIP9 / rebate (~$25M+/mo vol) |
+| 0.5 bp | +0.25 | VIP6–8 |
+| 1.0 bp | −0.29 | VIP3–5 |
+| 1.8 bp | −1.17 | VIP1–2 |
+| **2.0 bp** | **−1.39** | **VIP0 (retail default)** |
+
+- **RESOLUTION: the 5m edge is a FEE-TIER edge, not a signal edge.** Breakeven is ~0.5 bp maker → requires
+  **VIP6+ (institutional volume)**. At the retail default (VIP0, 2 bp) it's **−1.39** and there is no
+  spread-capture rescue because the spread is one tick. Even the +0.80 at 0 bp is optimistic (ignores queue/
+  non-fill + adverse selection at the tightest tiers). **Real for HFT/market-makers with rebates;
+  structurally unprofitable for retail.** This is *why* the leaderboard accounts don't run 5m MR, and why the
+  firms that can don't post screenshots.
+- **Final intraday verdict (closes #16/#24):** every intraday angle is now exhausted — trend is dead
+  (fee-dominated, #16b), and mean-reversion is real but capturable only at institutional fee tiers (#24abc).
+  **The daily trend book (`tstrend_multiwindow_aggr`, ~0.8–1.2 NET Sharpe at full 4.5 bp TAKER) is the only
+  signal capturable with the fees a retail account actually pays.** Reusable: `fetch_binance_vision.py` now
+  pulls spot/um/cm klines + markPrice; bookTicker via the S3 XML listing
+  (`s3-ap-northeast-1.amazonaws.com/data.binance.vision?prefix=…`).
+
+#### #24d — Forward runner for the 5m MR signal — ONE path, paper|live by flag (2026-06-29) — RUNNING
+User: run a 5m runner first, MAKER orders to minimize fees, paper until it shows results, then go live.
+`scripts/run_5m_meanrev.py` — polls live Binance USDT-M 5m klines (public `fapi`, no key for paper),
+runs the MR signal (lb48, enter |z|>2 / exit |z|<0.5), and executes via a **pluggable broker**: identical
+signal/accounting/logging, only the fill differs (the NFR1 "paper == live" principle — paper only predicts
+live if it runs the live code, which matters DOUBLY here since the edge lives in execution).
+- **MAKER fill model:** post a post-only limit at the signal bar's close; `PaperBroker` fills it iff the
+  next bar's range reaches it (BTC spread ~0.015bp → ≈0 price improvement, so the maker win is the lower
+  FEE 2.0bp vs 4.5 taker). `LiveBroker` posts a real GTX (post-only) limit via signed fapi REST + a
+  `--max-loss` kill-switch — GUARDED (needs `--live --notional --max-loss --i-understand-live` + keys),
+  wired but UNEXERCISED until the user flips it on with tiny size.
+- **Why one file, not two (user's design call, correct):** the original `paper_5m_meanrev.py` was paper-only;
+  refactored to a single `run_5m_meanrev.py` with `--live`. Behavior-preserving: refactored PaperBroker
+  reproduces the prior replay to the digit (+2.878% net).
+- **Maker vs taker (same ~3.5d replay window):** lowering fees 4.5→2.0bp halved the drag (1.8%→0.8%) →
+  net +1.85%→+2.88%. (Caveat: PaperBroker posts AT the close so fill rate ≈100% — optimistic on fills,
+  understates adverse selection; real fills will reveal the true rate. And 3.5d is noise — validates the
+  machinery, NOT the edge; the 4.4y net-negative #24c verdict stands until weeks of live fills say otherwise.)
+- **Account reality (checked live):** Binance `feeTier 0`, BNB-burn OFF, $665 futures — the exact −1.39
+  Sharpe config. So this is a small ring-fenced *ground-truth* test, not a scale-up. Dockerized:
+  `docker compose up -d paper-5m`; evaluate `cat state/paper_5m/summary.json`.
+- Next per user: the DAILY runner for the core `tstrend_multiwindow_aggr` book.
+
+### #22 / #23 — "adjust the math to the current regime, online" (2026-06-28)
+User's hypothesis: the book uses fixed math; what if it adapted to the regime while running? First, what
+it ALREADY adapts: position size scales `target_vol / trailing_realized_vol` (per-asset + 60d overlay +
+trailing-cov cluster sizing) — so it de-levers in high-vol regimes already. What it does NOT adapt: trend
+QUALITY (chop vs clean) and the leverage/Kelly fraction. Tested both, baseline-first, vs the static
+multiwindow candidate (0.20/2×). `scripts/adaptive_regime_experiment.py`; raw `experiments/adaptive_regime/`.
+ER gate built into `sleeved_target_weights(er_window=…)` (off by default; 76 tests pass).
+
+| variant | Sharpe | PSR | WF median | WF %+ | WF worst | boot CI | maxDD |
+|---------|-------:|----:|----------:|------:|---------:|--------:|------:|
+| baseline (static) | **1.21** | 1.000 | +0.97 | 83% | −1.05 | [0.65, 1.73] | −24.5% |
+| **#22** trend-quality gate (ER, a-priori) | 1.19 | 1.000 | **+1.45** | 83% | −1.13 | [0.64, 1.74] | −25.0% |
+| **#23** adaptive Kelly leverage (online) | **0.78** | 0.987 | **−0.16** | **50%** | **−2.33** | **[0.22, 1.35]** | **−39.4%** |
+
+- **#22 (trend-quality gate) — NEUTRAL.** Reused the EXACT a-priori soft ER gate that lifted the *engine*
+  btc_1d (#2): ER window 20, thresholds 0.15/0.45, scale forecast by the ER weight. On the panel it's a
+  wash: full Sharpe 1.21→1.19, PSR/CI/%-positive unchanged, WF *median* nicer (+0.97→+1.45) but the *worst*
+  block slightly worse (−1.05→−1.13) and maxDD ~flat. **Diagnosis: the panel's vol-targeting already captures
+  most of what an ER gate would add** — the engine needed it (single asset, no vol overlay); the diversified
+  vol-targeted panel doesn't. Doesn't hurt, doesn't clearly help → not worth the added complexity.
+- **#23 (adaptive Kelly leverage) — DISIMPROVED, badly.** Scaling the book by its trailing-126d realized
+  Sharpe (a-priori: target 1.0, mult clip [0,2]) wrecks everything: Sharpe 1.21→**0.78**, WF %-positive
+  83%→**50%**, worst block −1.05→**−2.33**, maxDD −24.5%→**−39.4%**, CI lower 0.65→0.22. **Same failure mode
+  as the #15 DD-throttle:** performance-reactive sizing LAGS the regime — it levers up after a good run (just
+  before the mean-reversion) and de-levers after a drawdown (just before the trend's recovery). In a trend
+  book, reacting to your own recent P&L sells low and buys high.
+- **Verdict: the user's instinct was worth testing and the test is decisive — the *defensible* adaptivity
+  (vol-targeting) is ALREADY in the book; adding a trend-quality gate is neutral, and online performance-
+  reactive leverage HURTS.** This is now the THIRD independent confirmation (with #2 hysteresis and #15
+  throttle) of the project's core lesson: **pre-committed/robust survives; reactive/fitted deflates.** Keep
+  the static `tstrend_multiwindow_aggr.toml`. The `er_window` knob stays available (off) for the record.
+
+**Bottom line written down for reference:** the leaderboard number is not reproducible as a *strategy*; it's
+leverage + survivorship. The reproducible path to large *dollars* is #13–#14 (scale the validated edge via
+prudent leverage + compounding over time), with #17–#18 to keep the fantasy quantified and #19–#21 as a
+contained outlet for risk appetite. Start #13.

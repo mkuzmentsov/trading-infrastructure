@@ -1,0 +1,21 @@
+=== Drawdown-throttle overlay: tstrend_multiwindow_aggr ===
+panel 24 syms (11.8y)   chosen sizing tv 0.40 / cap 6×
+
+A) throttle variants at the fixed chosen sizing (tv 0.40 / 6×):
+         throttle  Sharpe     CAGR   maxDD  badYrDD  P<-80%
+   --------------------------------------------------------
+              off    1.25   36.4%  -44.3%   -45.0%    0.0%
+     gentle 15→40    1.10   26.9%  -37.4%   -37.1%    0.0%
+       firm 10→30    0.97   17.5%  -29.9%   -29.8%    0.0%
+
+B) headroom test — can the FIRM throttle run higher leverage for the same bad-year DD?
+   reference: throttle OFF @ tv0.40  →  bad-year DD -45.0%, CAGR 36.4%
+    firm @ tv  Sharpe     CAGR   maxDD  badYrDD
+   --------------------------------------------
+        0.40    0.91   16.2%  -30.0%   -30.1%
+        0.55    0.77   13.4%  -32.4%   -32.1%
+        0.70    0.86   16.0%  -35.1%   -33.7%
+
+read: throttle WINS iff Part B finds a higher-tv row whose bad-year DD ≤ off@0.40's but CAGR is
+higher — that means the throttle bought leverage headroom. If not, it only trades CAGR for DD 1:1
+(still useful for comfort, but not free headroom).

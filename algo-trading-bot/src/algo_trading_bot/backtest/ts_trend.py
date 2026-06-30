@@ -58,6 +58,23 @@ def multi_window_forecast(
     return forecast, vol
 
 
+def efficiency_ratio_panel(panel: pd.DataFrame, window: int) -> pd.DataFrame:
+    """Kaufman efficiency ratio per asset, causal: |net move over ``window``| / Σ|bar moves|.
+    ≈1 a clean trend, ≈0 chop. Vectorized port of the engine's `_efficiency_ratio` (features/pipeline)."""
+    net = panel.diff(window).abs()
+    path = panel.diff().abs().rolling(window).sum()
+    return (net / path.replace(0.0, np.nan)).clip(0.0, 1.0)
+
+
+def er_soft_weight(panel: pd.DataFrame, window: int, er_lo: float, er_hi: float) -> pd.DataFrame:
+    """Continuous trend-quality weight in [0,1] — the SAME a-priori soft gate that lifted the engine
+    btc_1d OOS 0.62→0.78 (experiment #2; thresholds 0.15/0.45, ER window 20). Downweights chop, leaves
+    clean trends at full size. No on/off switch ⇒ no flatten/reopen churn."""
+    er = efficiency_ratio_panel(panel, window)
+    w = (er - er_lo) / (er_hi - er_lo)
+    return w.clip(0.0, 1.0)
+
+
 def ts_trend_weights(
     forecast: pd.DataFrame,
     vol: pd.DataFrame,
@@ -232,6 +249,7 @@ def run_sleeved_ts_trend_backtest(
     cov_window: int = 100,
     shrinkage: float = 0.3,
     vol_overlay_window: int = 0,
+    er_window: int = 0,
     starting_cash: float = 10_000.0,
 ) -> PanelResult:
     """Sleeved managed-futures book (experiment #5): each sleeve is risk-budgeted to ``target_vol/√K``
@@ -246,7 +264,8 @@ def run_sleeved_ts_trend_backtest(
     target = sleeved_target_weights(
         panel, sleeves=sleeves, sleeve_params=sleeve_params, windows=windows, vol_window=vol_window,
         scale=scale, target_vol=target_vol, leverage=leverage, periods_per_year=periods_per_year,
-        cov_window=cov_window, shrinkage=shrinkage, vol_overlay_window=vol_overlay_window)
+        cov_window=cov_window, shrinkage=shrinkage, vol_overlay_window=vol_overlay_window,
+        er_window=er_window)
     return _panel_result_from_target(panel, target, fee_bps=fee_bps,
                                      periods_per_year=periods_per_year, starting_cash=starting_cash)
 
@@ -265,10 +284,16 @@ def sleeved_target_weights(
     cov_window: int = 100,
     shrinkage: float = 0.3,
     vol_overlay_window: int = 0,
+    er_window: int = 0,
+    er_lo: float = 0.15,
+    er_hi: float = 0.45,
 ) -> pd.DataFrame:
     """The (timestamp × symbol) signed target-weight matrix of the sleeved book — the SAME logic
     the backtest and the paper runner both consume (NFR1: one weight path). The last row is the
-    current target the paper book rebalances toward."""
+    current target the paper book rebalances toward.
+
+    ``er_window`` > 0 enables experiment #22: scale each asset's forecast by its efficiency-ratio
+    trend-quality weight (chop → downweight), the a-priori soft gate ported from the engine (#2)."""
     budget = target_vol / np.sqrt(max(len(sleeves), 1))
     parts = []
     for name, syms in sleeves.items():
@@ -280,6 +305,8 @@ def sleeved_target_weights(
             forecast, vol = multi_window_forecast(sub, windows, vol_window, scale)
         else:
             forecast, vol = ts_trend_forecast(sub, *sleeve_params[name], vol_window, scale)
+        if er_window > 0:                                          # #22 trend-quality gate (a-priori)
+            forecast = forecast * er_soft_weight(sub, er_window, er_lo, er_hi)
         parts.append(correlation_aware_weights(
             forecast, vol, sub.pct_change(), target_vol=budget, periods_per_year=periods_per_year,
             leverage=1e9, cov_window=cov_window, shrinkage=shrinkage))  # per-sleeve: no cap

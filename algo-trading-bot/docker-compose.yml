@@ -14,6 +14,19 @@
 # copy .env.example to .env and fill it in. Paper mode ignores them.
 
 services:
+  # 5-minute mean-reversion runner — ONE code path, paper by default (experiment #24).
+  # Maker/limit fills, no keys needed (reads public Binance fapi). Logs net AND gross + fill rate.
+  #   docker compose up --build paper-5m   (then: docker compose logs -f paper-5m)
+  #   evaluate: cat state/paper_5m/summary.json
+  # To go LIVE later: add --live --notional <usd> --max-loss <usd> --i-understand-live + API keys in .env.
+  paper-5m:
+    build: .
+    image: algo-trading-bot:latest
+    entrypoint: ["python", "scripts/run_5m_meanrev.py"]
+    command: ["--state-dir", "/app/state/paper_5m", "--fee-bps", "2.0"]   # MAKER fee (VIP0; BNB burn -> 1.8)
+    volumes: [./state:/app/state]
+    restart: unless-stopped
+
   paper-kraken:
     build: .
     image: algo-trading-bot:latest

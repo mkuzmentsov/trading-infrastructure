@@ -13,6 +13,7 @@ COPY src ./src
 RUN pip install --no-cache-dir ".[storage,venues]"
 
 COPY configs ./configs
+COPY scripts ./scripts
 
 # Data and runtime state are mounted as volumes (see docker-compose.yml).
 VOLUME ["/app/data", "/app/state"]

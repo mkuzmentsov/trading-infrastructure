@@ -1,0 +1,20 @@
+=== Degen sleeve: risk-of-ruin & sizing rule (1-year horizon, trend signal) ===
+bankroll $100,000   ring-fenced degen stake = 3% = $3,000  (the MOST you can lose — guaranteed by #19's isolation)
+
+ lev P(total loss)  P(>=2x)   median $      mean $      95th $       99th $  ln-growth g
+----------------------------------------------------------------------------------------
+  2×         0.0%    33.9% $   3,721 $    7,612 $   26,093 $    59,264       +0.229
+  3×         0.0%    29.5% $   2,322 $   12,269 $   43,994 $   147,521       -0.244
+  5×        27.4%    12.1% $      62 $   30,787 $   29,109 $   242,947    −∞ (ruin)
+ 10×        99.8%     0.0% $       0 $      132 $        0 $         0    −∞ (ruin)
+ 20×       100.0%     0.0% $       0 $        0 $        0 $         0    −∞ (ruin)
+
+— SIZING RULE —
+• COMPOUND (reinvest, let it grow): cap leverage at 2× — the highest leverage with 0%
+  liquidation AND positive ln-growth (g>0). Above 2×, g=−∞: repeated betting is
+  mathematically certain ruin no matter how good the signal. This is the 'don't roll it' wall.
+• LOTTERY (high leverage, ≥5–10×): typical outcome is $0 (median≈0, P(total loss) high). Size it
+  ONLY as fully-losable capital — the $3,000 stake here, lost 100% with no effect on the
+  $97,000 core. NEVER size by the mean/95th: those are the survivorship
+  moonshots the leaderboard shows you. Pick leverage by the payoff distribution you accept.
+• The $3,000 cap is the whole point of #19: it is the maximum the sleeve can ever cost you.

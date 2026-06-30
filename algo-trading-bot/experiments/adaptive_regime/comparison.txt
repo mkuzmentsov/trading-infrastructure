@@ -1,0 +1,12 @@
+=== Adaptive-regime experiments vs static candidate (3069 bars, all OOS) ===
+
+                 variant  Sharpe    PSR  WF med  WF %+  WF worst         boot CI   maxDD
+----------------------------------------------------------------------------------------
+       baseline (static)    1.21  1.000   +0.97    83%     -1.05    [0.65, 1.73]  -24.5%
+  #22 trend-quality gate    1.19  1.000   +1.45    83%     -1.13    [0.64, 1.74]  -25.0%
+   #23 adaptive leverage    0.78  0.987   -0.16    50%     -2.33    [0.22, 1.35]  -39.4%
+
+read: a regime adaptation EARNS its keep only if it lifts WF %-positive / worst-block / CI-lower
+WITHOUT cutting full-sample Sharpe — i.e. it must help the chop years (2023, the −1.05 block) on net.
+Per the project's history (#2 hysteresis, #15 throttle), expect adaptive leverage to lag; the
+a-priori ER gate is the one with prior OOS evidence.

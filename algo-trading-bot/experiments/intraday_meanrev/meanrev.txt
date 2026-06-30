@@ -1,0 +1,16 @@
+=== Intraday MEAN-REVERSION probe (BTC, bvision 2022-26) ===
+signal = −tanh(z/1.5); z over a-priori lookbacks [24, 48, 96]; risk-scaled; lookahead-safe
+
+interval lookback  gross Sh  net@maker  net@taker  turnover/bar
+---------------------------------------------------------------
+      5m       24     +0.74      +0.74     -20.59        23.5%
+      5m       48     +0.43      +0.43     -14.67        16.6%
+      5m       96     +0.49      +0.49     -10.23        11.8%
+
+      1h       24     -0.45      -0.45      -2.35        22.6%
+      1h       48     -0.19      -0.19      -1.49        15.6%
+      1h       96     -0.23      -0.23      -1.10        10.5%
+
+read: GROSS>0 ⇒ the MR signal predicts; if net@taker<0<gross, the alpha is real but eaten by
+taker fees (only capturable with passive/maker fills, which carry adverse-selection + non-fill
+risk this backtest does NOT model). net@taker>0 would be the only result that survives as-is.
