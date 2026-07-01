@@ -2,12 +2,13 @@
 
 Multi-exchange MCP server. Each exchange's tools live in their own module under `src/trading_mcp/exchanges/` and register themselves only when their API credentials are present in `.env`.
 
-| Exchange     | Status        | Tool prefix     |
-|--------------|---------------|-----------------|
-| Binance      | ✅ implemented | `binance_*`     |
-| Kraken       | ✅ implemented | `kraken_*`      |
-| Hyperliquid  | ✅ implemented | `hyperliquid_*` |
-| WhiteBIT     | ✅ implemented | `whitebit_*`    |
+| Exchange        | Status        | Tool prefix         |
+|-----------------|---------------|---------------------|
+| Binance         | ✅ implemented | `binance_*`         |
+| Kraken (spot)   | ✅ implemented | `kraken_*`          |
+| Kraken Futures  | ✅ implemented | `kraken_futures_*`  |
+| Hyperliquid     | ✅ implemented | `hyperliquid_*`     |
+| WhiteBIT        | ✅ implemented | `whitebit_*`        |
 
 Plus a **cross-venue aggregator** (no prefix) that fans out to every configured
 exchange — yield / borrow / funding / NAV / promotions, plus a one-call
@@ -117,7 +118,20 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Earn:** `kraken_list_earn_strategies`, `kraken_list_earn_allocations`, `kraken_get_earn_allocation_status`, `kraken_get_earn_deallocate_status`, `kraken_earn_allocate`, `kraken_earn_deallocate`, `kraken_find_best_earn_rates`
 
-### Hyperliquid (19)
+### Kraken Futures (10)
+
+Separate API from spot (`futures.kraken.com`, separate keys). Linear USD perps
+are `PF_<COIN>USD` (BTC→XBT); tools accept a plain coin and map it.
+
+**Account:** `kraken_futures_get_accounts`, `kraken_futures_get_open_positions`, `kraken_futures_get_open_orders`
+
+**Market data (public):** `kraken_futures_get_tickers` (mark + funding APR + OI), `kraken_futures_get_funding_rate`, `kraken_futures_get_instruments`
+
+**Trading:** `kraken_futures_place_order`, `kraken_futures_cancel_order`, `kraken_futures_cancel_all_orders`, `kraken_futures_set_leverage`
+
+> Feeds the cross-venue `compare_perp_funding` alongside Hyperliquid + Binance.
+
+### Hyperliquid (20)
 
 **Market data:** `hyperliquid_get_meta`, `hyperliquid_get_spot_meta`, `hyperliquid_get_all_mids`, `hyperliquid_get_funding_rates`, `hyperliquid_get_funding_history`
 
@@ -125,7 +139,7 @@ Restart Claude Desktop. The hammer-icon tool menu should now list tools like `bi
 
 **Trading:** `hyperliquid_place_perp_order`, `hyperliquid_market_close_position`, `hyperliquid_cancel_perp_order`, `hyperliquid_set_leverage`
 
-**Transfers:** `hyperliquid_bridge_usdc`, `hyperliquid_vault_transfer` (dry-run unless `confirm=True`), `hyperliquid_withdraw_usdc` (dry-run unless `confirm=True`), `hyperliquid_get_deposit_info` (CEX→HL caveat: deposits credit the sender, so route via your own Arbitrum wallet)
+**Transfers:** `hyperliquid_bridge_usdc` (spot↔perp), `hyperliquid_vault_transfer` (dry-run unless `confirm=True`), `hyperliquid_transfer_subaccount` (sub↔master, dry-run unless `confirm=True`), `hyperliquid_withdraw_usdc` (master-level → Arbitrum addr; dry-run unless `confirm=True`), `hyperliquid_get_deposit_info` (CEX→HL caveat: deposits credit the sender, so route via your own Arbitrum wallet)
 
 **Discovery:** `hyperliquid_find_best_funding_rates`
 

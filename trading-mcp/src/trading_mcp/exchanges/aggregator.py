@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from . import binance as _bn
 from . import hyperliquid as _hl
 from . import kraken as _kr
+from . import kraken_futures as _krf
 from . import whitebit as _wb
 
 # Stablecoins we treat as $1 for NAV roll-ups when a venue lacks a USD oracle.
@@ -236,7 +237,7 @@ def register(mcp: FastMCP) -> int:
     @mcp.tool()
     def compare_perp_funding(coin: str) -> dict[str, Any]:
         """Side-by-side current funding rate (annualized) for a coin's perp
-        across Hyperliquid and Binance USDⓈ-M.
+        across Hyperliquid, Binance USDⓈ-M, and Kraken Futures (PF_ linear).
 
         Direct feeder for funding-carry basket expansion: identifies the venue
         offering the wider funding spread vs the long leg.
@@ -286,6 +287,30 @@ def register(mcp: FastMCP) -> int:
             if isinstance(res, dict):
                 rows.append(res)
 
+        if _krf._credentials_present():
+            def _krf_call():
+                symbol = _krf._pf_symbol(coin_u)
+                payload = _krf._request("GET", "/api/v3/tickers", public=True)
+                for t in payload.get("tickers") or []:
+                    if (t.get("symbol") or "").upper() != symbol:
+                        continue
+                    apr = _krf._ticker_apr(t)
+                    if apr is None:
+                        return None
+                    return {
+                        "venue": "kraken_futures",
+                        "symbol": symbol,
+                        "hourly": apr / (24 * 365),
+                        "apr": apr,
+                        "interval_h": 1,
+                        "open_interest": t.get("openInterest"),
+                    }
+                return None
+
+            res = _safe(_krf_call)
+            if isinstance(res, dict):
+                rows.append(res)
+
         rankable = [r for r in rows if "error" not in r]
         rankable.sort(key=lambda r: r["apr"], reverse=True)
         spread = None
@@ -300,6 +325,215 @@ def register(mcp: FastMCP) -> int:
                 "with the lowest." if spread else None
             ),
         }
+
+    # ----- 3b. Carry entry basis (real order books) ---------------------
+
+    @mcp.tool()
+    def carry_basis(
+        coin: str,
+        notional_usd: float = 1000.0,
+        short_venue: str = "hyperliquid",
+        long_venue: str = "binance",
+    ) -> dict[str, Any]:
+        """Entry basis for a delta-neutral funding carry, from REAL order books
+        (not marks/mids). The perp we SHORT fills at short_venue's best BID; the
+        spot we BUY fills at long_venue's best ASK.
+
+        Returns taker_basis_bps = (short_bid − long_ask)/long_ask×1e4 (cross both
+        spreads) and maker_basis_bps = (short_bid − long_bid)/long_bid×1e4 (passive
+        buy at the bid), plus whether each top level absorbs notional_usd. Open when
+        taker_basis_bps ≥ −5 (favourable/flat); use a maker buy if only maker passes.
+
+        short_venue: hyperliquid | binance | kraken_futures.  long_venue: binance | kraken.
+        """
+        import httpx
+
+        coin_u = coin.upper()
+
+        def _perp_bid(venue: str) -> dict[str, Any] | None:
+            if venue == "hyperliquid":
+                lv = (_hl._info().l2_snapshot(coin_u) or {}).get("levels") or [[], []]
+                if not lv[0]:
+                    return None
+                top = lv[0][0]
+                return {
+                    "bid": float(top["px"]),
+                    "top_usd": float(top["px"]) * float(top["sz"]),
+                    "depth_usd": sum(float(x["px"]) * float(x["sz"]) for x in lv[0][:10]),
+                }
+            if venue == "binance":
+                bids = (_bn._client().futures_order_book(symbol=f"{coin_u}USDT", limit=20).get("bids")) or []
+                if not bids:
+                    return None
+                return {
+                    "bid": float(bids[0][0]),
+                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "depth_usd": sum(float(p) * float(q) for p, q in bids),
+                }
+            if venue == "kraken_futures":
+                r = httpx.get(
+                    "https://futures.kraken.com/derivatives/api/v3/orderbook",
+                    params={"symbol": _krf._pf_symbol(coin_u)}, timeout=15,
+                )
+                bids = ((r.json() or {}).get("orderBook") or {}).get("bids") or []
+                if not bids:
+                    return None
+                return {
+                    "bid": float(bids[0][0]),
+                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "depth_usd": sum(float(p) * float(q) for p, q in bids),
+                }
+            return None
+
+        def _spot_ba(venue: str) -> dict[str, Any] | None:
+            if venue == "binance":
+                ob = _bn._client().get_order_book(symbol=f"{coin_u}USDT", limit=20)
+                bids, asks = ob.get("bids") or [], ob.get("asks") or []
+                if not bids or not asks:
+                    return None
+                return {
+                    "bid": float(bids[0][0]), "ask": float(asks[0][0]),
+                    "top_ask_usd": float(asks[0][0]) * float(asks[0][1]),
+                    "ask_depth_usd": sum(float(p) * float(q) for p, q in asks),
+                }
+            if venue == "kraken":
+                pair = ("XBT" if coin_u == "BTC" else coin_u) + "USD"
+                r = httpx.get("https://api.kraken.com/0/public/Depth",
+                              params={"pair": pair, "count": 20}, timeout=15)
+                res = (r.json() or {}).get("result") or {}
+                if not res:
+                    return None
+                book = next(iter(res.values()))
+                bids, asks = book.get("bids") or [], book.get("asks") or []
+                if not bids or not asks:
+                    return None
+                return {
+                    "bid": float(bids[0][0]), "ask": float(asks[0][0]),
+                    "top_ask_usd": float(asks[0][0]) * float(asks[0][1]),
+                    "ask_depth_usd": sum(float(px) * float(q) for px, q, *_ in asks),
+                }
+            return None
+
+        short = _safe(lambda: _perp_bid(short_venue))
+        long = _safe(lambda: _spot_ba(long_venue))
+        if not isinstance(short, dict) or "bid" not in short:
+            return {"error": f"no perp book for {coin_u} on {short_venue}", "detail": short}
+        if not isinstance(long, dict) or "ask" not in long:
+            return {"error": f"no spot book for {coin_u} on {long_venue}", "detail": long}
+
+        taker = (short["bid"] - long["ask"]) / long["ask"] * 1e4
+        maker = (short["bid"] - long["bid"]) / long["bid"] * 1e4
+        return {
+            "coin": coin_u,
+            "short_venue": short_venue,
+            "long_venue": long_venue,
+            "notional_usd": notional_usd,
+            "short_bid": short["bid"],
+            "long_ask": long["ask"],
+            "long_bid": long["bid"],
+            "taker_basis_bps": round(taker, 2),
+            "maker_basis_bps": round(maker, 2),
+            "gate_taker_pass": taker >= -5,
+            "gate_maker_pass": maker >= -5,
+            "short_top_absorbs_notional": (short.get("top_usd") or 0) >= notional_usd,
+            "long_top_absorbs_notional": (long.get("top_ask_usd") or 0) >= notional_usd,
+            "short_bid_depth_usd": short.get("depth_usd"),
+            "long_ask_depth_usd": long.get("ask_depth_usd"),
+            "hint": "Short fills at short_bid, buy at long_ask. Open when taker_basis_bps >= -5.",
+        }
+
+    @mcp.tool()
+    def get_server_time() -> dict[str, Any]:
+        """Authoritative server time (UTC). Date reports/logs off this rather than
+        the model's clock — matters for scheduled/headless runs."""
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        return {
+            "utc_iso": now.isoformat(),
+            "date": now.strftime("%Y-%m-%d"),
+            "epoch_ms": int(now.timestamp() * 1000),
+        }
+
+    # ----- 3c. Cross-venue transfer planner -----------------------------
+
+    @mcp.tool()
+    def plan_transfer(
+        asset: str, amount: float, from_venue: str, to_venue: str
+    ) -> dict[str, Any]:
+        """Plan a stablecoin move between venues (READ-ONLY — then execute with the
+        source venue's own withdraw tool). Returns the source's withdrawal networks
+        + fees (cheapest first), the receiving deposit address, and — for a Kraken
+        source — the whitelisted addresses (kraken_withdraw needs the 'key').
+
+        from_venue: binance | kraken.  to_venue: binance | kraken | whitebit | hyperliquid.
+        """
+        asset_u = asset.upper()
+        out: dict[str, Any] = {
+            "asset": asset_u, "amount": amount, "from": from_venue, "to": to_venue,
+        }
+
+        nets: list[dict[str, Any]] = []
+        if from_venue == "binance":
+            info = _safe(lambda: _bn._client().get_all_coins_info())
+            for c in info if isinstance(info, list) else []:
+                if c.get("coin") == asset_u:
+                    for n in c.get("networkList") or []:
+                        if n.get("withdrawEnable"):
+                            try:
+                                fee = float(n.get("withdrawFee") or 0)
+                            except (TypeError, ValueError):
+                                fee = None
+                            nets.append({
+                                "network": n.get("network"), "fee": fee,
+                                "min": n.get("withdrawMin"),
+                            })
+        elif from_venue == "kraken":
+            methods = _safe(
+                lambda: _kr._private("/0/private/WithdrawMethods", {"asset": asset_u})
+            )
+            for m in methods if isinstance(methods, list) else []:
+                nets.append({
+                    "network": m.get("network") or m.get("method"),
+                    "minimum": m.get("minimum"),
+                    "fee": "kraken_withdraw dry-run (needs a whitelisted key)",
+                })
+        else:
+            out["source_note"] = f"withdrawal-network lookup not wired for {from_venue}"
+        nets.sort(key=lambda n: n["fee"] if isinstance(n.get("fee"), (int, float)) else 9e9)
+        out["source_networks"] = nets
+        out["cheapest_network"] = nets[0]["network"] if nets else None
+
+        if to_venue == "hyperliquid":
+            out["dest"] = {"venue": "hyperliquid", "note": (
+                "HL takes USDC via the Arbitrum bridge — a CEX withdrawal can't deposit to HL "
+                "directly. Withdraw to your own Arbitrum wallet, deposit to HL (credits the "
+                "MASTER), then transfer master->sub.")}
+        elif to_venue == "binance":
+            net = out.get("cheapest_network")
+            addr = _safe(
+                lambda: _bn._client().get_deposit_address(coin=asset_u, network=net)
+            ) if net else None
+            out["dest"] = {
+                "venue": "binance", "network": net,
+                "address": addr.get("address") if isinstance(addr, dict) else None,
+            }
+        elif to_venue == "kraken":
+            out["dest"] = {"venue": "kraken",
+                           "note": "kraken_get_deposit_methods(asset) -> kraken_get_deposit_address(asset, method)"}
+        elif to_venue == "whitebit":
+            out["dest"] = {"venue": "whitebit",
+                           "note": "whitebit_get_deposit_address(ticker, network)"}
+
+        if from_venue == "kraken":
+            wl = _safe(lambda: _kr._private("/0/private/WithdrawAddresses", {"asset": asset_u}))
+            out["kraken_whitelisted"] = [
+                {"key": w.get("key"), "address": w.get("address"), "method": w.get("method")}
+                for w in (wl if isinstance(wl, list) else [])
+            ]
+            out["note"] = "Kraken withdraws only to a whitelisted address — pass its 'key' to kraken_withdraw."
+
+        return out
 
     # ----- 4. Aggregated NAV + idle-cash flagger ------------------------
 
@@ -1770,4 +2004,4 @@ def register(mcp: FastMCP) -> int:
 
         return out
 
-    return 14
+    return 17

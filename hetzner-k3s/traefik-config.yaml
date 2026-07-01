@@ -60,7 +60,3 @@ spec:
           default: true
         exposedPort: 5349
         protocol: TCP
-
-    logs:
-      access:
-        enabled: true

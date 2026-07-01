@@ -113,6 +113,25 @@ def register(mcp: FastMCP) -> int:
         Useful for figuring out cross-exchange transfer costs."""
         return _private("/api/v4/main-account/fee")
 
+    @mcp.tool()
+    def whitebit_get_orderbook(market: str, limit: int = 10) -> dict[str, Any]:
+        """WhiteBIT SPOT order book: best bid/ask, spread (bps), top levels.
+        market e.g. "SUI_USDT" (or "SUI" — auto-suffixed to _USDT)."""
+        m = market.upper() if "_" in market else f"{market.upper()}_USDT"
+        ob = _public(f"/api/v4/public/orderbook/{m}", {"limit": min(max(limit, 1), 100)})
+        bids = [[float(p), float(q)] for p, q in (ob.get("bids") or [])]
+        asks = [[float(p), float(q)] for p, q in (ob.get("asks") or [])]
+        bb = bids[0][0] if bids else None
+        ba = asks[0][0] if asks else None
+        return {
+            "market": m,
+            "best_bid": bb,
+            "best_ask": ba,
+            "spread_bps": (ba - bb) / bb * 1e4 if bb and ba else None,
+            "bids": bids,
+            "asks": asks,
+        }
+
     # ----- Spot trading (v4 trade account) ------------------------------
 
     @mcp.tool()
@@ -331,4 +350,4 @@ def register(mcp: FastMCP) -> int:
             ],
         }
 
-    return 18
+    return 19

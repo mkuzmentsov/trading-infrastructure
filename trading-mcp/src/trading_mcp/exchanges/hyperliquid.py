@@ -160,6 +160,17 @@ def _exchange():
     return Exchange(wallet, _base_url(), account_address=_master_address())
 
 
+@lru_cache(maxsize=1)
+def _master_exchange():
+    """Exchange scoped to the MASTER (no vaultAddress). Required for account-level
+    actions — external withdrawals and sub-account transfers — which operate on the
+    master, not a sub. (When no vault is configured this equals _exchange().)"""
+    from eth_account import Account
+    from hyperliquid.exchange import Exchange
+    wallet = Account.from_key(os.environ["HYPERLIQUID_API_PRIVATE_KEY"])
+    return Exchange(wallet, _base_url(), account_address=_master_address())
+
+
 def _annualize_funding(hourly: float) -> float:
     """Convert HL's hourly funding rate to an APR (× 24 × 365)."""
     return hourly * 24 * 365
@@ -186,6 +197,28 @@ def register(mcp: FastMCP) -> int:
     def hyperliquid_get_all_mids() -> dict[str, str]:
         """Latest mid prices for every Hyperliquid coin keyed by coin name."""
         return _info().all_mids()
+
+    @mcp.tool()
+    def hyperliquid_get_orderbook(coin: str, depth: int = 10) -> dict[str, Any]:
+        """Hyperliquid perp order book: best bid/ask, spread (bps), top levels +
+        USD depth. A short fills at the BID — use this (not all_mids/mark) for
+        accurate carry entry pricing."""
+        l2 = _info().l2_snapshot(coin.upper())
+        lv = l2.get("levels") or [[], []]
+        bids = [[float(x["px"]), float(x["sz"])] for x in (lv[0] or [])[:depth]]
+        asks = [[float(x["px"]), float(x["sz"])] for x in (lv[1] or [])[:depth]]
+        bb = bids[0][0] if bids else None
+        ba = asks[0][0] if asks else None
+        return {
+            "coin": coin.upper(),
+            "best_bid": bb,
+            "best_ask": ba,
+            "spread_bps": (ba - bb) / bb * 1e4 if bb and ba else None,
+            "bid_depth_usd": sum(p * q for p, q in bids),
+            "ask_depth_usd": sum(p * q for p, q in asks),
+            "bids": bids,
+            "asks": asks,
+        }
 
     @mcp.tool()
     def hyperliquid_get_funding_rates() -> list[dict[str, Any]]:
@@ -224,6 +257,43 @@ def register(mcp: FastMCP) -> int:
     def hyperliquid_get_perp_account() -> dict[str, Any]:
         """Hyperliquid perp account: positions, margin summary, account value."""
         return _info().user_state(_account_address())
+
+    @mcp.tool()
+    def hyperliquid_get_accounts_overview() -> dict[str, Any]:
+        """Perp account value + open positions for BOTH the master and the
+        configured sub. The MCP TRADES the sub, but bridge deposits credit the
+        MASTER — use this to see where collateral actually landed and whether a
+        master→sub transfer is needed before opening."""
+        info = _info()
+        master = _master_address()
+        target = _target_address()
+
+        def _summ(addr: str) -> dict[str, Any]:
+            us = info.user_state(addr) or {}
+            ms = us.get("marginSummary") or {}
+            return {
+                "address": addr,
+                "account_value": ms.get("accountValue"),
+                "withdrawable": us.get("withdrawable"),
+                "open_positions": [
+                    {
+                        "coin": (p.get("position") or {}).get("coin"),
+                        "szi": (p.get("position") or {}).get("szi"),
+                        "entryPx": (p.get("position") or {}).get("entryPx"),
+                        "liquidationPx": (p.get("position") or {}).get("liquidationPx"),
+                    }
+                    for p in (us.get("assetPositions") or [])
+                    if float((p.get("position") or {}).get("szi") or 0) != 0
+                ],
+            }
+
+        out: dict[str, Any] = {
+            "trading_account": "sub" if _vault_address() else "master",
+            "master": _summ(master),
+        }
+        if target != master:
+            out["sub"] = _summ(target)
+        return out
 
     @mcp.tool()
     def hyperliquid_get_spot_balances() -> dict[str, Any]:
@@ -380,7 +450,9 @@ def register(mcp: FastMCP) -> int:
     def hyperliquid_withdraw_usdc(
         destination: str, amount: float, confirm: bool = False
     ) -> dict[str, Any]:
-        """Withdraw USDC from Hyperliquid to an Arbitrum address.
+        """Withdraw USDC from Hyperliquid to an Arbitrum address (~$1 bridge fee,
+        deducted from the amount). Withdraws from the configured account/sub —
+        funds must already be on it (use hyperliquid_transfer_subaccount for a sub).
 
         Safety: ``confirm`` must be ``True`` to submit. Otherwise dry-run.
         """
@@ -391,7 +463,39 @@ def register(mcp: FastMCP) -> int:
                 "destination": destination,
                 "amount": amount,
             }
-        return _exchange().send_usd(destination, amount)
+        # Withdrawals are a MASTER-level action — funds must be on the master
+        # (use hyperliquid_transfer_subaccount to pull from a sub first).
+        return _master_exchange().withdraw_from_bridge(amount, destination)
+
+    @mcp.tool()
+    def hyperliquid_transfer_subaccount(
+        usd_amount: float,
+        to_master: bool = True,
+        sub_address: str | None = None,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        """Move USDC between the master and a sub-account.
+
+        to_master=True : sub -> master (do this before an external withdrawal).
+        to_master=False: master -> sub.
+        sub_address defaults to the configured HYPERLIQUID_VAULT_ADDRESS sub.
+
+        Safety: confirm=True to submit; otherwise dry-run.
+        """
+        sub = sub_address or _vault_address()
+        if not sub:
+            return {"error": "no sub-account set (HYPERLIQUID_VAULT_ADDRESS) and none passed"}
+        if not confirm:
+            return {
+                "dry_run": True,
+                "warning": "Set confirm=True to actually submit this transfer.",
+                "sub_account": sub,
+                "direction": "sub->master" if to_master else "master->sub",
+                "usd_amount": usd_amount,
+            }
+        # HL's subAccountTransfer `usd` is micro-USDC (6 decimals): $1 = 1_000_000.
+        usd = int(round(usd_amount * 1_000_000))
+        return _master_exchange().sub_account_transfer(sub, is_deposit=(not to_master), usd=usd)
 
     @mcp.tool()
     def hyperliquid_get_deposit_info() -> dict[str, Any]:
@@ -442,4 +546,4 @@ def register(mcp: FastMCP) -> int:
         rows.sort(key=lambda r: r["hourly"], reverse=(side.lower() == "short"))
         return {"side": side.lower(), "top": rows[:top_n]}
 
-    return 19
+    return 22

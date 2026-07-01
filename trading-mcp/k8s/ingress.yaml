@@ -1,0 +1,27 @@
+# HTTPS ingress for the MCP. Traefik terminates TLS; cert-manager issues the
+# Let's Encrypt cert via HTTP-01 (needs mcp.kuzmentsov.com -> LB IP in DNS first).
+# Auth is enforced by the app itself (bearer token), so the ingress just routes.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trading-mcp
+  namespace: trading-mcp
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - mcp.kuzmentsov.com
+      secretName: trading-mcp-tls
+  rules:
+    - host: mcp.kuzmentsov.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: trading-mcp
+                port:
+                  number: 8765

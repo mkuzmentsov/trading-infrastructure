@@ -51,6 +51,24 @@ def validate() -> dict[str, Any]:
     }
 
 
+def _fmt_book(bids: Any, asks: Any) -> dict[str, Any]:
+    """Normalize an order book to best bid/ask + spread(bps) + float levels."""
+    b = [[float(p), float(q)] for p, q in (bids or [])]
+    a = [[float(p), float(q)] for p, q in (asks or [])]
+    bb = b[0][0] if b else None
+    ba = a[0][0] if a else None
+    spread = (ba - bb) / bb * 1e4 if bb and ba else None
+    return {
+        "best_bid": bb,
+        "best_ask": ba,
+        "spread_bps": spread,
+        "bid_depth_usd": sum(p * q for p, q in b),
+        "ask_depth_usd": sum(p * q for p, q in a),
+        "bids": b,
+        "asks": a,
+    }
+
+
 def register(mcp: FastMCP) -> int:
     """Attach Binance tools to the MCP server. Returns count, or 0 if skipped."""
     if not _credentials_present():
@@ -213,8 +231,61 @@ def register(mcp: FastMCP) -> int:
 
     @mcp.tool()
     def binance_get_futures_account() -> dict[str, Any]:
-        """Binance USDⓈ-M futures account: balances, positions, margin."""
-        return _client().futures_account()
+        """Binance USDⓈ-M futures account — trimmed to totals + non-zero assets
+        and open positions (the raw payload is ~300k chars and blows the token cap)."""
+        a = _client().futures_account()
+
+        def _nz(v: Any) -> bool:
+            try:
+                return float(v or 0) != 0
+            except (TypeError, ValueError):
+                return False
+
+        return {
+            "totalWalletBalance": a.get("totalWalletBalance"),
+            "totalMarginBalance": a.get("totalMarginBalance"),
+            "availableBalance": a.get("availableBalance"),
+            "totalUnrealizedProfit": a.get("totalUnrealizedProfit"),
+            "totalInitialMargin": a.get("totalInitialMargin"),
+            "totalMaintMargin": a.get("totalMaintMargin"),
+            "assets": [x for x in a.get("assets", []) if _nz(x.get("walletBalance"))],
+            "positions": [p for p in a.get("positions", []) if _nz(p.get("positionAmt"))],
+        }
+
+    @mcp.tool()
+    def binance_get_orderbook(symbol: str, limit: int = 10) -> dict[str, Any]:
+        """Binance SPOT order book: best bid/ask, spread (bps), and top levels.
+        symbol e.g. "SUIUSDT". Use for accurate entry pricing (buy at ask)."""
+        ob = _client().get_order_book(symbol=symbol.upper(), limit=min(max(limit, 1), 100))
+        return _fmt_book(ob.get("bids"), ob.get("asks"))
+
+    @mcp.tool()
+    def binance_get_futures_orderbook(symbol: str, limit: int = 10) -> dict[str, Any]:
+        """Binance USDⓈ-M futures order book: best bid/ask, spread (bps), top levels.
+        symbol e.g. "SUIUSDT". Short fills at the bid."""
+        ob = _client().futures_order_book(symbol=symbol.upper(), limit=min(max(limit, 1), 100))
+        return _fmt_book(ob.get("bids"), ob.get("asks"))
+
+    @mcp.tool()
+    def binance_get_withdraw_networks(coin: str) -> list[dict[str, Any]]:
+        """Withdrawal networks for a coin with per-network fee + min + enabled flags
+        — pick the cheapest network BEFORE withdrawing. From Binance capital config."""
+        coin_u = coin.upper()
+        for c in _client().get_all_coins_info():
+            if c.get("coin") == coin_u:
+                return [
+                    {
+                        "network": n.get("network"),
+                        "name": n.get("name"),
+                        "withdrawFee": n.get("withdrawFee"),
+                        "withdrawMin": n.get("withdrawMin"),
+                        "withdrawEnable": n.get("withdrawEnable"),
+                        "depositEnable": n.get("depositEnable"),
+                        "estimatedArrivalMin": n.get("estimatedArrivalTime"),
+                    }
+                    for n in (c.get("networkList") or [])
+                ]
+        return []
 
     @mcp.tool()
     def binance_get_futures_positions(symbol: str | None = None) -> list[dict]:
@@ -824,4 +895,4 @@ def register(mcp: FastMCP) -> int:
             kwargs["withdrawOrderId"] = withdraw_order_id
         return _client().withdraw(**kwargs)
 
-    return 39  # number of tools registered above
+    return 42  # number of tools registered above

@@ -15,7 +15,14 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from .exchanges import aggregator, binance, hyperliquid, kraken, whitebit
+from .exchanges import (
+    aggregator,
+    binance,
+    hyperliquid,
+    kraken,
+    kraken_futures,
+    whitebit,
+)
 
 log = logging.getLogger("trading-mcp")
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -25,7 +32,7 @@ mcp = FastMCP("trading-mcp")
 
 def _register_all() -> None:
     summary: list[str] = []
-    for module in (binance, kraken, hyperliquid, whitebit, aggregator):
+    for module in (binance, kraken, kraken_futures, hyperliquid, whitebit, aggregator):
         short = module.__name__.rsplit(".", 1)[-1]
         try:
             registered = module.register(mcp)
@@ -73,8 +80,53 @@ def main() -> None:
     port = int(os.environ.get("MCP_PORT", "8765"))
     mcp.settings.host = host
     mcp.settings.port = port
+
+    # DNS-rebinding protection validates the Host header. Behind an ingress the
+    # forwarded Host is the public domain, not localhost, so it must be allowed
+    # explicitly. MCP_ALLOWED_HOSTS="host1,host2" allows those (and any :port
+    # variant); "*" disables the check (we still have TLS + bearer auth in front).
+    allowed_hosts = os.environ.get("MCP_ALLOWED_HOSTS", "").strip()
+    if allowed_hosts:
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        if allowed_hosts == "*":
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False
+            )
+            log.info("DNS-rebinding protection DISABLED (MCP_ALLOWED_HOSTS=*)")
+        else:
+            hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
+            host_patterns = [p for h in hosts for p in (h, f"{h}:*")]
+            origins_env = os.environ.get("MCP_ALLOWED_ORIGINS", "").strip()
+            if origins_env:
+                origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+            else:
+                origins = [p for h in hosts for p in (f"https://{h}", f"https://{h}:*")]
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=host_patterns,
+                allowed_origins=origins,
+            )
+            log.info("DNS-rebinding protection ON; allowed_hosts=%s", host_patterns)
+
+    app = mcp.streamable_http_app()
+
+    token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
+    if token:
+        from .auth import BearerAuthMiddleware
+
+        app.add_middleware(BearerAuthMiddleware, token=token)
+        log.info("Bearer-token auth ENABLED")
+    else:
+        log.warning(
+            "MCP_AUTH_TOKEN not set — auth DISABLED. Only safe on loopback; "
+            "never expose this server publicly without a token."
+        )
+
+    import uvicorn
+
     log.info("Starting trading-mcp on %s:%s (streamable-http)", host, port)
-    mcp.run(transport="streamable-http")
+    uvicorn.run(app, host=host, port=port, log_level=os.environ.get("LOG_LEVEL", "info").lower())
 
 
 if __name__ == "__main__":

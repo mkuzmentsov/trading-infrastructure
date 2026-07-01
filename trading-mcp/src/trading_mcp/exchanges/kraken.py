@@ -23,6 +23,10 @@ from mcp.server.fastmcp import FastMCP
 
 _BASE = "https://api.kraken.com"
 
+_STABLE_ASSETS = {
+    "USDT", "USDC", "USD", "DAI", "USDG", "PYUSD", "EURC", "EUR", "GBP", "CHF", "AUD", "CAD",
+}
+
 
 def _credentials_present() -> bool:
     return bool(os.environ.get("KRAKEN_API_KEY") and os.environ.get("KRAKEN_API_SECRET"))
@@ -174,6 +178,52 @@ def register(mcp: FastMCP) -> int:
         """All open Kraken spot orders (keyed by txid)."""
         return _private("/0/private/OpenOrders")
 
+    @mcp.tool()
+    def kraken_get_orderbook(pair: str, count: int = 10) -> dict[str, Any]:
+        """Kraken SPOT order book: best bid/ask, spread (bps), top levels. `pair`
+        like "SUIUSD", "XBTUSD" (BTC auto-mapped to XBT) or "SUI/USD". Note most
+        alts are USD-quoted on Kraken (no USDT pair)."""
+        p = _norm_pair(pair)
+        r = httpx.get(
+            f"{_BASE}/0/public/Depth",
+            params={"pair": p, "count": min(max(count, 1), 100)},
+            timeout=20,
+        )
+        r.raise_for_status()
+        res = (r.json() or {}).get("result") or {}
+        if not res:
+            return {"pair": p, "error": "no book — check the pair code (alts are usually <COIN>USD)"}
+        book = next(iter(res.values()))
+        bids = [[float(px), float(q)] for px, q, *_ in (book.get("bids") or [])]
+        asks = [[float(px), float(q)] for px, q, *_ in (book.get("asks") or [])]
+        bb = bids[0][0] if bids else None
+        ba = asks[0][0] if asks else None
+        return {
+            "pair": p,
+            "best_bid": bb,
+            "best_ask": ba,
+            "spread_bps": (ba - bb) / bb * 1e4 if bb and ba else None,
+            "bids": bids,
+            "asks": asks,
+        }
+
+    @mcp.tool()
+    def kraken_wallet_transfer(
+        asset: str, amount: float, to_futures: bool = True
+    ) -> dict[str, Any]:
+        """Move funds between Kraken SPOT and FUTURES wallets (internal, no fee) —
+        fills the Kraken Futures margin from spot without an external withdrawal.
+        to_futures=True: spot→futures. False: futures→spot. asset e.g. "USDT","USDC"."""
+        src, dst = (
+            ("Spot Wallet", "Futures Wallet")
+            if to_futures
+            else ("Futures Wallet", "Spot Wallet")
+        )
+        return _private(
+            "/0/private/WalletTransfer",
+            {"asset": asset.upper(), "from": src, "to": dst, "amount": str(amount)},
+        )
+
     # ----- Funding: deposit / withdraw (cross-venue transfers) ----------
 
     @mcp.tool()
@@ -194,14 +244,18 @@ def register(mcp: FastMCP) -> int:
         return _private("/0/private/DepositAddresses", params)
 
     @mcp.tool()
-    def kraken_get_withdraw_addresses(asset: str | None = None) -> dict[str, Any]:
+    def kraken_get_withdraw_addresses(asset: str | None = None) -> list[dict[str, Any]]:
         """List Kraken's pre-whitelisted withdrawal addresses. The `key` (the
         description you set in the UI) is what kraken_withdraw requires — Kraken
-        only withdraws to addresses whitelisted there."""
+        only withdraws to addresses whitelisted there.
+
+        (WithdrawAddresses returns a LIST, so this tool returns a list — the old
+        dict return type raised a validation error on every call.)"""
         params: dict[str, Any] = {}
         if asset:
             params["asset"] = asset.upper()
-        return _private("/0/private/WithdrawAddresses", params)
+        result = _private("/0/private/WithdrawAddresses", params)
+        return result if isinstance(result, list) else [result] if result else []
 
     @mcp.tool()
     def kraken_withdraw(
@@ -222,6 +276,14 @@ def register(mcp: FastMCP) -> int:
                 "warning": "Set confirm=True to actually submit this withdrawal.",
             }
         return _private("/0/private/Withdraw", params)
+
+    @mcp.tool()
+    def kraken_get_withdraw_methods(asset: str) -> list[dict[str, Any]]:
+        """Supported withdrawal networks for an asset (e.g. "USDT") — use to pick a
+        network before whitelisting. Fees are NOT in this response; get the exact
+        fee from a kraken_withdraw dry-run (confirm=False) once a key is whitelisted."""
+        result = _private("/0/private/WithdrawMethods", {"asset": asset.upper()})
+        return result if isinstance(result, list) else [result] if result else []
 
     @mcp.tool()
     def kraken_get_withdraw_status(asset: str | None = None) -> dict[str, Any]:
@@ -273,21 +335,34 @@ def register(mcp: FastMCP) -> int:
         result = _private("/0/private/Earn/Strategies", params)
         items = (result or {}).get("items") or []
         ranked = sorted(items, key=_strategy_apr, reverse=True)[:top_n]
-        return {
-            "top": [
-                {
-                    "strategy_id": s.get("id"),
-                    "asset": s.get("asset"),
-                    "apr_estimate": s.get("apr_estimate"),
-                    "lock_type": (s.get("lock_type") or {}).get("type"),
-                    "user_min_allocation": s.get("user_min_allocation"),
-                    "user_cap": s.get("user_cap"),
-                    "can_allocate": s.get("can_allocate"),
-                    "can_deallocate": s.get("can_deallocate"),
-                    "rewards": s.get("rewards"),
-                }
-                for s in ranked
-            ],
-        }
 
-    return 17
+        def _row(s: dict[str, Any]) -> dict[str, Any]:
+            apr = _strategy_apr(s)
+            asset_u = (s.get("asset") or "").upper()
+            can_alloc = s.get("can_allocate")
+            # Kraken's apr_estimate is unreliable — it has reported 10–15% on BTC
+            # when the real rate was ~2%. Flag implausible non-stable rates and
+            # anything you can't actually allocate to, so they don't feed a decision.
+            suspect = (apr > 0.05 and asset_u not in _STABLE_ASSETS) or not can_alloc
+            return {
+                "strategy_id": s.get("id"),
+                "asset": s.get("asset"),
+                "apr_estimate": s.get("apr_estimate"),
+                "apr_frac": apr,
+                "apr_suspect": suspect,
+                "apr_note": (
+                    "estimate unverified — confirm in the Kraken app before crediting"
+                    if suspect
+                    else None
+                ),
+                "lock_type": (s.get("lock_type") or {}).get("type"),
+                "user_min_allocation": s.get("user_min_allocation"),
+                "user_cap": s.get("user_cap"),
+                "can_allocate": can_alloc,
+                "can_deallocate": s.get("can_deallocate"),
+                "rewards": s.get("rewards"),
+            }
+
+        return {"top": [_row(s) for s in ranked]}
+
+    return 20
