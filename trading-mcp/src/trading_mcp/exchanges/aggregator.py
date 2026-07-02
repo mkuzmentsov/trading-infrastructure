@@ -39,6 +39,14 @@ def _safe(call):
         return {"error": str(e)}
 
 
+def _f(v: Any) -> float | None:
+    """Parse a numeric string/None to float, or None."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _binance_spot_price(symbol: str) -> float | None:
     """USDT-quoted spot price for a coin via Binance, or None on failure."""
     if not _bn._credentials_present():
@@ -705,6 +713,92 @@ def register(mcp: FastMCP) -> int:
             out["note"] = "Kraken withdraws only to a whitelisted address — pass its 'key' to kraken_withdraw."
 
         return out
+
+    @mcp.tool()
+    def withdraw_fee(
+        asset: str, from_venue: str, network: str | None = None
+    ) -> dict[str, Any]:
+        """Withdrawal fee for an asset from a venue, per network (cheapest first) —
+        call this before shuffling capital so the move only fires if worth it.
+        from_venue: binance | bybit | bitget | mexc | whitebit | hyperliquid | kraken.
+        Returns {venue, asset, networks:[{network, fee, min}], cheapest, note?}.
+        Fees are in the ASSET's units (for stablecoins ≈ USD)."""
+        import httpx as _hx
+
+        asset_u = asset.upper()
+        nets: list[dict[str, Any]] = []
+        note: str | None = None
+
+        if from_venue == "binance":
+            info = _safe(lambda: _bn._client().get_all_coins_info())
+            for c in info if isinstance(info, list) else []:
+                if c.get("coin") == asset_u:
+                    for n in c.get("networkList") or []:
+                        if n.get("withdrawEnable"):
+                            nets.append({"network": n.get("network"), "fee": _f(n.get("withdrawFee")), "min": n.get("withdrawMin")})
+        elif from_venue == "bybit":
+            res = _safe(lambda: _by._request("GET", "/v5/asset/coin/query-info", {"coin": asset_u}))
+            for row in ((res.get("rows") if isinstance(res, dict) else None) or []):
+                if (row.get("coin") or "").upper() == asset_u:
+                    for ch in row.get("chains") or []:
+                        nets.append({"network": ch.get("chain"), "fee": _f(ch.get("withdrawFee")), "min": ch.get("withdrawMin")})
+        elif from_venue == "bitget":
+            r = _safe(lambda: _hx.get("https://api.bitget.com/api/v2/spot/public/coins", params={"coin": asset_u}, timeout=15).json())
+            for c in ((r.get("data") if isinstance(r, dict) else None) or []):
+                for ch in c.get("chains") or []:
+                    nets.append({"network": ch.get("chain"), "fee": _f(ch.get("withdrawFee")), "min": ch.get("minWithdrawAmount")})
+        elif from_venue == "mexc":
+            info = _safe(lambda: _mx._signed("GET", "/api/v3/capital/config/getall"))
+            for c in info if isinstance(info, list) else []:
+                if (c.get("coin") or "").upper() == asset_u:
+                    for n in c.get("networkList") or []:
+                        nets.append({"network": n.get("network") or n.get("netWork"), "fee": _f(n.get("withdrawFee")), "min": n.get("withdrawMin")})
+        elif from_venue == "whitebit":
+            fees = _safe(lambda: _wb._private("/api/v4/main-account/fee"))
+            entry = fees.get(asset_u) if isinstance(fees, dict) else None
+            if isinstance(entry, dict):
+                wd = entry.get("withdraw") or {}
+                nets.append({"network": "default", "fee": _f(wd.get("fixed")), "min": wd.get("min_amount"), "flex_pct": wd.get("flex")})
+            note = "WhiteBIT may add a % (flex) on top of the fixed fee; see whitebit_get_fee_schedule for per-network detail."
+        elif from_venue == "hyperliquid":
+            nets.append({"network": "arbitrum", "fee": 1.0, "min": None})
+            note = "HL USDC withdrawal to Arbitrum is a flat ~$1."
+        elif from_venue == "kraken":
+            note = "Kraken doesn't expose withdrawal fees pre-whitelist — use kraken_withdraw(confirm=False) on a whitelisted key for the exact fee, or kraken_get_withdraw_methods for networks."
+        else:
+            return {"error": f"unknown venue '{from_venue}'"}
+
+        priced = sorted([n for n in nets if isinstance(n.get("fee"), (int, float))], key=lambda n: n["fee"])
+        if network:
+            match = next((n for n in nets if (n.get("network") or "").upper() == network.upper()), None)
+            return {"venue": from_venue, "asset": asset_u, "network": network,
+                    "fee": (match or {}).get("fee"), "networks": nets, "note": note}
+        return {"venue": from_venue, "asset": asset_u, "networks": nets,
+                "cheapest": priced[0] if priced else None, "note": note}
+
+    @mcp.tool()
+    def estimate_rebalance_cost(moves: list[dict[str, Any]]) -> dict[str, Any]:
+        """Total withdrawal fees for a multi-leg shuffle. `moves` = list of
+        {asset, from_venue, network?(optional)}. Returns each move's cheapest fee
+        + the summed total (asset units; for stablecoins ≈ USD). Use to decide
+        whether a rebalance's benefit beats the fees before executing."""
+        out: list[dict[str, Any]] = []
+        total = 0.0
+        for m in moves or []:
+            info = withdraw_fee(m.get("asset"), m.get("from_venue"), m.get("network"))
+            if m.get("network"):
+                fee, net = info.get("fee"), m.get("network")
+            else:
+                ch = info.get("cheapest") or {}
+                fee, net = ch.get("fee"), ch.get("network")
+            if isinstance(fee, (int, float)):
+                total += fee
+            out.append({**m, "network": net, "fee": fee})
+        return {
+            "moves": out,
+            "total_fee": round(total, 6),
+            "note": "Fees in each asset's units (stablecoins ≈ USD). Kraken legs need a whitelisted-key dry-run for the exact fee.",
+        }
 
     # ----- 4. Aggregated NAV + idle-cash flagger ------------------------
 
@@ -2175,4 +2269,4 @@ def register(mcp: FastMCP) -> int:
 
         return out
 
-    return 17
+    return 19
