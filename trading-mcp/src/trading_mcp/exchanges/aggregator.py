@@ -67,6 +67,19 @@ def _usd_value(asset: str, qty: float) -> float | None:
     px = _binance_spot_price(asset_u + "USDT")
     if px is not None:
         return qty * px
+    # Fallback: WhiteBIT public ticker (prices venue tokens like WBT that have
+    # no Binance pair). Public endpoint — no creds needed.
+    try:
+        import httpx
+
+        r = httpx.get("https://whitebit.com/api/v4/public/ticker", timeout=10)
+        r.raise_for_status()
+        t = (r.json() or {}).get(f"{asset_u}_USDT") or {}
+        last = t.get("last_price")
+        if last is not None:
+            return qty * float(last)
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
@@ -836,9 +849,16 @@ def register(mcp: FastMCP) -> int:
                 c = _bn._client()
                 spot = c.get_account().get("balances", [])
                 for b in spot:
+                    asset = b["asset"]
+                    # LD-prefixed balances are Binance Earn wrapper tokens
+                    # (LDSUI, LDUSDT, ...) — the SAME funds are reported by the
+                    # Simple Earn positions call below; counting both would
+                    # double-count (and they're unpriceable as symbols anyway).
+                    if asset.startswith("LD") and len(asset) > 2:
+                        continue
                     q = float(b["free"]) + float(b["locked"])
                     if q > 0:
-                        _track("binance", b["asset"], q, "spot")
+                        _track("binance", asset, q, "spot")
                 try:
                     fut = c.futures_account()
                     for a in fut.get("assets", []):
@@ -878,6 +898,21 @@ def register(mcp: FastMCP) -> int:
                 return True
 
             per_venue["kraken"] = {"status": "ok" if _safe(_kr_nav) is True else "error"}
+
+        if _krf._credentials_present():
+            def _krf_nav():
+                accounts = _krf._request("GET", "/api/v3/accounts").get("accounts") or {}
+                flex = accounts.get("flex") or {}
+                for ccy, info in (flex.get("currencies") or {}).items():
+                    try:
+                        q = float((info or {}).get("quantity") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if q > 0:
+                        _track("kraken_futures", ccy.upper(), q, "futures_flex")
+                return True
+
+            per_venue["kraken_futures"] = {"status": "ok" if _safe(_krf_nav) is True else "error"}
 
         if _wb._credentials_present():
             def _wb_nav():
