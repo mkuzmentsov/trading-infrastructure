@@ -34,9 +34,19 @@ unbiased (q ≈ p), directional PnL ≈ 0 and **rebates are pure profit**. The r
 only if adverse selection keeps q within ~0.7pp of p. Paper logs measure exactly this:
 q-vs-p per price bucket from `paper_fill` + `paper_bar_settle` events.
 
-**Backlog:** A/B the `two_sided` pair-lock mode (quote both tokens, both-fill locks
-1−(b_u+b_d) risk-free) against one-sided — e.g. run 2 coins per mode over the same week and
-compare net PnL after adverse selection. The two-sided code is implemented and config-gated.
+**Backlog:**
+- A/B the `two_sided` pair-lock mode (quote both tokens, both-fill locks 1−(b_u+b_d)
+  risk-free) against one-sided — e.g. run 2 coins per mode over the same week and compare
+  net PnL after adverse selection. The two-sided code is implemented and config-gated.
+- **Stop-vs-no-stop recovery analysis** (bracket mode): the 10c taker stop saves 10c/share
+  on truly-dead bars but costs 90c/share whenever a 10c-toucher recovers to win —
+  breakeven recovery rate ≈ 10%. From paper logs, measure P(win | position touched
+  STOP_LOSS_PRICE): join `paper_stop_fired` events against the bar's final outcome
+  (and, for no-stop counterfactual, bars where the mark dipped ≤ 0.10 but settled a win).
+  If recovery > ~10%, drop the stop (hold to expiry); if ≪ 10%, keep it. Note: a maker
+  "stop" (resting sell below the bid) is impossible on a CLOB — it executes immediately
+  as a taker at the bid; the only maker variant fills on recovery only, i.e. it isn't a stop.
+  Taker fee at 10c is tiny anyway (0.07 × 0.1 × 0.9 ≈ 0.63%).
 
 The killer: **adverse selection late in the bar** — informed flow (our own old math_smart bot
 was exactly this taker!) hits stale quotes when the BTC move is already known. Mitigations
