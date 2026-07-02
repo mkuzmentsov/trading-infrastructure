@@ -47,6 +47,24 @@ q-vs-p per price bucket from `paper_fill` + `paper_bar_settle` events.
   "stop" (resting sell below the bid) is impossible on a CLOB — it executes immediately
   as a taker at the bid; the only maker variant fills on recovery only, i.e. it isn't a stop.
   Taker fee at 10c is tiny anyway (0.07 × 0.1 × 0.9 ≈ 0.63%).
+- **CLV (closing-line value) scoring** — from sports betting (Wong): score every paper fill
+  against the bar's final pre-expiry price, not just win/loss. `clv = final_price − fill_price`
+  per fill. Converges to edge-quality in hours (hundreds of fills) instead of days of PnL;
+  a persistently negative CLV = adverse selection, measurable per price bucket / time-in-bar.
+- **Risk-of-ruin sizing for go-live** — Chen/Ankenman (Mathematics of Poker) bankroll formulas:
+  given measured per-bar edge and variance from paper, compute the bankroll for <1% ruin and
+  size live bets from it (we did the same for the algo-trading leverage frontier).
+- **Glosten-Milgrom quote conditioning** — a fill is evidence against you (the counterparty
+  chose to trade). Ideas to test: after a fill, widen/skip the next bar's quote on that coin;
+  skew the quote price by recent fill direction (inventory-aware quoting à la
+  Avellaneda-Stoikov); require the book to be two-sided-deep before resting (thin opposite
+  side = informed flow more likely).
+- **Time-in-bar fill quality** — bucket fills by seconds-since-bar-open; if early fills are
+  ~unbiased and late fills are toxic (expected), tighten the quoting window to the measured
+  sweet spot instead of the fixed warmup/cutoff.
+- **Kelly-fraction per-bar sizing** — once p_up calibration is measured from paper logs
+  (predicted p_up vs realized outcome), size entries by fractional Kelly on the calibrated
+  edge instead of fixed QUOTE_SIZE.
 
 The killer: **adverse selection late in the bar** — informed flow (our own old math_smart bot
 was exactly this taker!) hits stale quotes when the BTC move is already known. Mitigations
