@@ -56,7 +56,12 @@ from config import (
     EVAL_INTERVAL_SECS,
     FEED_STALE_SECS,
     HOLD_TO_EXPIRY_DEFAULT,
+    LIVE_MAX_DAILY_LOSS_USD,
+    LIVE_MAX_ORDER_USD,
+    LIVE_TRADING,
     LOOP_INTERVAL,
+    PREDISCOVERY_LEAD_SECS,
+    QUOTE_CUTOFF_SECS,
     MAX_ENTRY_PRICE,
     MIN_ENTRY_PRICE,
     MIN_EDGE,
@@ -86,9 +91,17 @@ from config import (
     WS_HEARTBEAT_SECS,
     log,
 )
+from live_book import ClobAdapter, live_book
 from ml_signal import predict_p_up as ml_predict_p_up
 from paper_book import paper_book
-from pm_ws import pm_state, refresh_pm_quotes_from_rest, run_pm_ws
+from pm_ws import (
+    apply_prefetched_market_now,
+    enable_external_market_apply,
+    pm_state,
+    prefetch_next_market,
+    refresh_pm_quotes_from_rest,
+    run_pm_ws,
+)
 from positions import pos_store
 from user_ws import run_user_ws, set_runtime_creds as _user_ws_set_creds, user_state
 from redemptions import redeem_resolved_positions
@@ -232,9 +245,15 @@ _sell_residual_retries: dict[str, int] = {}
 _pos_heartbeat_ts: float = 0.0  # last time we logged a position status line
 _strategy = build_strategy(STRATEGY_NAME)
 
-# Paper maker mode: maker_rebate simulates resting quotes via paper_book and
-# NEVER touches the CLOB (no client init, no user_ws, no order calls).
-_IS_PAPER_MAKER = PAPER_MODE and getattr(_strategy, "name", "") == "maker_rebate"
+# Maker engine selection. Paper maker: maker_rebate simulates resting quotes
+# via paper_book and NEVER touches the CLOB (no client init, no user_ws, no
+# order calls) — the fleet data-collection path, unchanged. Live maker: same
+# strategy drives live_book (real signed GTC orders). Ambiguous combinations
+# already hard-error inside MakerRebateStrategy.__init__.
+_IS_MAKER = getattr(_strategy, "name", "") == "maker_rebate"
+_IS_PAPER_MAKER = PAPER_MODE and _IS_MAKER
+_IS_LIVE_MAKER = _IS_MAKER and LIVE_TRADING and not PAPER_MODE and not DRY_RUN
+_maker_book = live_book if _IS_LIVE_MAKER else paper_book
 
 
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
@@ -1917,38 +1936,144 @@ async def _try_enter(clob, balance: float) -> None:
 
 
 async def _maker_tick() -> None:
-    """Paper maker loop tick: settle expired bars, match paper fills against
-    the live feed, then bring the two resting quotes in line. No CLOB calls."""
-    assert _IS_PAPER_MAKER, "maker tick reached outside paper maker mode"
+    """Maker loop tick (paper OR live): settle expired bars, match fills, then
+    bring the resting quotes in line. Paper: no CLOB calls, unchanged. Live:
+    the same flow drives live_book (real orders via fire-and-forget tasks)."""
+    assert _IS_PAPER_MAKER or _IS_LIVE_MAKER, "maker tick reached outside maker mode"
+    book = _maker_book
     now = time.time()
     _log_feed_diag()
 
     # Settle/rotate first so stale-bar quotes are flushed before fill checks.
-    paper_book.observe(now)
+    book.observe(now)
 
     if not pm_state.ready or not btc_state.ready:
+        if _IS_LIVE_MAKER:
+            # Live: fills still confirm via user_ws while the market feed warms
+            # up (every fresh bar resets ready); resting orders are
+            # non-marketable by construction so they can safely stay working.
+            book.check_fills(now)
         _log_feed_diag(reason="maker_blocked:not_ready")
         return
     if not _feeds_are_fresh():
         await _refresh_pm_quotes_if_stale("maker_tick")
     if not _feeds_are_fresh():
         _log_feed_diag(force=True, reason="maker_blocked:stale_feeds")
-        # Feeds stale → quotes would be stale too. Pull them.
-        paper_book.cancel_all("stale_feeds", now)
+        if _IS_LIVE_MAKER:
+            # Live orders are non-marketable by construction (never-cross
+            # guard), and pulling them on every feed hiccup would erase the
+            # latency edge at each bar roll (book timestamps reset). Only
+            # clear entries inside the late-bar sniping window.
+            book.check_fills(now)
+            if _seconds_left_in_bar() <= QUOTE_CUTOFF_SECS:
+                book.cancel_entries("stale_feeds_late_bar", now)
+            return
+        # Paper: feeds stale → quotes would be stale too. Pull them.
+        book.cancel_all("stale_feeds", now)
         return
 
     # Fill checks use data that arrived since the previous tick, i.e. while
     # the current quotes were resting — before any repricing below.
-    paper_book.check_fills(now)
+    book.check_fills(now)
 
     seconds_left = _seconds_left_in_bar()
     ctx = _build_strategy_context(0.0, seconds_left, None)
-    _strategy.maintain_quotes(ctx, paper_book, now)
+    _strategy.maintain_quotes(ctx, book, now)
+
+
+# ── Live maker latency path ───────────────────────────────────────────────────
+_ROLL_BURST_SECS = 5.0
+_ROLL_BURST_INTERVAL = 0.25
+
+
+async def _maker_roll_watcher() -> None:
+    """Live maker only. Two hooks per bar:
+
+    T−PREDISCOVERY_LEAD_SECS: pre-discover the NEXT bar's market — the gamma
+    slug is deterministic ({coin}-updown-5m-{next_window_ts}) — and cache it
+    in pm_ws. At bar roll, NO gamma call is needed.
+
+    Bar roll (event-driven, not the 5s eval tick): apply the cached market to
+    pm_state immediately, then run a short maintenance burst that places the
+    entry right away (before the book forms, at min(0.49, ENTRY_PRICE_CAP))
+    and reprices it on the first real snapshot. run_pm_ws detects the
+    externally-applied token ids and resubscribes its WS in-loop."""
+    prefetched_for = 0
+    while True:
+        try:
+            end_ts = pm_state.market_end_ts
+            if end_ts <= 0:
+                await asyncio.sleep(1.0)
+                continue
+            now = time.time()
+            if now < end_ts - PREDISCOVERY_LEAD_SECS:
+                await asyncio.sleep(min(1.0, end_ts - PREDISCOVERY_LEAD_SECS - now))
+                continue
+            if prefetched_for != end_ts and now < end_ts:
+                if await asyncio.to_thread(prefetch_next_market):
+                    prefetched_for = end_ts
+                    log.info(
+                        "Pre-discovery OK — next market cached  next_window_ts=%d  lead=%.1fs",
+                        end_ts, end_ts - time.time(),
+                    )
+                else:
+                    log.warning("Pre-discovery failed — retrying  next_window_ts=%d", end_ts)
+                    await asyncio.sleep(3.0)
+                continue
+            if now < end_ts:
+                await asyncio.sleep(max(0.01, min(0.05, end_ts - now)))
+                continue
+
+            # ── bar roll ──
+            roll_ts = time.time()
+            applied = apply_prefetched_market_now()
+            if applied:
+                await btc_state.set_market_window(pm_state.market_start_ts, pm_state.market_end_ts)
+                log.info(
+                    "Bar roll: prefetched market applied in %.1f ms — placing entry",
+                    (time.time() - roll_ts) * 1000.0,
+                )
+            else:
+                log.warning("Bar roll: no prefetched market — waiting for pm_ws rotation")
+
+            # Maintenance burst: place the entry immediately (first iteration),
+            # then reprice on the first real book snapshot / catch instant fills.
+            deadline = time.time() + _ROLL_BURST_SECS
+            while time.time() < deadline:
+                burst_now = time.time()
+                try:
+                    live_book.observe(burst_now)
+                    live_book.check_fills(burst_now)
+                    if live_book.bar_active():
+                        ctx = _build_strategy_context(0.0, _seconds_left_in_bar(), None)
+                        _strategy.maintain_quotes(ctx, live_book, burst_now)
+                except Exception as exc:
+                    log.exception("Roll burst error: %s", exc)
+                await asyncio.sleep(_ROLL_BURST_INTERVAL)
+        except Exception as exc:
+            log.exception("Maker roll watcher error: %s", exc)
+            await asyncio.sleep(1.0)
+
+
+async def _live_fill_pump() -> None:
+    """Live maker only: sub-second fill confirmation between 5s eval ticks.
+    user_ws pushes fills into user_state; this pump drains them into
+    live_book so TP placement and stop handling never wait for the next
+    eval tick. Cheap: in-memory reads unless something actually filled."""
+    while True:
+        try:
+            now = time.time()
+            live_book.observe(now)
+            live_book.check_fills(now)
+        except Exception as exc:
+            log.exception("Live fill pump error: %s", exc)
+        await asyncio.sleep(0.5)
 
 
 async def _tick(clob) -> None:
-    if _IS_PAPER_MAKER:
-        assert clob is None, "paper maker mode must never hold a CLOB client"
+    if _IS_PAPER_MAKER or _IS_LIVE_MAKER:
+        if _IS_PAPER_MAKER:
+            assert clob is None, "paper maker mode must never hold a CLOB client"
         await _maker_tick()
         return
 
@@ -1996,6 +2121,24 @@ async def main() -> None:
     if _IS_PAPER_MAKER:
         log.info("  PAPER_MODE=true  strategy=maker_rebate — CLOB disabled, all orders simulated")
         paper_book.set_emitter(_write_training_event)
+    if _IS_MAKER and not PAPER_MODE:
+        # Safety gates — ALL must pass or the bot refuses to start live.
+        # (MakerRebateStrategy.__init__ already enforced these; belt-and-braces.)
+        if not LIVE_TRADING:
+            raise RuntimeError("maker live path requires LIVE_TRADING=true explicitly — refusing to start")
+        if DRY_RUN:
+            raise RuntimeError("maker live path with DRY_RUN=true is ambiguous — refusing to start")
+        if not POLYMARKET_PK:
+            raise RuntimeError("maker live path requires POLYMARKET_PK — refusing to start")
+    if _IS_LIVE_MAKER:
+        live_book.set_emitter(_write_training_event)
+        log.warning("#" * 64)
+        log.warning("###                                                          ###")
+        log.warning("###   LIVE LIVE LIVE — REAL ORDERS, REAL MONEY (maker)      ###")
+        log.warning("###   LIVE_MAX_ORDER_USD      = $%-8.2f                    ###", LIVE_MAX_ORDER_USD)
+        log.warning("###   LIVE_MAX_DAILY_LOSS_USD = $%-8.2f                    ###", LIVE_MAX_DAILY_LOSS_USD)
+        log.warning("###                                                          ###")
+        log.warning("#" * 64)
     log.info("  ENTRY_HOLD_TO_EXPIRY=%s  MAX_ENTRY_PRICE=%.2f  ENTRY_MIN_SECS=%d", _strategy.entry_hold_to_expiry(), MAX_ENTRY_PRICE, ENTRY_MIN_SECONDS_LEFT)
     log.info("  BINANCE_WS=%s  BINANCE_STALE=%.1fs", bool(BINANCE_WS_URL), BINANCE_STALE_SECS)
     log.info("  CONFIRMATION_TICKS=%d  ENTRY_MAKER_OFFSET=%.3f", ENTRY_CONFIRMATION_TICKS, ENTRY_MAKER_OFFSET)
@@ -2040,6 +2183,7 @@ async def main() -> None:
 
     last_cleanup_boundary = 0.0
     last_snapshot_condition_id = ""
+    live_wired = False
 
     while True:
         tick_start = time.time()
@@ -2047,6 +2191,17 @@ async def main() -> None:
             if not DRY_RUN and not _IS_PAPER_MAKER and clob is None and btc_state.ready and pm_state.ready and _feeds_are_fresh():
                 log.info("Feeds recovered — initializing trading client")
                 clob = await _init_clob()
+            if _IS_LIVE_MAKER and clob is not None and not live_wired:
+                live_wired = True
+                live_book.set_client(ClobAdapter(clob))
+                enable_external_market_apply()
+                asyncio.create_task(_maker_roll_watcher(), name="maker_roll_watcher")
+                asyncio.create_task(_live_fill_pump(), name="live_fill_pump")
+                log.info(
+                    "LIVE maker wired  clob adapter set, roll watcher (T−%ds pre-discovery + "
+                    "bar-roll immediate entry) + 0.5s fill pump started",
+                    int(PREDISCOVERY_LEAD_SECS),
+                )
             current_cid = pm_state.condition_id
             if clob is not None and current_cid and current_cid != last_snapshot_condition_id:
                 last_snapshot_condition_id = current_cid

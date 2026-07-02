@@ -23,7 +23,12 @@ from config import (
     WS_HEARTBEAT_SECS,
     log,
 )
-from gamma import fetch_btc_5m_market, get_market_window, get_up_down_tokens
+from gamma import (
+    fetch_btc_5m_market,
+    fetch_market_for_window,
+    get_market_window,
+    get_up_down_tokens,
+)
 
 
 class PMState:
@@ -41,6 +46,7 @@ class PMState:
         self.down_bid_size: float = 0.0
         self.down_ask_size: float = 0.0
         self.taker_fee: int = 0
+        self.order_min_size: float = 5.0   # gamma orderMinSize (fallback 5)
         self.market_start_ts: int = 0
         self.market_end_ts: int = 0
         self.ready: bool = False
@@ -116,10 +122,72 @@ def _apply_market(market: dict) -> list[str] | None:
     pm_state.token_id_up = up["token_id"]
     pm_state.token_id_down = down["token_id"]
     pm_state.taker_fee = int(market.get("takerBaseFee", 0))
+    try:
+        pm_state.order_min_size = float(market.get("orderMinSize") or 5.0)
+    except (TypeError, ValueError):
+        pm_state.order_min_size = 5.0
     pm_state.market_start_ts = market_start_ts
     pm_state.market_end_ts = market_end_ts
 
     return [pm_state.token_id_up, pm_state.token_id_down]
+
+
+# ── Next-bar pre-discovery (live maker latency path) ──────────────────────────
+# main.py (live maker only) prefetches the NEXT bar's market at T−30s via the
+# deterministic slug and caches it here; at the bar boundary the switch consumes
+# the cache instead of making a blocking Gamma call. Paper mode never populates
+# the cache and never enables external apply, so the paper path is unchanged.
+_prefetched_market: dict = {"start_ts": 0, "market": None}
+_external_apply_enabled: bool = False
+
+
+def enable_external_market_apply() -> None:
+    """Allow main.py (live roll hook) to apply markets to pm_state directly;
+    run_pm_ws then resubscribes its WS to the new token ids in-loop."""
+    global _external_apply_enabled
+    _external_apply_enabled = True
+
+
+def prefetch_next_market() -> bool:
+    """Blocking (requests). Fetch + cache the NEXT bar's market. The next
+    window starts exactly at the current market_end_ts (5m grid)."""
+    next_start = pm_state.market_end_ts
+    if next_start <= 0:
+        return False
+    if _prefetched_market["start_ts"] == next_start and _prefetched_market["market"]:
+        return True
+    market = fetch_market_for_window(next_start)
+    if not market:
+        return False
+    _prefetched_market["start_ts"] = next_start
+    _prefetched_market["market"] = market
+    return True
+
+
+def consume_prefetched_market() -> dict | None:
+    """Pop the cached next market if it is valid for the current wall clock
+    (its window has started and not yet ended). Returns None otherwise."""
+    market = _prefetched_market["market"]
+    start_ts = _prefetched_market["start_ts"]
+    if not market:
+        return None
+    now = time.time()
+    if now < start_ts - 1 or now >= start_ts + 300:
+        _prefetched_market["start_ts"] = 0
+        _prefetched_market["market"] = None
+        return None
+    _prefetched_market["start_ts"] = 0
+    _prefetched_market["market"] = None
+    return market
+
+
+def apply_prefetched_market_now() -> bool:
+    """Live roll hook: apply the cached next market to pm_state immediately
+    at the bar boundary (zero Gamma calls). Returns True on success."""
+    market = consume_prefetched_market()
+    if not market:
+        return False
+    return _apply_market(market) is not None
 
 
 def _coerce_float(x: object, default: float = 0.0) -> float:
@@ -431,9 +499,43 @@ async def run_pm_ws() -> None:
                                 snippet = raw[:200].replace("\n", "\\n")
                                 log.error("PM WS processing error: %s  raw=%s", exc, snippet)
 
+                    # Live maker only: main's roll hook applies the prefetched
+                    # market directly to pm_state at the boundary — detect the
+                    # externally-applied token ids and resubscribe in place.
+                    if _external_apply_enabled:
+                        current_ids = [pm_state.token_id_up, pm_state.token_id_down]
+                        if all(current_ids) and set(current_ids) != set(token_ids):
+                            try:
+                                to_unsubscribe = [a for a in token_ids if a not in current_ids]
+                                to_subscribe = [a for a in current_ids if a not in token_ids]
+                                if to_unsubscribe:
+                                    await ws.send(json.dumps({"assets_ids": to_unsubscribe, "operation": "unsubscribe"}))
+                                if to_subscribe:
+                                    await ws.send(
+                                        json.dumps(
+                                            {
+                                                "assets_ids": to_subscribe,
+                                                "operation": "subscribe",
+                                                "custom_feature_enabled": True,
+                                            }
+                                        )
+                                    )
+                                token_ids = current_ids
+                                log.info(
+                                    "PM WS: resubscribed after external market apply  session=%d market=%s token_ids=%s",
+                                    pm_state.ws_session_id,
+                                    pm_state.question[:70],
+                                    token_ids,
+                                )
+                            except Exception as exc:
+                                log.warning("PM WS external-apply resubscribe error: %s", exc)
+
                     if pm_state.market_end_ts > 0 and time.time() >= pm_state.market_end_ts:
                         try:
-                            fresh = fetch_btc_5m_market()
+                            # Prefetched cache first (live pre-discovery); the
+                            # cache is never populated in paper mode, so paper
+                            # takes the Gamma call exactly as before.
+                            fresh = consume_prefetched_market() or fetch_btc_5m_market()
                             if fresh:
                                 new_ids = _apply_market(fresh)
                                 await btc_state.set_market_window(pm_state.market_start_ts, pm_state.market_end_ts)

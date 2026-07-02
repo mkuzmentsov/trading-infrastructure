@@ -15,26 +15,36 @@ Adverse-selection mitigations (the core of the strategy — see PLAN.md):
   * inventory cap: stop quoting a side once its filled inventory this bar
     reaches MAX_INVENTORY_SHARES.
 
-Filled inventory holds to expiry (v1); settlement lives in paper_book.
+Filled inventory holds to expiry (v1); settlement lives in the engine.
 
-This strategy NEVER touches the CLOB — it refuses to construct unless
-PAPER_MODE is set, and all order flow goes through the paper engine.
+Engine selection (main.py wires the matching book):
+  * PAPER_MODE=true  → paper_book (simulated fills, no CLOB calls — the fleet
+    data-collection path, unchanged);
+  * PAPER_MODE=false + LIVE_TRADING=true + DRY_RUN=false + creds → live_book
+    (real signed GTC orders, never-cross guard, daily-loss kill switch);
+  * anything ambiguous → hard error at construction.
 """
 from __future__ import annotations
 
 import math
 
 from config import (
+    DRY_RUN,
     ENTRY_PRICE_CAP,
+    LIVE_MAX_ORDER_USD,
+    LIVE_QUOTE_WARMUP_SECS,
+    LIVE_TRADING,
     MAX_FILLS_PER_BAR,
     MAX_INVENTORY_SHARES,
     MIN_PAIR_EDGE,
     PAPER_MODE,
+    POLYMARKET_PK,
     QUOTE_CEIL,
     QUOTE_CUTOFF_SECS,
     QUOTE_FLOOR,
     QUOTE_HALF_SPREAD,
     QUOTE_MODE,
+    QUOTE_NOTIONAL_USD,
     QUOTE_SIDE,
     QUOTE_SIZE,
     QUOTE_WARMUP_SECS,
@@ -60,10 +70,42 @@ class MakerRebateStrategy:
     name = "maker_rebate"
 
     def __init__(self) -> None:
-        if not PAPER_MODE:
+        # Engine gates — paper → paper_book, live → live_book, anything
+        # ambiguous → hard error (all gates must pass to run live).
+        if PAPER_MODE and LIVE_TRADING:
             raise RuntimeError(
-                "maker_rebate v1 is paper-only — set PAPER_MODE=true (live quoting is not implemented)"
+                "maker_rebate: AMBIGUOUS config — PAPER_MODE=true AND LIVE_TRADING=true. "
+                "Pick exactly one (paper: PAPER_MODE=true; live: PAPER_MODE=false LIVE_TRADING=true DRY_RUN=false)."
             )
+        if PAPER_MODE:
+            self._live = False
+        else:
+            if not LIVE_TRADING:
+                raise RuntimeError(
+                    "maker_rebate: PAPER_MODE=false but LIVE_TRADING is not 'true' — refusing to start. "
+                    "Live trading must be enabled EXPLICITLY with LIVE_TRADING=true."
+                )
+            if DRY_RUN:
+                raise RuntimeError(
+                    "maker_rebate: AMBIGUOUS config — LIVE_TRADING=true with DRY_RUN=true. "
+                    "Set DRY_RUN=false for live trading."
+                )
+            if not POLYMARKET_PK:
+                raise RuntimeError(
+                    "maker_rebate: LIVE_TRADING=true but POLYMARKET_PK is missing — refusing to start."
+                )
+            self._live = True
+        # Warmup: live defaults to 0 (entry on the book at bar roll — the
+        # latency edge); paper keeps QUOTE_WARMUP_SECS. Both env-overridable.
+        self._warmup = LIVE_QUOTE_WARMUP_SECS if self._live else QUOTE_WARMUP_SECS
+        # USD entry budget; the live hard cap wins if the knob exceeds it.
+        self._notional = QUOTE_NOTIONAL_USD
+        if self._live and LIVE_MAX_ORDER_USD > 0 and self._notional > LIVE_MAX_ORDER_USD:
+            log.warning(
+                "QUOTE_NOTIONAL_USD %.2f exceeds LIVE_MAX_ORDER_USD %.2f — clamped to the live cap",
+                self._notional, LIVE_MAX_ORDER_USD,
+            )
+            self._notional = LIVE_MAX_ORDER_USD
         # Bracket-mode per-bar state: the side is LOCKED when first chosen and
         # never flips mid-bar.
         self._bracket_cid: str = ""
@@ -73,10 +115,14 @@ class MakerRebateStrategy:
 
     # ── Strategy protocol (taker path is never used; keep it inert) ─────────
     def startup_details(self) -> list[str]:
+        engine = "LIVE" if self._live else "PAPER"
+        sizing = (
+            f"notional=${self._notional:.2f}" if self._notional > 0 else f"size={QUOTE_SIZE}"
+        )
         details = [
-            f"maker_rebate PAPER  mode={QUOTE_MODE}  side={QUOTE_SIDE if QUOTE_MODE == 'one_sided' else '-'}  "
+            f"maker_rebate {engine}  mode={QUOTE_MODE}  side={QUOTE_SIDE if QUOTE_MODE == 'one_sided' else '-'}  "
             f"halfSpread={QUOTE_HALF_SPREAD:.3f}  band=[{QUOTE_FLOOR:.2f},{QUOTE_CEIL:.2f}]",
-            f"  size={QUOTE_SIZE}  cutoff={QUOTE_CUTOFF_SECS}s  warmup={QUOTE_WARMUP_SECS}s  "
+            f"  {sizing}  cutoff={QUOTE_CUTOFF_SECS}s  warmup={self._warmup}s  "
             f"minPairEdge={MIN_PAIR_EDGE:.3f}  repriceTicks={REPRICE_TICKS:.3f}  repriceZ={REPRICE_Z:.2f}  "
             f"maxInv={MAX_INVENTORY_SHARES}",
         ]
@@ -176,6 +222,25 @@ class MakerRebateStrategy:
             return 0.0
         return abs(math.log(ctx.current_price / spot_at_place)) / ctx.sigma_5m
 
+    def _entry_size(self, price: float) -> tuple[float, bool]:
+        """USD-denominated bracket sizing: QUOTE_NOTIONAL_USD / price, floored
+        to whole shares (lot step), then clamped UP to the market's
+        orderMinSize (gamma payload, fallback 5). Returns (shares,
+        size_clamped_to_min). Falls back to legacy QUOTE_SIZE shares when the
+        notional knob is unset/0."""
+        if self._notional <= 0 or price <= 0:
+            return float(QUOTE_SIZE), False
+        from pm_ws import pm_state
+        shares = float(math.floor(self._notional / price))
+        min_size = float(pm_state.order_min_size or 5.0)
+        if shares < min_size:
+            log.info(
+                "Entry size clamped UP to orderMinSize  %.0f → %.0f shares @ %.3f (notional=$%.2f)",
+                shares, min_size, price, self._notional,
+            )
+            return min_size, True
+        return shares, False
+
     # ── Bracket mode (default): predict side, one entry fill, TP/SL bracket ──
     def _bracket_p_up_estimate(self, ctx: StrategyContext) -> tuple[float, str]:
         """Cheapest p_up for the current bar: the blended ML probability when
@@ -209,16 +274,16 @@ class MakerRebateStrategy:
             book.cancel_entries("quote_cutoff", now)
             return
 
-        # Warmup after bar open.
+        # Warmup after bar open (live default 0 — entry lands at bar roll).
         bar_len = max(1, ctx.seconds_left)
         if pm_state.market_start_ts > 0 and pm_state.market_end_ts > 0:
             bar_len = pm_state.market_end_ts - pm_state.market_start_ts
         elapsed = bar_len - ctx.seconds_left
-        if elapsed < QUOTE_WARMUP_SECS:
+        if elapsed < self._warmup:
             return
 
         # Max ONE fill per bar (MAX_FILLS_PER_BAR): once the entry filled,
-        # stand down — no refill conveyor. paper_book already cancelled the
+        # stand down — no refill conveyor. The engine already cancelled the
         # remainder at fill time; this keeps us from re-placing.
         if book.bar_entry_fills() >= MAX_FILLS_PER_BAR:
             book.cancel_entries("max_fills_per_bar", now)
@@ -238,6 +303,19 @@ class MakerRebateStrategy:
 
         bid, ask = (ctx.up_bid, ctx.up_ask) if side == "UP" else (ctx.down_bid, ctx.down_ask)
         if not (0 < bid <= ask < 1):
+            if self._live:
+                # LIVE latency path: the book hasn't formed yet at bar roll —
+                # a non-marketable bid near 50c is safe by construction, so
+                # place it NOW instead of waiting; the normal reprice logic
+                # pulls it to mid − halfSpread on the first real snapshot.
+                want = _round_down_tick(min(0.49, ENTRY_PRICE_CAP))
+                if want >= _TICK and book.resting_entry(side) is None:
+                    size, clamped = self._entry_size(want)
+                    book.place_quote(
+                        side, want, size, now,
+                        purpose="entry", size_clamped_to_min=clamped,
+                    )
+                return
             book.cancel_entries("book_not_live", now)
             return
         mid = (bid + ask) / 2.0
@@ -264,7 +342,10 @@ class MakerRebateStrategy:
                 resting = None
 
         if resting is None:
-            book.place_quote(side, want, float(QUOTE_SIZE), now, purpose="entry")
+            size, clamped = self._entry_size(want)
+            book.place_quote(
+                side, want, size, now, purpose="entry", size_clamped_to_min=clamped
+            )
 
     def maintain_quotes(self, ctx: StrategyContext, book, now: float) -> None:
         """Bring resting paper quotes in line with the desired state."""
@@ -287,7 +368,7 @@ class MakerRebateStrategy:
         if pm_state.market_start_ts > 0 and pm_state.market_end_ts > 0:
             bar_len = pm_state.market_end_ts - pm_state.market_start_ts
         elapsed = bar_len - ctx.seconds_left
-        if elapsed < QUOTE_WARMUP_SECS:
+        if elapsed < self._warmup:
             return
 
         desired = self.desired_quotes(ctx)

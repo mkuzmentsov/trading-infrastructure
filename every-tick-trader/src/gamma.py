@@ -47,6 +47,23 @@ def fetch_btc_5m_market() -> Optional[dict]:
     return None
 
 
+def fetch_market_for_window(window_start_ts: int) -> Optional[dict]:
+    """Fetch the {COIN} Up/Down 5m market for an exact window by its
+    deterministic slug ({coin}-updown-5m-{ts}). Used by the live maker's
+    T−30s pre-discovery: the NEXT bar's slug is known before the bar starts,
+    so at bar roll no Gamma call is needed."""
+    slug = f"{COIN}-updown-5m-{int(window_start_ts)}"
+    try:
+        data = _gamma_get({"slug": slug})
+        market = (data[0] if isinstance(data, list) else data) if data else None
+        if market and market.get("active") and not market.get("closed"):
+            log.info("Pre-discovered market: %s  (slug=%s)", market.get("question", ""), slug)
+            return market
+    except Exception as exc:
+        log.debug("Slug %s not found: %s", slug, exc)
+    return None
+
+
 def _parse_ts(value) -> int:
     if value in (None, ""):
         return 0

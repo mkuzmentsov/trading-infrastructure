@@ -312,6 +312,51 @@ def place_market_sell(
     return post_signed_sell_fak(clob, signed)
 
 
+def place_limit_order(
+    clob,
+    token_id: str,
+    side: str,
+    shares: float,
+    price: float,
+) -> Optional[str]:
+    """Signed GTC limit order (maker path — every-tick live_book). The caller
+    guarantees the price does not cross the book (never-cross guard), so this
+    rests as a maker order by construction. Returns the CLOB order id or None."""
+    from py_clob_client_v2 import OrderArgs, OrderType
+
+    try:
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=price,
+            size=shares,
+            side=side,
+            expiration=0,
+        )
+        log.debug(
+            "CLOB create_order %s REQUEST  token=%s  price=%s  shares=%s",
+            side, token_id, price, shares,
+        )
+        signed = clob.create_order(order_args)
+        log.info("CLOB create_order %s RESPONSE  %s", side, signed)
+        resp = clob.post_order(signed, OrderType.GTC)
+        log.info("CLOB post_order %s GTC RESPONSE  %s", side, resp)
+        return resp.get("orderID") or resp.get("order_id") or None
+    except Exception as exc:
+        log.error("GTC %s limit failed: %s", side, exc)
+        return None
+
+
+def fetch_order_status(clob, order_id: str) -> Optional[dict]:
+    """One-shot REST order lookup — reconciliation fallback for the live maker
+    when user_ws misses a fill. Returns the raw order dict (expected keys:
+    status, size_matched, price) or None on any failure."""
+    try:
+        return clob.get_order(order_id)
+    except Exception as exc:
+        log.debug("get_order %s failed: %s", order_id, exc)
+        return None
+
+
 def cancel_order(clob, order_id: str) -> bool:
     # v2 renamed cancel(order_id) → cancel_order(OrderPayload(orderID=...)).
     from py_clob_client_v2 import OrderPayload

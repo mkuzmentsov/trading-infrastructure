@@ -114,6 +114,8 @@ class _BarState:
 
 
 class PaperBook:
+    engine = "paper"
+
     def __init__(self) -> None:
         self.orders: dict[str, PaperOrder] = {}
         self._order_seq: int = 0
@@ -357,6 +359,7 @@ class PaperBook:
         side: str = "BUY",
         purpose: str = "quote",
         pos_id: int = 0,
+        size_clamped_to_min: bool = False,
     ) -> str | None:
         if not self.bar_active():
             return None
@@ -384,6 +387,7 @@ class PaperBook:
             "%s  %s %s %.1f @ %.3f  purpose=%s  order=%s",
             event_type.upper(), direction, side, size, price, purpose, order_id,
         )
+        extra = {"size_clamped_to_min": True} if size_clamped_to_min else {}
         self._event(
             event_type,
             order_id=order_id,
@@ -395,6 +399,7 @@ class PaperBook:
             purpose=purpose,
             pos_id=pos_id,
             paper=True,
+            **extra,
         )
         return order_id
 

@@ -1,10 +1,11 @@
 botName: polymarket-btc-5m-bot
 
 image:
-  # every-tick-trader image: bakes src/ into /app/scripts (Dockerfile COPY) —
-  # unlike the old pm-btc-bot images, no script ConfigMap is injected.
-  repository: mkuzmentsov/every-tick-trader
-  tag: "0.3"
+  # Deps-only image (same as the old polymarket bot): code is NOT baked in —
+  # deploy.sh syncs src/ -> chart/files/scripts/ and helm injects it as a
+  # ConfigMap mounted over /app/scripts. Code changes = helm upgrade, no build.
+  repository: mkuzmentsov/pm-btc-bot
+  tag: "0.8"
   pullPolicy: IfNotPresent
 
 bot:
@@ -17,7 +18,11 @@ bot:
   quoteHalfSpread: "0.02"    # bid = mid − halfSpread
   quoteFloor: "0.30"         # high-rebate p(1−p) band
   quoteCeil: "0.70"
-  quoteSize: "10"            # shares per quote
+  quoteSize: "10"            # shares per quote (legacy fallback when quoteNotionalUsd=0)
+  # USD entry budget per bar (bracket, paper AND live): shares = notional/price
+  # floored to whole shares, clamped UP to the market's orderMinSize (5).
+  # Start 5, raise to 10 when ready — values-only change, no code change.
+  quoteNotionalUsd: "5"
   quoteCutoffSecs: "60"      # cancel all quotes at T−60s (sniping window)
   quoteWarmupSecs: "10"      # no quotes in first 10s of the bar
   minPairEdge: "0.01"        # up_q + down_q < 1 − minPairEdge (locked-pair profit)
@@ -26,6 +31,19 @@ bot:
   maxInventoryShares: "50"   # per side per bar
   makerFeeRate: "0.07"       # crypto taker feeRate — rebate weight = sz*fee*p*(1−p)
   paperTradeFeedTimeoutSecs: "600"  # trade feed silent this long → book-cross fills
+  # ── LIVE trading (maker_rebate real-order path) — OFF here; fleet stays paper ──
+  # To go live, set ALL of the following in a per-bot values file (never here):
+  # the bot hard-errors on any ambiguous combination (e.g. paperMode+liveTrading,
+  # liveTrading+dryRun, or missing credentials).
+  # liveTrading: "true"          # explicit opt-in — REAL orders, REAL money
+  # paperMode: "false"
+  # dryRun: "false"
+  # liveMaxOrderUsd: "5"         # hard per-order notional cap
+  # liveMaxDailyLossUsd: "25"    # daily realized loss → cancel all + halt for the UTC day
+  # liveQuoteWarmupSecs: "0"     # live default: entry on the book at bar roll (latency edge)
+  # prediscoveryLeadSecs: "30"   # fetch next bar's market T−30s (deterministic gamma slug)
+  # liveReconcileSecs: "30"      # REST open-order reconciliation fallback cadence
+  # quoteNotionalUsd: "5"        # USD entry budget — start 5, raise to 10 when ready
   # ── Latency arb signal ──────────────────────────────────────────────────────
   minEdge: "0.04"          # edge = fair_p - ask_price - fee (no round-trip cost with hold-to-expiry)
   costBuffer: "0.02"

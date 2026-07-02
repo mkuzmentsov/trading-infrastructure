@@ -62,6 +62,10 @@ q-vs-p per price bucket from `paper_fill` + `paper_bar_settle` events.
 - **Time-in-bar fill quality** — bucket fills by seconds-since-bar-open; if early fills are
   ~unbiased and late fills are toxic (expected), tighten the quoting window to the measured
   sweet spot instead of the fixed warmup/cutoff.
+- **Persist event logs to the PVC + daily rotation** (user-requested, do AFTER go-live):
+  `logs-training-events.jsonl` currently lives on ephemeral `/app/logs` and is lost on every
+  redeploy. Move it to the mounted `/data` volume and rotate daily (keep ~14 days, gzip old
+  days) so it doesn't eat the PVC.
 - **Kelly-fraction per-bar sizing** — once p_up calibration is measured from paper logs
   (predicted p_up vs realized outcome), size entries by fractional Kelly on the calibrated
   edge instead of fixed QUOTE_SIZE.

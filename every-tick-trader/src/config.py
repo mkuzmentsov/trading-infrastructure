@@ -39,7 +39,12 @@ PAPER_MODE = os.getenv("PAPER_MODE", "true").lower() == "true"
 QUOTE_HALF_SPREAD = float(os.getenv("QUOTE_HALF_SPREAD", "0.02"))   # bid = mid − halfSpread
 QUOTE_FLOOR = float(os.getenv("QUOTE_FLOOR", "0.30"))               # high-rebate p(1−p) band
 QUOTE_CEIL = float(os.getenv("QUOTE_CEIL", "0.70"))
-QUOTE_SIZE = int(os.getenv("QUOTE_SIZE", "10"))                     # shares per quote
+QUOTE_SIZE = int(os.getenv("QUOTE_SIZE", "10"))                     # shares per quote (legacy fallback)
+# USD-denominated per-bar entry budget (bracket mode, paper AND live):
+# shares = QUOTE_NOTIONAL_USD / entry_price, floored to whole shares, then
+# clamped UP to the market's orderMinSize (gamma payload; fallback 5).
+# Unset/0 → legacy QUOTE_SIZE shares. Start 5, raise to 10 when ready.
+QUOTE_NOTIONAL_USD = float(os.getenv("QUOTE_NOTIONAL_USD", "5.0"))
 QUOTE_CUTOFF_SECS = int(os.getenv("QUOTE_CUTOFF_SECS", "60"))       # cancel all, no new quotes
 QUOTE_WARMUP_SECS = int(os.getenv("QUOTE_WARMUP_SECS", "10"))       # wait after bar open
 MIN_PAIR_EDGE = float(os.getenv("MIN_PAIR_EDGE", "0.01"))           # up_q + down_q < 1 − edge
@@ -67,6 +72,24 @@ MAKER_FEE_RATE = float(os.getenv("MAKER_FEE_RATE", "0.07"))         # crypto tak
 # Trade feed considered live if a last_trade_price event arrived within this
 # window; otherwise paper fills fall back to book-cross detection.
 PAPER_TRADE_FEED_TIMEOUT_SECS = float(os.getenv("PAPER_TRADE_FEED_TIMEOUT_SECS", "600"))
+
+# ── LIVE trading (maker_rebate real-order path) ───────────────────────────────
+# All three gates must align or the bot refuses to start:
+#   LIVE_TRADING=true  AND  PAPER_MODE=false  AND  DRY_RUN=false  AND creds set.
+LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() == "true"
+# Per-order notional cap (USD). BUY quotes are clamped down to this.
+LIVE_MAX_ORDER_USD = float(os.getenv("LIVE_MAX_ORDER_USD", "5"))
+# Daily realized-loss kill switch (USD). When the UTC day's realized loss
+# exceeds this, cancel everything and stop quoting until the next UTC day.
+LIVE_MAX_DAILY_LOSS_USD = float(os.getenv("LIVE_MAX_DAILY_LOSS_USD", "25"))
+# Live warmup default is 0 (place the entry the instant the bar rolls — the
+# latency edge). Respected if explicitly set. Paper keeps QUOTE_WARMUP_SECS.
+LIVE_QUOTE_WARMUP_SECS = int(os.getenv("LIVE_QUOTE_WARMUP_SECS", "0"))
+# How long before bar end the NEXT bar's market is pre-discovered (gamma slug
+# is deterministic, so at bar roll no gamma call is needed).
+PREDISCOVERY_LEAD_SECS = float(os.getenv("PREDISCOVERY_LEAD_SECS", "30"))
+# REST open-order reconciliation cadence (fallback when user_ws misses a fill).
+LIVE_RECONCILE_SECS = float(os.getenv("LIVE_RECONCILE_SECS", "30"))
 
 BET_SIZE_MIN = float(os.getenv("BET_SIZE_MIN", "0.50"))
 BET_SIZE_MAX = float(os.getenv("BET_SIZE_MAX", "5.00"))

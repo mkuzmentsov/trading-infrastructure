@@ -26,6 +26,7 @@ bot:
   quoteFloor: "0.30"
   quoteCeil: "0.70"
   quoteSize: "10"
+  quoteNotionalUsd: "5"    # USD entry budget (bracket) — start 5, raise to 10 when ready
   quoteCutoffSecs: "60"
   quoteWarmupSecs: "10"
   minPairEdge: "0.01"

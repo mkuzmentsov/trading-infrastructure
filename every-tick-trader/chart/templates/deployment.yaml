@@ -17,6 +17,7 @@ spec:
         {{- include "polymarket-btc-5m-bot.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        checksum/script: {{ include (print $.Template.BasePath "/configmap-script.yaml") . | sha256sum }}
         {{- if .Files.Glob "files/model/*" }}
         checksum/model: {{ include (print $.Template.BasePath "/configmap-model.yaml") . | sha256sum }}
         {{- end }}
@@ -37,6 +38,8 @@ spec:
             - secretRef:
                 name: {{ include "polymarket-btc-5m-bot.name" . }}-secret
           volumeMounts:
+            - name: script
+              mountPath: /app/scripts
             - name: logs
               mountPath: /app/logs
             - name: model
@@ -45,8 +48,20 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
-        # Bot source is baked into the image at /app/scripts (Dockerfile COPY src);
-        # the old ConfigMap script injection has been dropped in this project.
+        # Bot source is ConfigMap-injected at /app/scripts (deploy.sh syncs src/
+        # into files/scripts/ before helm upgrade); the image only provides deps.
+        - name: script
+          configMap:
+            name: {{ include "polymarket-btc-5m-bot.name" . }}-script
+            items:
+              {{- range $path, $_ := .Files.Glob "files/scripts/*.py" }}
+              - key: {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}
+                path: {{ $path | trimPrefix "files/scripts/" }}
+              {{- end }}
+              {{- range $path, $_ := .Files.Glob "files/scripts/**/*.py" }}
+              - key: {{ $path | trimPrefix "files/scripts/" | replace "/" "__" }}
+                path: {{ $path | trimPrefix "files/scripts/" }}
+              {{- end }}
         - name: logs
           emptyDir: {}
         # The model ConfigMap is managed outside Helm (apply-model-configmap.sh)
