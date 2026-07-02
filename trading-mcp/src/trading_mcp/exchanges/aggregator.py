@@ -16,9 +16,12 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from . import binance as _bn
+from . import bitget as _bg
+from . import bybit as _by
 from . import hyperliquid as _hl
 from . import kraken as _kr
 from . import kraken_futures as _krf
+from . import mexc as _mx
 from . import whitebit as _wb
 
 # Stablecoins we treat as $1 for NAV roll-ups when a venue lacks a USD oracle.
@@ -71,7 +74,8 @@ def register(mcp: FastMCP) -> int:
         """Best APR for parking an asset across every configured venue.
 
         Sources scanned: Binance Simple Earn (flexible + locked), Kraken Earn,
-        Hyperliquid HLP (USDC only).
+        Hyperliquid HLP (USDC only), WhiteBIT Crypto Lending, Bybit Earn,
+        Bitget Savings.
 
         Returns rows sorted by APR descending. Each row has {venue, kind, asset,
         apr, duration_days, …}. Use this *before* picking an Earn product.
@@ -184,6 +188,94 @@ def register(mcp: FastMCP) -> int:
             elif isinstance(res, dict) and "error" in res:
                 rows.append({"venue": "hyperliquid", "error": res["error"]})
 
+        # --- WhiteBIT Crypto Lending (Smart-Flex) ---
+        if _wb._credentials_present():
+            def _whitebit():
+                params = {"ticker": asset.upper()} if asset else None
+                plans = _wb._private("/api/v4/main-account/smart-flex/plans", params)
+                out = []
+                for p in plans if isinstance(plans, list) else []:
+                    try:
+                        apr = float(str(p.get("apr") or p.get("interest") or 0).replace("%", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    out.append({
+                        "venue": "whitebit", "kind": "crypto_lending_flex",
+                        "asset": p.get("ticker"), "apr": apr / 100 if apr > 1 else apr,
+                        "plan_id": p.get("id") or p.get("planId"),
+                    })
+                return out
+
+            res = _safe(_whitebit)
+            if isinstance(res, list):
+                rows.extend(res)
+            elif isinstance(res, dict) and "error" in res:
+                rows.append({"venue": "whitebit", "error": res["error"]})
+
+        # --- Bybit Earn (FlexibleSaving) ---
+        if _by._credentials_present():
+            def _bybit():
+                params = {"category": "FlexibleSaving"}
+                if asset:
+                    params["coin"] = asset.upper()
+                result = _by._request("GET", "/v5/earn/product", params)
+                out = []
+                for p in result.get("list") or []:
+                    v = p.get("estimateApr")
+                    if v is None:
+                        continue
+                    try:
+                        raw = str(v).strip()
+                        f = float(raw.replace("%", ""))
+                        apr = f / 100 if ("%" in raw or f > 1) else f
+                    except (TypeError, ValueError):
+                        continue
+                    out.append({
+                        "venue": "bybit", "kind": "earn_flexible", "asset": p.get("coin"),
+                        "apr": apr, "product_id": p.get("productId"),
+                    })
+                return out
+
+            res = _safe(_bybit)
+            if isinstance(res, list):
+                rows.extend(res)
+            elif isinstance(res, dict) and "error" in res:
+                rows.append({"venue": "bybit", "error": res["error"]})
+
+        # --- Bitget Savings ---
+        if _bg._credentials_present():
+            def _bitget():
+                params = {"filter": "available"}
+                if asset:
+                    params["coin"] = asset.upper()
+                data = _bg._request("GET", "/api/v2/earn/savings/product", params)
+                prods = data if isinstance(data, list) else (data or {}).get("resultList") or []
+                out = []
+                for p in prods:
+                    best = 0.0
+                    for tier in p.get("apyList") or []:
+                        for k in ("currentApy", "apy", "rate"):
+                            vv = tier.get(k)
+                            if vv is not None:
+                                try:
+                                    best = max(best, float(str(vv).replace("%", "")))
+                                except (TypeError, ValueError):
+                                    pass
+                    if best <= 0:
+                        continue
+                    out.append({
+                        "venue": "bitget", "kind": f"savings_{p.get('periodType')}",
+                        "asset": p.get("coin"), "apr": best / 100,
+                        "product_id": p.get("productId"),
+                    })
+                return out
+
+            res = _safe(_bitget)
+            if isinstance(res, list):
+                rows.extend(res)
+            elif isinstance(res, dict) and "error" in res:
+                rows.append({"venue": "bitget", "error": res["error"]})
+
         rankable = [r for r in rows if "apr" in r and "error" not in r]
         rankable.sort(key=lambda r: r.get("apr") or 0, reverse=True)
         errors = [r for r in rows if "error" in r]
@@ -237,7 +329,7 @@ def register(mcp: FastMCP) -> int:
     @mcp.tool()
     def compare_perp_funding(coin: str) -> dict[str, Any]:
         """Side-by-side current funding rate (annualized) for a coin's perp
-        across Hyperliquid, Binance USDⓈ-M, and Kraken Futures (PF_ linear).
+        across Hyperliquid, Binance USDⓈ-M, Kraken Futures, Bybit, Bitget & MEXC.
 
         Direct feeder for funding-carry basket expansion: identifies the venue
         offering the wider funding spread vs the long leg.
@@ -311,6 +403,56 @@ def register(mcp: FastMCP) -> int:
             if isinstance(res, dict):
                 rows.append(res)
 
+        # New venues — public funding data, always included for comparison
+        # (all pay funding on an 8h cycle: apr = rate × 3 × 365).
+        import httpx as _hx
+
+        def _bybit_call():
+            r = _hx.get("https://api.bybit.com/v5/market/tickers",
+                        params={"category": "linear", "symbol": usdt}, timeout=15)
+            lst = ((r.json() or {}).get("result") or {}).get("list") or []
+            if not lst:
+                return None
+            fr = float(lst[0].get("fundingRate") or 0)
+            return {"venue": "bybit", "symbol": usdt, "hourly": fr / 8,
+                    "apr": fr * 3 * 365, "interval_h": 8,
+                    "open_interest": lst[0].get("openInterest")}
+
+        res = _safe(_bybit_call)
+        if isinstance(res, dict):
+            rows.append(res)
+
+        def _bitget_call():
+            r = _hx.get("https://api.bitget.com/api/v2/mix/market/tickers",
+                        params={"productType": "USDT-FUTURES"}, timeout=15)
+            for t in (r.json() or {}).get("data") or []:
+                if (t.get("symbol") or "").upper() == usdt:
+                    fr = float(t.get("fundingRate") or 0)
+                    return {"venue": "bitget", "symbol": usdt, "hourly": fr / 8,
+                            "apr": fr * 3 * 365, "interval_h": 8,
+                            "open_interest": t.get("holdingAmount")}
+            return None
+
+        res = _safe(_bitget_call)
+        if isinstance(res, dict):
+            rows.append(res)
+
+        def _mexc_call():
+            sym = f"{coin_u}_USDT"
+            r = _hx.get(
+                f"https://contract.mexc.com/api/v1/contract/funding_rate/{sym}", timeout=15
+            )
+            fr = ((r.json() or {}).get("data") or {}).get("fundingRate")
+            if fr is None:
+                return None
+            fr = float(fr)
+            return {"venue": "mexc", "symbol": sym, "hourly": fr / 8,
+                    "apr": fr * 3 * 365, "interval_h": 8}
+
+        res = _safe(_mexc_call)
+        if isinstance(res, dict):
+            rows.append(res)
+
         rankable = [r for r in rows if "error" not in r]
         rankable.sort(key=lambda r: r["apr"], reverse=True)
         spread = None
@@ -344,7 +486,8 @@ def register(mcp: FastMCP) -> int:
         buy at the bid), plus whether each top level absorbs notional_usd. Open when
         taker_basis_bps ≥ −5 (favourable/flat); use a maker buy if only maker passes.
 
-        short_venue: hyperliquid | binance | kraken_futures.  long_venue: binance | kraken.
+        short_venue: hyperliquid | binance | kraken_futures | bybit | bitget.
+        long_venue:  binance | kraken.
         """
         import httpx
 
@@ -376,6 +519,34 @@ def register(mcp: FastMCP) -> int:
                     params={"symbol": _krf._pf_symbol(coin_u)}, timeout=15,
                 )
                 bids = ((r.json() or {}).get("orderBook") or {}).get("bids") or []
+                if not bids:
+                    return None
+                return {
+                    "bid": float(bids[0][0]),
+                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "depth_usd": sum(float(p) * float(q) for p, q in bids),
+                }
+            if venue == "bybit":
+                r = httpx.get(
+                    "https://api.bybit.com/v5/market/orderbook",
+                    params={"category": "linear", "symbol": f"{coin_u}USDT", "limit": 25},
+                    timeout=15,
+                )
+                bids = (((r.json() or {}).get("result") or {}).get("b")) or []
+                if not bids:
+                    return None
+                return {
+                    "bid": float(bids[0][0]),
+                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "depth_usd": sum(float(p) * float(q) for p, q in bids),
+                }
+            if venue == "bitget":
+                r = httpx.get(
+                    "https://api.bitget.com/api/v2/mix/market/orderbook",
+                    params={"symbol": f"{coin_u}USDT", "productType": "USDT-FUTURES", "limit": 25},
+                    timeout=15,
+                )
+                bids = ((r.json() or {}).get("data") or {}).get("bids") or []
                 if not bids:
                     return None
                 return {

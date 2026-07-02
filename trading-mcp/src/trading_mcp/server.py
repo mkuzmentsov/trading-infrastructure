@@ -18,9 +18,12 @@ from mcp.server.fastmcp import FastMCP
 from .exchanges import (
     aggregator,
     binance,
+    bitget,
+    bybit,
     hyperliquid,
     kraken,
     kraken_futures,
+    mexc,
     whitebit,
 )
 
@@ -32,7 +35,10 @@ mcp = FastMCP("trading-mcp")
 
 def _register_all() -> None:
     summary: list[str] = []
-    for module in (binance, kraken, kraken_futures, hyperliquid, whitebit, aggregator):
+    for module in (
+        binance, kraken, kraken_futures, hyperliquid, whitebit,
+        bybit, mexc, bitget, aggregator,
+    ):
         short = module.__name__.rsplit(".", 1)[-1]
         try:
             registered = module.register(mcp)
