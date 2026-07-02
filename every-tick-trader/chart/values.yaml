@@ -1,0 +1,146 @@
+botName: polymarket-btc-5m-bot
+
+image:
+  # every-tick-trader image: bakes src/ into /app/scripts (Dockerfile COPY) —
+  # unlike the old pm-btc-bot images, no script ConfigMap is injected.
+  repository: mkuzmentsov/every-tick-trader
+  tag: "0.3"
+  pullPolicy: IfNotPresent
+
+bot:
+  appLogLevel: "INFO"
+  dryRun: "true"
+  loopIntervalSecs: "300"   # bar length (5m) — NOT the tick rate; ticks = evalIntervalMs
+  coin: "btc"               # gamma slug: {coin}-updown-5m-{ts}; keep feeds below consistent
+  # ── Paper mode / maker-rebate quoting (see PLAN.md) ────────────────────────
+  paperMode: "true"          # maker_rebate simulates quotes; no CLOB calls
+  quoteHalfSpread: "0.02"    # bid = mid − halfSpread
+  quoteFloor: "0.30"         # high-rebate p(1−p) band
+  quoteCeil: "0.70"
+  quoteSize: "10"            # shares per quote
+  quoteCutoffSecs: "60"      # cancel all quotes at T−60s (sniping window)
+  quoteWarmupSecs: "10"      # no quotes in first 10s of the bar
+  minPairEdge: "0.01"        # up_q + down_q < 1 − minPairEdge (locked-pair profit)
+  repriceTicks: "0.01"       # cancel/replace when desired quote drifts more
+  repriceZ: "1.5"            # cancel/replace on spot z-move since placement
+  maxInventoryShares: "50"   # per side per bar
+  makerFeeRate: "0.07"       # crypto taker feeRate — rebate weight = sz*fee*p*(1−p)
+  paperTradeFeedTimeoutSecs: "600"  # trade feed silent this long → book-cross fills
+  # ── Latency arb signal ──────────────────────────────────────────────────────
+  minEdge: "0.04"          # edge = fair_p - ask_price - fee (no round-trip cost with hold-to-expiry)
+  costBuffer: "0.02"
+  kellyScale: "0.5"
+  betSizeMin: "0.50"
+  betSizeMax: "5.00"
+  maxBudgetFraction: "0.10"
+  takerFeeBps: "0"         # Polymarket taker fee in basis points
+  entryMinSecondsLeft: "30"   # enter late — higher certainty, real latency arb
+  maxEntrySpread: "0.04"      # slightly wider tolerance
+  minEntryPrice: "0.05"
+  maxEntryPrice: "0.60"       # wider band — hold-to-expiry captures full 1.00 payout
+  sourceMismatchBuffer: "0.015"
+  strategyName: "latency_arb_hold"
+  modelProbShrink: "0.65"
+  modelProbFloor: "0.05"      # wider probability range (was 0.12)
+  modelProbCeil: "0.95"       # wider probability range (was 0.88)
+  signalModel: "math"
+  mlBlendWeight: "0.50"
+  btcNextBarModelPath: "/app/model/pm_btc_binance_next_bar_model.txt"
+  btcNextBarMetaPath: "/app/model/pm_btc_binance_next_bar_meta.json"
+  btcNextBarBlendWeight: "0.35"
+  entryGateModelPath: "/app/model/pm_btc_entry_gate_model.txt"
+  entryGateModelPathV2: "/app/model/pm_btc_entry_gate_model_v2.txt"
+  entryGateCalibratorPathV2: "/app/model/pm_btc_entry_gate_calibrator_v2.json"
+  entryGateThreshold: "0.55"
+  entryGateMinPrice: "0.30"
+  entryGateCheapOverrideScore: "0.78"
+  entryGateCheapOverrideEdge: "0.20"
+  maxAbsDrift: "0.004"
+  minPositionShares: "6"
+  entryConfirmationTicks: "1"  # react fast — latency is the edge
+  filterContrarianEntries: "false"
+  contrarianTailMaxPrice: "0.25"
+  contrarianMoveFilter: "0.0015"
+  cheapTailEdgeBonus: "0.05"
+  lateBarEdgeBonus: "0.04"
+  lateBarWindowSecs: "75"
+  minBtcDistance: "0.0004"
+  minBookDivergence: "0.04"
+  lateEntrySecs: "90"
+  lateEntryEdgeDiscount: "0.30"
+  driftA1: "1.8"
+  driftA2: "1.2"
+  driftA3: "0.0003"
+  driftA4: "0.8"
+  # ── Binance feed + hold-to-expiry ──────────────────────────────────────────
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  binanceStaleSecs: "5.0"
+  holdToExpiryDefault: "true"  # hold positions until bar resolves (1.00 or 0.00)
+  # ── Position management (mostly bypassed with hold-to-expiry) ──────────────
+  evalIntervalMs: "1000"
+  entryMakerOffset: "0.0"     # taker entry — speed matters for latency arb
+  takeProfit: "0.15"
+  stopLoss: "0.08"
+  stopLossMarketLimit: "1"
+  slArmDelaySecs: "60"
+  ultraCheapSlDelaySecs: "120"
+  slMinAdverseBtc: "0.0015"
+  averagingMinSecondsLeft: "150"
+  averagingMaxBtcMove: "0.003"
+  thesisMinBtcDistance: "0.002"
+  mlEntryBaseStopLoss: "0.10"
+  mlEntryLateStopLoss: "0.08"
+  mlEntryLateStopSecs: "90"
+  mlEntryTrailingArmGain: "0.08"
+  mlEntryTrailingGap: "0.05"
+  mlEntryThesisProfitLock: "0.04"
+  mlEntryThesisFloorMin: "0.02"
+  mlEntryThesisEntryFraction: "0.35"
+  mlEntryLateBarCutSecs: "45"
+  mlEntryLateBarPositiveSecs: "25"
+  mlEntryLateBarPositiveFloor: "0.03"
+  mlEntryDominantEdgeFloor: "0.08"
+  mlEntryDominantEntryFraction: "0.50"
+  mlEntryForceExitSecs: "10"
+  signalExitEdge: "0.05"
+  minExitBid: "0.03"
+  orderReplaceGap: "0.05"
+  aggressiveExitSlippage: "0.02"
+  trailingArmGain: "0.20"
+  trailingStopGap: "0.03"
+  # ── Misc ───────────────────────────────────────────────────────────────────
+  polygonRpcUrl: "https://rpc.ankr.com/polygon"
+  polymarketRtdsWs: "wss://ws-live-data.polymarket.com"
+  polymarketRtdsSymbol: "btc/usd"
+  trainingLogPath: "/app/logs/logs-training.jsonl"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  marketRefreshSecs: "60"
+  wsHeartbeatSecs: "30"
+  feedStaleSecs: "20"
+
+credentials:
+  polymarketPrivateKey: ""
+  polymarketAddress: ""
+  polymarketApiKey: ""
+  polymarketApiSecret: ""
+  polymarketApiPassphrase: ""
+  polymarketSignatureType: "0"   # 0=EOA, 2=Gnosis Safe
+  polymarketFunder: ""
+
+telegram:
+  token: ""
+  chatId: ""
+
+persistence:
+  enabled: false
+
+nodeSelector:
+  topology.kubernetes.io/region: hel1
+
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 50m
+  limits:
+    memory: 512Mi
+    cpu: 2000m

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "polymarket-btc-5m-bot.name" . }}
+  labels:
+    {{- include "polymarket-btc-5m-bot.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "polymarket-btc-5m-bot.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "polymarket-btc-5m-bot.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- if .Files.Glob "files/model/*" }}
+        checksum/model: {{ include (print $.Template.BasePath "/configmap-model.yaml") . | sha256sum }}
+        {{- end }}
+    spec:
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: polymarket-btc
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "/app/scripts/main.py"]
+          env:
+            - name: PYTHONPATH
+              value: /app/scripts
+          envFrom:
+            - secretRef:
+                name: {{ include "polymarket-btc-5m-bot.name" . }}-secret
+          volumeMounts:
+            - name: logs
+              mountPath: /app/logs
+            - name: model
+              mountPath: /app/model
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        # Bot source is baked into the image at /app/scripts (Dockerfile COPY src);
+        # the old ConfigMap script injection has been dropped in this project.
+        - name: logs
+          emptyDir: {}
+        # The model ConfigMap is managed outside Helm (apply-model-configmap.sh)
+        # so the Helm release Secret stays under the 1 MiB Kubernetes cap.
+        # Optional: the maker_rebate paper bots don't ship any ML model.
+        - name: model
+          configMap:
+            name: {{ include "polymarket-btc-5m-bot.name" . }}-model
+            optional: true
