@@ -1,14 +1,14 @@
-# eth-every-tick-trader — maker-rebate PAPER quoting on the eth 5m up/down market.
-# Install: helm upgrade --install eth-every-tick-trader ../ -f bots/eth_every_tick.yaml
-botName: eth-every-tick-trader
+# xrp-single — SINGLE-SIDE paper trader (fork of every-tick-trader, project every-tick-single).
+# Install: ./deploy.sh xrp
+botName: xrp-single
 
 bot:
-  coin: "eth"
+  coin: "xrp"
   strategyName: "maker_rebate"
   paperMode: "true"
   quoteMode: "bracket"       # predict side, one entry fill, TP/SL bracket (one_sided/two_sided kept)
   quoteSide: "cheaper"       # only used by quoteMode=one_sided
-  bracketSides: "one"       # single-side paper data collection
+  bracketSides: "one"       # single-side experiment — this project never goes two-sided
   entryPriceCap: "0.48"      # flat resting bid — fills if the flow comes to us, otherwise skip the bar
   takeProfitPrice: "0.99"    # bracket: resting maker SELL
   stopLossPrice: "0"        # disabled 2026-07-02: 7/7 stopped positions recovered to win (PLAN.md backlog analysis)      # bracket: taker SELL when best bid <= this
@@ -20,8 +20,8 @@ bot:
   loopIntervalSecs: "300"
   evalIntervalMs: "5000"
   # Coin-consistent spot feeds (settlement-aligned RTDS + Binance lead feed).
-  binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
-  polymarketRtdsSymbol: "eth/usd"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/xrpusdt@aggTrade"
+  polymarketRtdsSymbol: "xrp/usd"
   # Maker knobs (defaults restated for greppability).
   quoteHalfSpread: "0.02"
   quoteFloor: "0.45"
