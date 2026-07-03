@@ -861,6 +861,74 @@ live if it runs the live code, which matters DOUBLY here since the edge lives in
   `docker compose up -d paper-5m`; evaluate `cat state/paper_5m/summary.json`.
 - Next per user: the DAILY runner for the core `tstrend_multiwindow_aggr` book.
 
+#### #24e — Does disciplined scale-in (tranche averaging-down) help the 5m MR? — NO (2026-06-29) ✗
+User asked whether to buy more as price drops further (expecting a stronger reversion) before changing the
+runner. Backtested on the full 4.4y 5m data (`scripts/intraday_scalein.py`): fixed 1-tranche (|z|>2) vs
+scale-2 (add at |z|>3) vs scale-3 (add at |z|>3,4); tranches ratchet, exit all at |z|<0.5; maker 2bp.
+Raw: `experiments/intraday_meanrev/scalein.txt`.
+
+| variant | GROSS Sharpe | net ret | maxDD | avg\|pos\| |
+|---------|-------------:|--------:|------:|----------:|
+| **fixed (\|z\|>2)** | **+0.90** | −93% | −94% | 0.43× |
+| scale-2 (>2,3) | +0.78 | −98% | −99% | 0.63× |
+| scale-3 (>2,3,4) | +0.81 | −99% | −99% | 0.69× |
+
+- **Result — scale-in HURTS, and it's a signal problem not a fee problem.** GROSS Sharpe *falls* (0.90→0.81)
+  before fees even enter: the first tranche (|z|>2) is where the reversion edge lives; deeper dislocations
+  (|z|>3,4) are disproportionately **continuations / regime breaks**, so adding size there dilutes the edge
+  with the worst-quality bets. Net return and maxDD both get worse. (Ignore net-Sharpe wobble — a
+  leverage/vol-drag artifact when every variant loses 90%+.)
+- **Verdict: keep the runner FIXED-SIZE — averaging down is the #20/#21 trap confirmed for this signal.**
+  "Buy more when cheaper" feels smart but concentrates size into the moves most likely to keep going. No
+  change to `run_5m_meanrev.py`. (Testing it is what kept a worse strategy out of the live runner.)
+
+#### #26 — 5m MR across coins + spread/adverse-selection — XRP is the one candidate (2026-07-01)
+User: add more coins (SOL/ETH/DOGE/XRP/XMR…). `scripts/multicoin_meanrev.py` ran the SAME a-priori threshold
+MR on each (bvision 5m 2022-26), then measured REAL spreads (bookTicker) + adverse selection (aggTrades).
+Raw: `experiments/multicoin_meanrev/`.
+
+| coin | gross Sh | net@2bp | quoted spread | realized@1s (maker keeps) | verdict |
+|------|---------:|--------:|--------------:|--------------------------:|---------|
+| BTC | +0.90 | −1.29 | 0.015 bps | ~0 | dead (no spread) |
+| SOL | +0.75 | −0.39 | 0.078 bps | ~0 | dead (no spread) |
+| ETH | **−0.42** | −2.11 | — | — | dead (no MR signal — ETH trends) |
+| DOGE | +0.90 | −0.23 | 0.70 bps | **−0.68 bps (−193%)** | **dead — passive maker PICKED OFF** |
+| **XRP** | +0.76 | −0.54 | 1.63 bps | **+0.74 bps (+91%)** | **CANDIDATE** |
+
+- **Coin-specific.** MR signal is real on BTC/DOGE/SOL/XRP (+0.75–0.90), NOT ETH (−0.42, it trends). XMR
+  delisted from Binance (privacy-coin removal 2024). Alts' higher vol dilutes the fixed fee → net closer to
+  breakeven than BTC even before spread.
+- **Spread ≠ free money — it's adverse-selection compensation.** Measured realized spread (what a maker keeps
+  after price moves against fills): **DOGE −0.68bps (picked off — a passive maker LOSES money on DOGE)** vs
+  **XRP +0.74bps (~91% of half-spread captured).** Microstructurally opposite despite both being "wide-spread
+  alts". DOGE's wide spread is a danger sign; XRP's noisier/less-informed flow makes its spread harvestable.
+- **XRP = the first plausibly-viable 5m config at retail:** real MR signal + capturable ~0.7bps spread →
+  eff fee ~1.31bp → net ~−0.09 @2bp maker, marginally **positive @1.8bp (BNB burn on)**.
+- **Verdict: CANDIDATE (XRP only), not confirmed.** Caveats: 1-day/2h adverse-selection sample; general-flow
+  proxy (MR's own fills may be more adverse); positive only WITH BNB burn; fill-rate/non-fills unmodeled. The
+  user's multi-coin instinct found the one door ajar — but it needs multi-day spread confirmation + a proper
+  MR-specific maker-fill sim before risking money. BTC/SOL/DOGE/ETH all closed.
+
+### #25 — Profit-skim vs compounding on the daily core book (2026-06-29)
+User: if EOD balance > base, withdraw the excess (1000→1100 → bank 100) to lock profits. Quantified on the
+aggressive daily book (`tstrend_multiwindow_aggr` 0.40/6x, 2014-26) — same return stream, only the capital
+base differs. `scripts/profit_skim.py`; raw `experiments/profit_skim/skim.txt`.
+
+| policy | total wealth | CAGR | banked (safe) | at-risk end | total maxDD |
+|--------|-------------:|-----:|--------------:|------------:|------------:|
+| **compound** | **38.7×** | 36.4% | — | 38.7× | −44% |
+| skim-50% (above fixed base) | 4.8× | 14.2% | 3.8× | 0.94× | −33% |
+| skim-100% | 4.7× | 14.1% | 3.8× | 0.93× | −32% |
+
+- **Compounding makes ~8× more** (38.7× vs 4.8× over 11.8y) — the geometric-growth engine. Skimming switches
+  it off: the trading account never grows (oscillates near base), you bank a drawdown-PROOF ~3.8× pile and
+  cut TOTAL-wealth DD 44%→33%, but convert a 36% compounder into a ~14% income stream + reserve.
+- **skim-50% ≈ skim-100%** (4.8 vs 4.7×) — because both skim above a FIXED base, so the fraction barely
+  matters; the base never grows. Real "income AND growth" needs skimming above a GROWING base (untested knob).
+- **Verdict: for the +EV daily book, DON'T full-skim** — it forfeits the 8× that justifies running it; skim a
+  small fraction above a growing base, or compound + take lump sums on need. (N/A to the −EV 5m book, where
+  skimming is pure defense — nothing to compound.) CAGR full-sample-optimistic; ranking durable.
+
 ### #22 / #23 — "adjust the math to the current regime, online" (2026-06-28)
 User's hypothesis: the book uses fixed math; what if it adapted to the regime while running? First, what
 it ALREADY adapts: position size scales `target_vol / trailing_realized_vol` (per-asset + 60d overlay +

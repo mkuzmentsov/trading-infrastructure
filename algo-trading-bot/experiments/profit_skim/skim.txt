@@ -1,0 +1,14 @@
+=== Profit-skim vs compounding: tstrend_multiwindow_aggr (0.40/6x daily book) ===
+3069 daily bars, 11.8y, base $1,000
+
+      policy  total wealth  CAGR(total)  banked(safe)  at-risk end  maxDD(total)
+--------------------------------------------------------------------------------
+    compound        38.7x       36.4%         0.0x      38.66x       -44.3%
+    skim-50%         4.8x       14.2%         3.8x       0.94x       -33.0%
+   skim-100%         4.7x       14.1%         3.8x       0.93x       -32.3%
+
+(at-risk account maxDD is the same shape for all policies: -44.3% — the strategy is identical; only the
+capital base differs.) read: 'compound' wins terminal wealth massively (geometric growth), but its
+TOTAL-wealth drawdown is the full strategy DD. Skim policies bank a drawdown-PROOF pile at the cost
+of far lower terminal wealth — income & safety vs growth. CAGR here is full-sample-optimistic;
+temper forward ~0.6-0.7x (per #11). The RANKING (compound >> skim on growth) is the durable point.

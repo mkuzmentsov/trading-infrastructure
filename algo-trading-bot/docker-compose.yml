@@ -27,6 +27,18 @@ services:
     volumes: [./state:/app/state]
     restart: unless-stopped
 
+  # XRP instance — the #26 CANDIDATE (real MR signal + capturable spread). Runs in parallel with BTC.
+  # NOTE: PaperBroker fills at the close and earns ZERO spread, so its NET UNDERSTATES XRP's real maker
+  # economics — the ~0.7bps/leg spread capture (#26) is a known uplift to add. Watch GROSS (does the
+  # signal hold forward?) + net(no-capture). Real maker net ≈ this net + the #26 spread offset.
+  paper-5m-xrp:
+    build: .
+    image: algo-trading-bot:latest
+    entrypoint: ["python", "scripts/run_5m_meanrev.py"]
+    command: ["--symbol", "XRPUSDT", "--state-dir", "/app/state/paper_5m_xrp", "--fee-bps", "2.0"]
+    volumes: [./state:/app/state]
+    restart: unless-stopped
+
   paper-kraken:
     build: .
     image: algo-trading-bot:latest
