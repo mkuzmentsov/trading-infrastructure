@@ -41,6 +41,13 @@ hold to expiry, collect rebates.** Decide with the snapshot grid (bar_snapshot e
 Go-live only after the gated config shows +EV **including** its trend-hour mistakes
 (gate lag bars), at $5 size, on a fresh out-of-sample day.
 
+**EXPERIMENT (re-check tomorrow, first pass 2026-07-03 on 79 positions):** late-bar
+salvage sell — at <=90s left, if held side's bid <= 0.20, rest a MAKER sell at 0.20.
+First pass: +$6.32 vs hold (5 losers salvaged x ~$2, ZERO winners capped). Arm threshold
+is the knife edge: at bid<=0.30 it capped 4 real comebacks and went NEGATIVE (-2.94).
+Re-run the sim grid (arm_secs x arm_below x salvage) on the full snapshot dataset;
+adopt only if delta stays positive with capped-wins ~0 at n>=300 positions.
+
 Per-coin instances: `btc-every-tick-trader`, `eth-every-tick-trader`, … Source ported from
 `polymarket/k8s/helm/polymarket-btc-5m-bot` (the math_smart 5m taker bot); this project flips
 the role: **be the maker, not the taker** — quote every 5m tick, collect spread + maker rebates.
