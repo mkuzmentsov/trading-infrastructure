@@ -26,31 +26,11 @@ not cover single-fill adverse selection ~−$4.4/bar at observed both-fill rates
    ankr RPC now needs a key -> use polygon-bor-rpc.publicnode.com or redemptions die.
    postOnly=True on GTC = hard maker guarantee (rejects crossing orders).
 
-**THE NEXT TEST (run when snapshots span a full session cycle, >=1 day):**
-Candidate profitable config: **rest at P in [0.45-0.48] ONLY in chop-classified bars,
-hold to expiry, collect rebates.** Decide with the snapshot grid (bar_snapshot events,
-15s book states, all 4 coins since 2026-07-03 ~11:00 UTC):
-- Measure **q(P | regime)**: hypothetical fill (book ask crossed P) -> outcome win rate,
-  per price level per regime class (per-coin p60/p85 rolling thresholds).
-- GO if q(P | chop) - P >= +5pp with n >= 150 fills and the gate's regime classification
-  is implementable from data available AT THE BAR OPEN (prev bars only, no lookahead).
-- Also grid: exit rule (cut if unrecovered at T) vs hold-to-expiry — recovery curves
-  from snapshots; conviction side-rule (p_up logged per bar) vs alternate.
-- Grid script pattern: join bar_snapshot <-> paper_bar_settle on condition_id ==
-  paper_condition_id (settle's market_start_ts is the NEXT bar's — trap).
-Go-live only after the gated config shows +EV **including** its trend-hour mistakes
-(gate lag bars), at $5 size, on a fresh out-of-sample day.
+**Experiments registry: see `EXPERIMENTS.md`** — recurring sims (regime-gate grid E1,
+salvage sell E2, exits E3, side rules E4, toxicity filter E5, session gate E6, realized
+rebates E7, coin selection E8) run against accumulated snapshot data, composed jointly
+before any adoption. Go-live requires E1 GO + joint re-sim + out-of-sample day.
 
-**EXPERIMENT (re-check tomorrow, first pass 2026-07-03 on 79 positions):** late-bar
-salvage sell — at <=90s left, if held side's bid <= 0.20, rest a MAKER sell at 0.20.
-First pass: +$6.32 vs hold (5 losers salvaged x ~$2, ZERO winners capped). Arm threshold
-is the knife edge: at bid<=0.30 it capped 4 real comebacks and went NEGATIVE (-2.94).
-Re-run the sim grid (arm_secs x arm_below x salvage) on the full snapshot dataset;
-adopt only if delta stays positive with capped-wins ~0 at n>=300 positions.
-
-Per-coin instances: `btc-every-tick-trader`, `eth-every-tick-trader`, … Source ported from
-`polymarket/k8s/helm/polymarket-btc-5m-bot` (the math_smart 5m taker bot); this project flips
-the role: **be the maker, not the taker** — quote every 5m tick, collect spread + maker rebates.
 
 ## 1. The rebate program (verified from Polymarket docs, 2026-07)
 
