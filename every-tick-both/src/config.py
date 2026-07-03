@@ -73,6 +73,9 @@ ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
 # rebate weight); a single fill is the one-sided bet without needing the
 # side prediction (which measured ~0 edge at bar open).
 BRACKET_SIDES = os.getenv("BRACKET_SIDES", "one").strip().lower()
+# Periodic in-bar book snapshot event (offline analysis: recovery curves,
+# book-imbalance toxicity, fill-time conditioning). 0 disables.
+BAR_SNAPSHOT_SECS = int(os.getenv("BAR_SNAPSHOT_SECS", "15"))
 # Pair-incomplete escalating exit (both mode only; 0 disables a stage).
 # Analysis 2026-07-03 (first 30 live bars): BOTH-fill bars won 21/21 (+$0.40
 # avg), SINGLE-fill bars lost 9/9 (-$4.75); 83% of pairs complete by 120s.

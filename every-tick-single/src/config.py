@@ -73,6 +73,9 @@ ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
 # rebate weight); a single fill is the one-sided bet without needing the
 # side prediction (which measured ~0 edge at bar open).
 BRACKET_SIDES = os.getenv("BRACKET_SIDES", "one").strip().lower()
+# Periodic in-bar book snapshot event (offline analysis: recovery curves,
+# book-imbalance toxicity, fill-time conditioning). 0 disables.
+BAR_SNAPSHOT_SECS = int(os.getenv("BAR_SNAPSHOT_SECS", "15"))
 # Side picker for BRACKET_SIDES=one: "signal" (p_up estimate; measured
 # degenerate ~always-UP at bar open) or "alternate" (flip each bar — clean
 # control that removes drift bias and isolates maker economics).

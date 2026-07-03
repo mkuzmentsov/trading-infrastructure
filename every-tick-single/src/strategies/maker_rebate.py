@@ -30,6 +30,7 @@ import math
 
 from config import (
     DRY_RUN,
+    BAR_SNAPSHOT_SECS,
     BRACKET_SIDES,
     BRACKET_SIDE_RULE,
     ENTRY_PRICE_CAP,
@@ -121,6 +122,7 @@ class MakerRebateStrategy:
         # exposure. Trading begins at the next bar boundary.
         self._startup_checked = False
         self._startup_skip_cid: str = ""
+        self._last_snapshot: float = 0.0
         self._last_alt_side: str = "DOWN"  # alternate rule starts with UP
 
     # ── Strategy protocol (taker path is never used; keep it inert) ─────────
@@ -410,11 +412,32 @@ class MakerRebateStrategy:
                 side, want, size, now, purpose="entry", size_clamped_to_min=clamped
             )
 
+    def _maybe_snapshot(self, ctx: StrategyContext, book, now: float) -> None:
+        """Every BAR_SNAPSHOT_SECS: log the book + spot so offline analysis
+        can reconstruct in-bar paths (recovery curves, imbalance toxicity)."""
+        if BAR_SNAPSHOT_SECS <= 0 or now - self._last_snapshot < BAR_SNAPSHOT_SECS:
+            return
+        self._last_snapshot = now
+        from pm_ws import pm_state
+        book._event(
+            "bar_snapshot",
+            seconds_left=ctx.seconds_left,
+            up_bid=ctx.up_bid, up_ask=ctx.up_ask,
+            down_bid=ctx.down_bid, down_ask=ctx.down_ask,
+            up_bid_size=getattr(pm_state, "up_bid_size", 0.0),
+            up_ask_size=getattr(pm_state, "up_ask_size", 0.0),
+            down_bid_size=getattr(pm_state, "down_bid_size", 0.0),
+            down_ask_size=getattr(pm_state, "down_ask_size", 0.0),
+            spot=ctx.current_price, bar_open=ctx.bar_open,
+        )
+
     def maintain_quotes(self, ctx: StrategyContext, book, now: float) -> None:
         """Bring resting paper quotes in line with the desired state."""
         if not book.bar_active():
             book.cancel_all("no_active_bar", now)
             return
+
+        self._maybe_snapshot(ctx, book, now)
 
         if QUOTE_MODE == "bracket":
             self._maintain_bracket(ctx, book, now)

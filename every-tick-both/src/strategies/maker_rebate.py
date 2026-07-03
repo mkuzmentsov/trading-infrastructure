@@ -30,6 +30,7 @@ import math
 
 from config import (
     DRY_RUN,
+    BAR_SNAPSHOT_SECS,
     BRACKET_SIDES,
     ENTRY_PRICE_CAP,
     ENTRY_STYLE,
@@ -122,6 +123,7 @@ class MakerRebateStrategy:
         # exposure. Trading begins at the next bar boundary.
         self._startup_checked = False
         self._startup_skip_cid: str = ""
+        self._last_snapshot: float = 0.0
 
     # ── Strategy protocol (taker path is never used; keep it inert) ─────────
     def startup_details(self) -> list[str]:
@@ -343,6 +345,21 @@ class MakerRebateStrategy:
         for pos in book.open_positions():
             opposite = "DOWN" if pos.direction == "UP" else "UP"
             if book.bar_entry_fills(opposite) > 0:
+                # Pair completed. If the exit was already armed (the second
+                # fill raced the stage-1 give-up), RESTORE the normal bracket:
+                # otherwise the repriced ~entry TP sells the winning leg at
+                # cost and a locked pair settles -4.8 (observed live 10:35Z).
+                if pos.pair_exit_stage > 0:
+                    pos.pair_exit_stage = 0
+                    pos.stop_price = STOP_LOSS_PRICE
+                    pos.tp_price = TAKE_PROFIT_PRICE
+                    if pos.tp_order_id is not None and pos.tp_order_id in book.orders:
+                        book.cancel_quote(pos.tp_order_id, "pair_exit_restore", now)
+                    pos.tp_order_id = None
+                    log.info(
+                        "PAIR_EXIT restored  %s pos=%d — pair completed after exit armed; TP back to %.2f",
+                        pos.direction, pos.pos_id, TAKE_PROFIT_PRICE,
+                    )
                 continue  # pair completed — normal bracket handles it
             if pos.pair_exit_stage == 0 and elapsed >= PAIR_EXIT_MAKER_SECS:
                 pos.pair_exit_stage = 1
@@ -438,11 +455,32 @@ class MakerRebateStrategy:
                 side, want, size, now, purpose="entry", size_clamped_to_min=clamped
             )
 
+    def _maybe_snapshot(self, ctx: StrategyContext, book, now: float) -> None:
+        """Every BAR_SNAPSHOT_SECS: log the book + spot so offline analysis
+        can reconstruct in-bar paths (recovery curves, imbalance toxicity)."""
+        if BAR_SNAPSHOT_SECS <= 0 or now - self._last_snapshot < BAR_SNAPSHOT_SECS:
+            return
+        self._last_snapshot = now
+        from pm_ws import pm_state
+        book._event(
+            "bar_snapshot",
+            seconds_left=ctx.seconds_left,
+            up_bid=ctx.up_bid, up_ask=ctx.up_ask,
+            down_bid=ctx.down_bid, down_ask=ctx.down_ask,
+            up_bid_size=getattr(pm_state, "up_bid_size", 0.0),
+            up_ask_size=getattr(pm_state, "up_ask_size", 0.0),
+            down_bid_size=getattr(pm_state, "down_bid_size", 0.0),
+            down_ask_size=getattr(pm_state, "down_ask_size", 0.0),
+            spot=ctx.current_price, bar_open=ctx.bar_open,
+        )
+
     def maintain_quotes(self, ctx: StrategyContext, book, now: float) -> None:
         """Bring resting paper quotes in line with the desired state."""
         if not book.bar_active():
             book.cancel_all("no_active_bar", now)
             return
+
+        self._maybe_snapshot(ctx, book, now)
 
         if QUOTE_MODE == "bracket":
             self._maintain_bracket(ctx, book, now)
