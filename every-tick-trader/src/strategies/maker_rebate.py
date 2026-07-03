@@ -114,6 +114,12 @@ class MakerRebateStrategy:
         self._bracket_side: str | None = None
         self._bracket_p_up: float = 0.5
         self._bracket_p_up_source: str = ""
+        # Startup gate: never start trading mid-bar. The first bar observed
+        # after (re)deploy is skipped when it's already >10s old — a mid-bar
+        # entry sees an already-moved tape (inflated p_up) and partial-bar
+        # exposure. Trading begins at the next bar boundary.
+        self._startup_checked = False
+        self._startup_skip_cid: str = ""
 
     # ── Strategy protocol (taker path is never used; keep it inert) ─────────
     def startup_details(self) -> list[str]:
@@ -282,6 +288,18 @@ class MakerRebateStrategy:
             bar_len = pm_state.market_end_ts - pm_state.market_start_ts
         elapsed = bar_len - ctx.seconds_left
         if elapsed < self._warmup:
+            return
+
+        # Startup gate: skip the bar already in progress at (re)deploy.
+        if not self._startup_checked:
+            self._startup_checked = True
+            if elapsed > 10:
+                self._startup_skip_cid = pm_state.condition_id
+                log.info(
+                    "STARTUP mid-bar (elapsed=%.0fs) — skipping this bar, trading starts next bar",
+                    elapsed,
+                )
+        if self._startup_skip_cid and pm_state.condition_id == self._startup_skip_cid:
             return
 
         # Which sides to quote this bar. "both": rest the fixed entry on UP
