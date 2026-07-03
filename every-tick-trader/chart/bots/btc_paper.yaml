@@ -1,9 +1,9 @@
-# eth-every-tick-trader — maker-rebate PAPER quoting on the eth 5m up/down market.
-# Install: helm upgrade --install eth-every-tick-trader ../ -f bots/eth_every_tick.yaml
-botName: eth-every-tick-trader
+# btc-paper-every-tick-trader — PAPER single-side twin of the LIVE btc bot.
+# Install: helm upgrade --install btc-every-tick-trader ../ -f bots/btc_every_tick.yaml
+botName: btc-paper-every-tick-trader
 
 bot:
-  coin: "eth"
+  coin: "btc"
   strategyName: "maker_rebate"
   paperMode: "true"
   quoteMode: "bracket"       # predict side, one entry fill, TP/SL bracket (one_sided/two_sided kept)
@@ -20,8 +20,8 @@ bot:
   loopIntervalSecs: "300"
   evalIntervalMs: "5000"
   # Coin-consistent spot feeds (settlement-aligned RTDS + Binance lead feed).
-  binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
-  polymarketRtdsSymbol: "eth/usd"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  polymarketRtdsSymbol: "btc/usd"
   # Maker knobs (defaults restated for greppability).
   quoteHalfSpread: "0.02"
   quoteFloor: "0.45"
