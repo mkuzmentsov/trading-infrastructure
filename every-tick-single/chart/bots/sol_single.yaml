@@ -16,10 +16,10 @@ bot:
   maxFillsPerBar: "1"        # bracket: one entry fill per bar, no refill
   dryRun: "true"                # belt-and-braces — taker code paths stay simulated too
   # loopIntervalSecs is the BAR LENGTH (5m fallback for boundary math), NOT the
-  # tick rate. The loop tick is evalIntervalMs: 5s so quotes reprice intra-bar
+  # tick rate. evalIntervalMs 200ms matches the live bot latency profile (entry at bar open, TP fill detection)
   # (the old 300s/one-shot cadence only made sense for the taker bot).
   loopIntervalSecs: "300"
-  evalIntervalMs: "5000"
+  evalIntervalMs: "200"
   # Coin-consistent spot feeds (settlement-aligned RTDS + Binance lead feed).
   binanceWsUrl: "wss://stream.binance.com:9443/ws/solusdt@aggTrade"
   polymarketRtdsSymbol: "sol/usd"
