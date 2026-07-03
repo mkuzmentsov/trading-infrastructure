@@ -59,6 +59,14 @@ MIN_PAIR_EDGE = float(os.getenv("MIN_PAIR_EDGE", "0.01"))           # up_q + dow
 # two_sided: quote both tokens with the pair-lock constraint (backlog: A/B test).
 QUOTE_MODE = os.getenv("QUOTE_MODE", "bracket").strip().lower()
 ENTRY_PRICE_CAP = float(os.getenv("ENTRY_PRICE_CAP", "0.50"))       # bracket: never bid above (≤50c = max rebate weight)
+# fixed (default since 2026-07-03): rest the entry AT ENTRY_PRICE_CAP (clamped
+# to ask − tick if that would cross — always maker, never taker) and leave it
+# alone until fill or cutoff: no mid-chasing, no repricing. Paper data showed
+# chase fills below ~0.45 and repriced/late fills are adversely selected
+# (q − p < 0); the only profitable segment was ~50c fills early in the bar.
+# chase: the original behavior — bid min(mid − QUOTE_HALF_SPREAD, cap) and
+# cancel/replace on REPRICE_TICKS / REPRICE_Z drift.
+ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
 TAKE_PROFIT_PRICE = float(os.getenv("TAKE_PROFIT_PRICE", "0.99"))   # bracket: resting maker SELL
 STOP_LOSS_PRICE = float(os.getenv("STOP_LOSS_PRICE", "0.10"))       # bracket: taker SELL when best_bid <= this
 MAX_FILLS_PER_BAR = int(os.getenv("MAX_FILLS_PER_BAR", "1"))        # bracket: entry fills per bar (no refill conveyor)

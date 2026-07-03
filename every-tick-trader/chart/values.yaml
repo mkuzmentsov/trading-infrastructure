@@ -15,8 +15,9 @@ bot:
   coin: "btc"               # gamma slug: {coin}-updown-5m-{ts}; keep feeds below consistent
   # ── Paper mode / maker-rebate quoting (see PLAN.md) ────────────────────────
   paperMode: "true"          # maker_rebate simulates quotes; no CLOB calls
+  entryStyle: "fixed"        # rest AT 50c (clamp ask−tick, always maker), no repricing; "chase" = old mid-follow
   quoteHalfSpread: "0.02"    # bid = mid − halfSpread
-  quoteFloor: "0.30"         # high-rebate p(1−p) band
+  quoteFloor: "0.45"         # skip the bar if the maker-clamped entry lands below (cheap fills measured q−p<0)
   quoteCeil: "0.70"
   quoteSize: "10"            # shares per quote (legacy fallback when quoteNotionalUsd=0)
   # USD entry budget per bar (bracket, paper AND live): shares = notional/price
@@ -24,7 +25,7 @@ bot:
   # Start 5, raise to 10 when ready — values-only change, no code change.
   quoteNotionalUsd: "5"
   quoteCutoffSecs: "60"      # cancel all quotes at T−60s (sniping window)
-  quoteWarmupSecs: "10"      # no quotes in first 10s of the bar
+  quoteWarmupSecs: "0"       # quote immediately at bar open
   minPairEdge: "0.01"        # up_q + down_q < 1 − minPairEdge (locked-pair profit)
   repriceTicks: "0.01"       # cancel/replace when desired quote drifts more
   repriceZ: "1.5"            # cancel/replace on spot z-move since placement

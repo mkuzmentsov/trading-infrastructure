@@ -31,6 +31,7 @@ import math
 from config import (
     DRY_RUN,
     ENTRY_PRICE_CAP,
+    ENTRY_STYLE,
     LIVE_MAX_ORDER_USD,
     LIVE_QUOTE_WARMUP_SECS,
     LIVE_TRADING,
@@ -306,8 +307,8 @@ class MakerRebateStrategy:
             if self._live:
                 # LIVE latency path: the book hasn't formed yet at bar roll —
                 # a non-marketable bid near 50c is safe by construction, so
-                # place it NOW instead of waiting; the normal reprice logic
-                # pulls it to mid − halfSpread on the first real snapshot.
+                # place it NOW instead of waiting. (chase style repriced it on
+                # the first snapshot; fixed style just lets it rest at 49c.)
                 want = _round_down_tick(min(0.49, ENTRY_PRICE_CAP))
                 if want >= _TICK and book.resting_entry(side) is None:
                     size, clamped = self._entry_size(want)
@@ -320,26 +321,40 @@ class MakerRebateStrategy:
             return
         mid = (bid + ask) / 2.0
 
-        # Entry bid: mid − halfSpread, capped so fills stay <= ENTRY_PRICE_CAP
-        # (max p(1−p) rebate weight, never overpay). Round down; never cross.
-        want = _round_down_tick(min(mid - QUOTE_HALF_SPREAD, ENTRY_PRICE_CAP))
-        if want >= ask:
-            want = _round_down_tick(ask - _TICK)
-        if want < _TICK:
-            book.cancel_entries("no_quote_band", now)
-            return
+        if ENTRY_STYLE == "fixed":
+            # Rest AT the cap (50c = max p(1−p) rebate weight); clamp to
+            # ask − tick only if the cap would cross (always maker, never
+            # taker — a 49c rest is fine). Below QUOTE_FLOOR the side is
+            # already decided-cheap: those fills measured q − p < 0, skip.
+            want = _round_down_tick(ENTRY_PRICE_CAP)
+            if want >= ask:
+                want = _round_down_tick(ask - _TICK)
+            if want < max(QUOTE_FLOOR, _TICK):
+                book.cancel_entries("below_floor", now)
+                return
+            # No repricing: the order rests untouched until fill or cutoff.
+            resting = book.resting_entry(side)
+        else:
+            # chase: bid mid − halfSpread, capped at ENTRY_PRICE_CAP.
+            # Round down; never cross; cancel/replace on drift.
+            want = _round_down_tick(min(mid - QUOTE_HALF_SPREAD, ENTRY_PRICE_CAP))
+            if want >= ask:
+                want = _round_down_tick(ask - _TICK)
+            if want < _TICK:
+                book.cancel_entries("no_quote_band", now)
+                return
 
-        resting = book.resting_entry(side)
-        if resting is not None:
-            stale_price = abs(want - resting.price) > REPRICE_TICKS + 1e-9
-            stale_z = self._spot_z_move(ctx, resting.spot_at_place) > REPRICE_Z
-            if stale_price or stale_z:
-                book.cancel_quote(
-                    resting.order_id,
-                    "reprice_mid_moved" if stale_price else "reprice_spot_z",
-                    now,
-                )
-                resting = None
+            resting = book.resting_entry(side)
+            if resting is not None:
+                stale_price = abs(want - resting.price) > REPRICE_TICKS + 1e-9
+                stale_z = self._spot_z_move(ctx, resting.spot_at_place) > REPRICE_Z
+                if stale_price or stale_z:
+                    book.cancel_quote(
+                        resting.order_id,
+                        "reprice_mid_moved" if stale_price else "reprice_spot_z",
+                        now,
+                    )
+                    resting = None
 
         if resting is None:
             size, clamped = self._entry_size(want)

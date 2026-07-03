@@ -8,7 +8,7 @@ bot:
   paperMode: "true"
   quoteMode: "bracket"       # predict side, one entry fill, TP/SL bracket (one_sided/two_sided kept)
   quoteSide: "cheaper"       # only used by quoteMode=one_sided
-  entryPriceCap: "0.50"      # bracket: never bid above 50c (max rebate weight)
+  entryPriceCap: "0.48"      # flat resting bid — fills if the flow comes to us, otherwise skip the bar
   takeProfitPrice: "0.99"    # bracket: resting maker SELL
   stopLossPrice: "0"        # disabled 2026-07-02: 7/7 stopped positions recovered to win (PLAN.md backlog analysis)      # bracket: taker SELL when best bid <= this
   maxFillsPerBar: "1"        # bracket: one entry fill per bar, no refill
@@ -23,12 +23,12 @@ bot:
   polymarketRtdsSymbol: "eth/usd"
   # Maker knobs (defaults restated for greppability).
   quoteHalfSpread: "0.02"
-  quoteFloor: "0.30"
+  quoteFloor: "0.45"
   quoteCeil: "0.70"
   quoteSize: "10"
   quoteNotionalUsd: "5"    # USD entry budget (bracket) — start 5, raise to 10 when ready
   quoteCutoffSecs: "60"
-  quoteWarmupSecs: "10"
+  quoteWarmupSecs: "0"
   minPairEdge: "0.01"
   repriceTicks: "0.01"
   repriceZ: "1.5"
