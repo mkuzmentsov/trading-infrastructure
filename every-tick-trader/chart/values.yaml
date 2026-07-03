@@ -24,7 +24,7 @@ bot:
   # floored to whole shares, clamped UP to the market's orderMinSize (5).
   # Start 5, raise to 10 when ready — values-only change, no code change.
   quoteNotionalUsd: "5"
-  quoteCutoffSecs: "60"      # cancel all quotes at T−60s (sniping window)
+  quoteCutoffSecs: "0"       # 0 = never pull the entry; it rests until filled or the bar resolves
   quoteWarmupSecs: "0"       # quote immediately at bar open
   minPairEdge: "0.01"        # up_q + down_q < 1 − minPairEdge (locked-pair profit)
   repriceTicks: "0.01"       # cancel/replace when desired quote drifts more
