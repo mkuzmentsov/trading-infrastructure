@@ -1,4 +1,45 @@
-# every-tick-trader — Polymarket maker-rebate quoting bot
+# every-tick-single — Polymarket maker-rebate quoting bot (single-asset)
+
+## 0. STATE OF KNOWLEDGE (2026-07-03, after one full live day) + NEXT TEST
+
+**Scope**: this project = SINGLE-ASSET bot — ONE resting maker bid per bar per coin.
+(The two-sided pair bot lived in every-tick-both — deleted after the live verdict:
+−$59/$116 in a day; no +EV regime subset at 0.48/0.48; pair income +$0.40/bar could
+not cover single-fill adverse selection ~−$4.4/bar at observed both-fill rates.)
+
+**What one live day + ~400 paper bars established (hard findings):**
+1. **Fill = adverse selection** (Glosten-Milgrom, measured direction-neutrally by the
+   alternate-side fleet): conditional win rate of a filled 0.48 bid was **~25% in
+   trending hours** and **~58-80% in chop hours** vs the 48% breakeven. The fill only
+   happens when the market trades down through the bid — WHICH regime it happens in
+   decides everything.
+2. **Regimes cluster** (30-90 min runs of chop/trend; see regime charts: per-coin p60/p85
+   thresholds on 5m |move|). A prev-bars gate is feasible; it must react within ~1-2 bars.
+3. **No side signal at bar open**: p_up ~0.5, raw outcomes ~coin-flip (45.5% reversal,
+   n=121). "Always-UP looked good" was up-drift beta (54% at 07:00 UTC, 0% at 11:00).
+4. **Deeper entry = lower breakeven** (q needed = P) but measured q collapses faster than
+   P in bad regimes (0.3-bucket won 22%). Depth is only a cushion INSIDE chop, not a fix.
+5. **Rebates are garnish**: realistic $2-8/day at $5 size; ~10-100x smaller than
+   adverse-selection cost per share. They ride on any +EV config; they rescue none.
+6. **Ops traps**: Polymarket reports cross-token maker fills in complement terms (clamp
+   to limit price); CTF shares credit with lag/dust (size sells from exchange balance);
+   ankr RPC now needs a key -> use polygon-bor-rpc.publicnode.com or redemptions die.
+   postOnly=True on GTC = hard maker guarantee (rejects crossing orders).
+
+**THE NEXT TEST (run when snapshots span a full session cycle, >=1 day):**
+Candidate profitable config: **rest at P in [0.45-0.48] ONLY in chop-classified bars,
+hold to expiry, collect rebates.** Decide with the snapshot grid (bar_snapshot events,
+15s book states, all 4 coins since 2026-07-03 ~11:00 UTC):
+- Measure **q(P | regime)**: hypothetical fill (book ask crossed P) -> outcome win rate,
+  per price level per regime class (per-coin p60/p85 rolling thresholds).
+- GO if q(P | chop) - P >= +5pp with n >= 150 fills and the gate's regime classification
+  is implementable from data available AT THE BAR OPEN (prev bars only, no lookahead).
+- Also grid: exit rule (cut if unrecovered at T) vs hold-to-expiry — recovery curves
+  from snapshots; conviction side-rule (p_up logged per bar) vs alternate.
+- Grid script pattern: join bar_snapshot <-> paper_bar_settle on condition_id ==
+  paper_condition_id (settle's market_start_ts is the NEXT bar's — trap).
+Go-live only after the gated config shows +EV **including** its trend-hour mistakes
+(gate lag bars), at $5 size, on a fresh out-of-sample day.
 
 Per-coin instances: `btc-every-tick-trader`, `eth-every-tick-trader`, … Source ported from
 `polymarket/k8s/helm/polymarket-btc-5m-bot` (the math_smart 5m taker bot); this project flips
