@@ -45,10 +45,14 @@ def load_events(events_dir: str, coins=COINS) -> dict:
             except Exception:
                 continue
             ev = e.get("event")
-            if ev == "bar_snapshot" and e.get("condition_id"):
+            if ev in ("bar_snapshot", "trade_print") and e.get("condition_id"):
                 k = (c, e["condition_id"])
-                b = bars.setdefault(k, {"snaps": [], "positions": [],
+                b = bars.setdefault(k, {"snaps": [], "prints": [], "positions": [],
                                         "outcome": None, "bar_ts": e.get("market_start_ts")})
+                if ev == "trade_print":
+                    b["prints"].append((e.get("seconds_left", 0), e.get("direction"),
+                                        e.get("price", 0), e.get("size", 0)))
+                    continue
                 b["snaps"].append((e.get("seconds_left", 0),
                                    e.get("up_bid", 0), e.get("up_ask", 0),
                                    e.get("down_bid", 0), e.get("down_ask", 0)))
@@ -99,9 +103,15 @@ def grid_q(bars: dict, regimes: dict, prices=(0.49, 0.48, 0.46, 0.44, 0.42, 0.40
             if not b["outcome"] or len(b["snaps"]) < 6:
                 continue
             reg = regimes.get((c, b["bar_ts"]), "mid")
-            min_ua = min((s[2] for s in b["snaps"] if 0 < s[2] < 1), default=1)
-            min_da = min((s[4] for s in b["snaps"] if 0 < s[4] < 1), default=1)
-            for side, crossed in (("UP", min_ua <= P), ("DOWN", min_da <= P)):
+            prints = b.get("prints") or []
+            if prints:
+                # exact: a resting bid at P fills iff a print occurs at <= P
+                up_fill = any(d == "UP" and 0 < px <= P for _, d, px, _ in prints)
+                dn_fill = any(d == "DOWN" and 0 < px <= P for _, d, px, _ in prints)
+            else:
+                up_fill = min((s[2] for s in b["snaps"] if 0 < s[2] < 1), default=1) <= P
+                dn_fill = min((s[4] for s in b["snaps"] if 0 < s[4] < 1), default=1) <= P
+            for side, crossed in (("UP", up_fill), ("DOWN", dn_fill)):
                 if not crossed:
                     continue
                 st = stats.setdefault(reg, [0, 0])

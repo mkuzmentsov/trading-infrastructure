@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 
 from binance_ws import binance_state, run_binance_ws
@@ -323,6 +324,13 @@ def _write_training_event(event_type: str, **payload) -> None:
     }
     record.update(payload)
     _append_jsonl(TRAINING_EVENT_LOG_PATH, record, "Training event")
+
+
+# Give pm_ws the event writer so every trade print is persisted (exact fill
+# truth for backtests). Set at import time — pm_ws only calls it when set.
+pm_ws_module = sys.modules.get("pm_ws")
+if pm_ws_module is not None:
+    pm_ws_module.trade_print_logger = _write_training_event
 
 
 def _write_position_parked_event(pos, reason: str) -> None:

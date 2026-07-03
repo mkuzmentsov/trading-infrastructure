@@ -338,6 +338,26 @@ def _handle_last_trade_price(msg: dict) -> None:
         }
     )
     pm_state.last_ws_message_kind = f"last_trade_price:{asset_id[:12]}"
+    # Persist every print: exact fill truth for the EXPERIMENTS.md sims — a
+    # hypothetical resting bid at P fills iff a print occurs at <= P on that
+    # token (snapshot sampling proxies over/under-count; prints don't).
+    if trade_print_logger is not None:
+        try:
+            trade_print_logger(
+                "trade_print",
+                token_id=asset_id,
+                direction="UP" if asset_id == pm_state.token_id_up else "DOWN",
+                price=price,
+                size=size,
+                side=side,
+            )
+        except Exception:
+            pass
+
+
+# Injected by main.py at startup (avoids a circular import); signature matches
+# main._write_training_event(event_type, **payload).
+trade_print_logger = None
 
 
 def _handle_price_change(msg: dict) -> None:
