@@ -112,6 +112,10 @@ class _BarState:
     entry_fills_by_side: dict = field(default_factory=dict)  # {"UP": n, "DOWN": n}
     positions: list = field(default_factory=list)   # list[BracketPosition]
     pos_seq: int = 0
+    # Strategy metadata for offline analysis (set via set_bar_meta).
+    p_up: float | None = None
+    p_up_source: str = ""
+    side_rule: str = ""
 
 
 class PaperBook:
@@ -276,6 +280,9 @@ class PaperBook:
             paper_condition_id=bar.condition_id,
             paper_question=bar.question,
             outcome=outcome,
+            p_up=bar.p_up,
+            p_up_source=bar.p_up_source,
+            side_rule=bar.side_rule,
             settle_price=round(bar.last_price, 4),
             settle_bar_open=round(bar.bar_open, 4),
             up_shares=round(up_sh, 4),
@@ -342,6 +349,13 @@ class PaperBook:
             if o.direction == direction and o.purpose == "entry":
                 return o
         return None
+
+    def set_bar_meta(self, **kw) -> None:
+        """Attach strategy metadata (p_up, side_rule) to the active bar;
+        emitted with paper_bar_settle for offline signal analysis."""
+        if self._bar is not None:
+            for k, v in kw.items():
+                setattr(self._bar, k, v)
 
     def bar_entry_fills(self, direction: str | None = None) -> int:
         if self._bar is None:

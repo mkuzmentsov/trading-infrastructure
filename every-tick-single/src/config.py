@@ -73,6 +73,10 @@ ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
 # rebate weight); a single fill is the one-sided bet without needing the
 # side prediction (which measured ~0 edge at bar open).
 BRACKET_SIDES = os.getenv("BRACKET_SIDES", "one").strip().lower()
+# Side picker for BRACKET_SIDES=one: "signal" (p_up estimate; measured
+# degenerate ~always-UP at bar open) or "alternate" (flip each bar — clean
+# control that removes drift bias and isolates maker economics).
+BRACKET_SIDE_RULE = os.getenv("BRACKET_SIDE_RULE", "alternate").strip().lower()
 TAKE_PROFIT_PRICE = float(os.getenv("TAKE_PROFIT_PRICE", "0.99"))   # bracket: resting maker SELL
 STOP_LOSS_PRICE = float(os.getenv("STOP_LOSS_PRICE", "0.10"))       # bracket: taker SELL when best_bid <= this
 MAX_FILLS_PER_BAR = int(os.getenv("MAX_FILLS_PER_BAR", "1"))        # bracket: entry fills per bar (no refill conveyor)

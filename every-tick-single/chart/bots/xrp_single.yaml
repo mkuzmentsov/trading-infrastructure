@@ -9,6 +9,7 @@ bot:
   quoteMode: "bracket"       # predict side, one entry fill, TP/SL bracket (one_sided/two_sided kept)
   quoteSide: "cheaper"       # only used by quoteMode=one_sided
   bracketSides: "one"       # single-side experiment — this project never goes two-sided
+  bracketSideRule: "alternate"  # flip side each bar (control); "signal" = p_up picker
   entryPriceCap: "0.48"      # flat resting bid — fills if the flow comes to us, otherwise skip the bar
   takeProfitPrice: "0.99"    # bracket: resting maker SELL
   stopLossPrice: "0"        # disabled 2026-07-02: 7/7 stopped positions recovered to win (PLAN.md backlog analysis)      # bracket: taker SELL when best bid <= this

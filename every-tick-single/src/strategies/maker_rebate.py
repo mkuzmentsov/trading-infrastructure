@@ -31,6 +31,7 @@ import math
 from config import (
     DRY_RUN,
     BRACKET_SIDES,
+    BRACKET_SIDE_RULE,
     ENTRY_PRICE_CAP,
     ENTRY_STYLE,
     LIVE_MAX_ORDER_USD,
@@ -120,6 +121,7 @@ class MakerRebateStrategy:
         # exposure. Trading begins at the next bar boundary.
         self._startup_checked = False
         self._startup_skip_cid: str = ""
+        self._last_alt_side: str = "DOWN"  # alternate rule starts with UP
 
     # ── Strategy protocol (taker path is never used; keep it inert) ─────────
     def startup_details(self) -> list[str]:
@@ -312,12 +314,26 @@ class MakerRebateStrategy:
         else:
             if self._bracket_side is None:
                 p_up, source = self._bracket_p_up_estimate(ctx)
-                self._bracket_side = "UP" if p_up >= 0.5 else "DOWN"
+                if BRACKET_SIDE_RULE == "alternate":
+                    # Control experiment: flip sides each bar — removes the
+                    # accidental market-drift bias of the signal picker (which
+                    # measured ~always-UP at bar open) and isolates the pure
+                    # maker-discount / adverse-selection economics.
+                    self._bracket_side = "DOWN" if self._last_alt_side == "UP" else "UP"
+                    self._last_alt_side = self._bracket_side
+                    source = "alternate"
+                else:
+                    self._bracket_side = "UP" if p_up >= 0.5 else "DOWN"
                 self._bracket_p_up = p_up
                 self._bracket_p_up_source = source
+                if hasattr(book, "set_bar_meta"):
+                    book.set_bar_meta(
+                        p_up=round(p_up, 4), p_up_source=source,
+                        side_rule=BRACKET_SIDE_RULE,
+                    )
                 log.info(
-                    "BRACKET side locked  side=%s  p_up=%.3f  source=%s  secs_left=%d",
-                    self._bracket_side, p_up, source, ctx.seconds_left,
+                    "BRACKET side locked  side=%s  p_up=%.3f  source=%s  rule=%s  secs_left=%d",
+                    self._bracket_side, p_up, source, BRACKET_SIDE_RULE, ctx.seconds_left,
                 )
             sides = (self._bracket_side,)
 
