@@ -7,7 +7,7 @@ hold to expiry. Namespace: `every-tick-single`.
 
 Deploy: `cd <repo root> && source .dev-env-source && ./deploy.sh [coin ...]`
 
-Findings log + strategy rationale: see `every-tick-both/PLAN.md` (shared history).
+Findings log + strategy rationale: see `every-tick-single/PLAN.md` (shared history).
 Current open question: single-side win rate ~44% vs 48% breakeven, side picker
 degenerate (always UP) — candidates: bet-against-previous-bar (GM finding),
 or retire single-side if two-sided + pair-incomplete-exit wins.
