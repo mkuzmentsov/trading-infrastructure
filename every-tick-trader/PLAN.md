@@ -35,6 +35,19 @@ only if adverse selection keeps q within ~0.7pp of p. Paper logs measure exactly
 q-vs-p per price bucket from `paper_fill` + `paper_bar_settle` events.
 
 **Backlog:**
+- ⭐ **HIGH PRIORITY — pair-incomplete exit rule** (analyzed 2026-07-03 on first 24 live
+  btc bars; revisit with more bars): two-sided @0.48 economics = 18 BOTH bars ALL won
+  (avg +$0.40 lock) vs 6 SINGLE-fill bars ALL lost (−$4.75) → net −$16.5. Single-fill
+  breakeven needs q≥35%, observed 0/6. Second-side fill time in BOTH bars: 33%≤30s,
+  50%≤60s, 83%≤120s (median 60s); lone fills arrive ≤11s, so the only signal is the
+  second side's absence. Rule: if pair incomplete at T≈120s (sacrifices only ~3/18
+  late pairs, catches all singles), exit the filled side. Variants: (a) FREE maker
+  exit at ~entry 0.48-0.49 — fills on recovery only, needs pair-state machine so a
+  filled exit + late second fill doesn't leave a naked position; (b) taker cut at
+  T≈120-180s into the bid (~-1..-2 instead of -4.8; a stop by another name, but
+  conditional population ≠ the 10c-touch study that killed stops). DECIDE with:
+  P(filled side recovers to ≥0.48 | pair incomplete at 120s) from paper book
+  snapshots — ≥~40% → maker exit suffices; ~10% → only taker cut works.
 - A/B the `two_sided` pair-lock mode (quote both tokens, both-fill locks 1−(b_u+b_d)
   risk-free) against one-sided — e.g. run 2 coins per mode over the same week and compare
   net PnL after adverse selection. The two-sided code is implemented and config-gated.
