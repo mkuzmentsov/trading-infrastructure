@@ -319,9 +319,11 @@ def place_limit_order(
     shares: float,
     price: float,
 ) -> Optional[str]:
-    """Signed GTC limit order (maker path — every-tick live_book). The caller
-    guarantees the price does not cross the book (never-cross guard), so this
-    rests as a maker order by construction. Returns the CLOB order id or None."""
+    """Signed GTC limit order posted POST-ONLY (maker path — every-tick
+    live_book). post_only=True makes the exchange REJECT the order if it would
+    cross (execute as taker) instead of filling it — a hard maker guarantee on
+    top of the caller's never-cross price guard. A rejection returns None; the
+    strategy simply skips (fill-or-skip by design). Returns the order id."""
     from py_clob_client_v2 import OrderArgs, OrderType
 
     try:
@@ -338,11 +340,11 @@ def place_limit_order(
         )
         signed = clob.create_order(order_args)
         log.info("CLOB create_order %s RESPONSE  %s", side, signed)
-        resp = clob.post_order(signed, OrderType.GTC)
-        log.info("CLOB post_order %s GTC RESPONSE  %s", side, resp)
+        resp = clob.post_order(signed, OrderType.GTC, post_only=True)
+        log.info("CLOB post_order %s GTC post_only RESPONSE  %s", side, resp)
         return resp.get("orderID") or resp.get("order_id") or None
     except Exception as exc:
-        log.error("GTC %s limit failed: %s", side, exc)
+        log.error("GTC %s post-only limit failed (crossing rejected?): %s", side, exc)
         return None
 
 
