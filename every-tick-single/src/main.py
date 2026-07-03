@@ -256,10 +256,43 @@ _IS_LIVE_MAKER = _IS_MAKER and LIVE_TRADING and not PAPER_MODE and not DRY_RUN
 _maker_book = live_book if _IS_LIVE_MAKER else paper_book
 
 
+_LOG_ROTATE_KEEP_DAYS = int(os.getenv("LOG_ROTATE_KEEP_DAYS", "14"))
+_last_rotate_day = time.strftime("%Y-%m-%d", time.gmtime())
+
+
+def _rotate_if_new_day(path: str) -> None:
+    """At UTC midnight: gzip the live file to <path>.<yesterday>.gz and start
+    fresh; prune rotated files beyond LOG_ROTATE_KEEP_DAYS. Keeps the events
+    file bounded on ephemeral disk while preserving a rolling window of daily
+    files for the EXPERIMENTS.md sims."""
+    global _last_rotate_day
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if today == _last_rotate_day:
+        return
+    prev, _last_rotate_day = _last_rotate_day, today
+    try:
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            import glob as _glob
+            import gzip as _gzip
+            import shutil as _shutil
+            rotated = f"{path}.{prev}.gz"
+            with open(path, "rb") as src, _gzip.open(rotated, "wb") as dst:
+                _shutil.copyfileobj(src, dst)
+            open(path, "w").close()
+            log.info("Rotated event log -> %s", rotated)
+            old_files = sorted(_glob.glob(f"{path}.*.gz"))
+            for f in old_files[:-_LOG_ROTATE_KEEP_DAYS]:
+                os.remove(f)
+                log.info("Pruned old event log %s", f)
+    except Exception as exc:
+        log.warning("Event log rotation failed: %s", exc)
+
+
 def _append_jsonl(path: str, record: dict, warning_label: str) -> None:
     if not path:
         return
     try:
+        _rotate_if_new_day(path)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n")
     except Exception as exc:
