@@ -30,6 +30,7 @@ import math
 
 from config import (
     DRY_RUN,
+    BRACKET_SIDES,
     ENTRY_PRICE_CAP,
     ENTRY_STYLE,
     LIVE_MAX_ORDER_USD,
@@ -283,24 +284,37 @@ class MakerRebateStrategy:
         if elapsed < self._warmup:
             return
 
-        # Max ONE fill per bar (MAX_FILLS_PER_BAR): once the entry filled,
-        # stand down — no refill conveyor. The engine already cancelled the
-        # remainder at fill time; this keeps us from re-placing.
-        if book.bar_entry_fills() >= MAX_FILLS_PER_BAR:
-            book.cancel_entries("max_fills_per_bar", now)
-            return
+        # Which sides to quote this bar. "both": rest the fixed entry on UP
+        # AND DOWN — a both-fill pair costs 2×ENTRY_PRICE_CAP < 1 and settles
+        # at exactly $1, i.e. it can never lose; a single fill is the same
+        # one-sided bet as "one" mode minus the side prediction. "one": lock
+        # the predicted side once per bar (original behavior).
+        if BRACKET_SIDES == "both":
+            sides = ("UP", "DOWN")
+        else:
+            if self._bracket_side is None:
+                p_up, source = self._bracket_p_up_estimate(ctx)
+                self._bracket_side = "UP" if p_up >= 0.5 else "DOWN"
+                self._bracket_p_up = p_up
+                self._bracket_p_up_source = source
+                log.info(
+                    "BRACKET side locked  side=%s  p_up=%.3f  source=%s  secs_left=%d",
+                    self._bracket_side, p_up, source, ctx.seconds_left,
+                )
+            sides = (self._bracket_side,)
 
-        # Lock the side the first time we're ready to quote this bar.
-        if self._bracket_side is None:
-            p_up, source = self._bracket_p_up_estimate(ctx)
-            self._bracket_side = "UP" if p_up >= 0.5 else "DOWN"
-            self._bracket_p_up = p_up
-            self._bracket_p_up_source = source
-            log.info(
-                "BRACKET side locked  side=%s  p_up=%.3f  source=%s  secs_left=%d",
-                self._bracket_side, p_up, source, ctx.seconds_left,
-            )
-        side = self._bracket_side
+        for side in sides:
+            self._maintain_bracket_side(ctx, book, now, side)
+
+    def _maintain_bracket_side(
+        self, ctx: StrategyContext, book, now: float, side: str
+    ) -> None:
+        # Max ONE fill per bar per side (MAX_FILLS_PER_BAR): once this side's
+        # entry filled, stand down — no refill conveyor. The engine already
+        # cancelled the remainder at fill time; this keeps us from re-placing.
+        if book.bar_entry_fills(side) >= MAX_FILLS_PER_BAR:
+            book.cancel_entries("max_fills_per_bar", now, direction=side)
+            return
 
         bid, ask = (ctx.up_bid, ctx.up_ask) if side == "UP" else (ctx.down_bid, ctx.down_ask)
         if not (0 < bid <= ask < 1):
@@ -308,7 +322,7 @@ class MakerRebateStrategy:
                 # LIVE latency path: the book hasn't formed yet at bar roll —
                 # a non-marketable bid near 50c is safe by construction, so
                 # place it NOW instead of waiting. (chase style repriced it on
-                # the first snapshot; fixed style just lets it rest at 49c.)
+                # the first snapshot; fixed style just lets it rest.)
                 want = _round_down_tick(min(0.49, ENTRY_PRICE_CAP))
                 if want >= _TICK and book.resting_entry(side) is None:
                     size, clamped = self._entry_size(want)
@@ -317,20 +331,20 @@ class MakerRebateStrategy:
                         purpose="entry", size_clamped_to_min=clamped,
                     )
                 return
-            book.cancel_entries("book_not_live", now)
+            book.cancel_entries("book_not_live", now, direction=side)
             return
         mid = (bid + ask) / 2.0
 
         if ENTRY_STYLE == "fixed":
-            # Rest AT the cap (50c = max p(1−p) rebate weight); clamp to
+            # Rest AT the cap (≤50c = max p(1−p) rebate weight); clamp to
             # ask − tick only if the cap would cross (always maker, never
-            # taker — a 49c rest is fine). Below QUOTE_FLOOR the side is
+            # taker — a 47c rest is fine). Below QUOTE_FLOOR the side is
             # already decided-cheap: those fills measured q − p < 0, skip.
             want = _round_down_tick(ENTRY_PRICE_CAP)
             if want >= ask:
                 want = _round_down_tick(ask - _TICK)
             if want < max(QUOTE_FLOOR, _TICK):
-                book.cancel_entries("below_floor", now)
+                book.cancel_entries("below_floor", now, direction=side)
                 return
             # No repricing: the order rests untouched until fill or cutoff.
             resting = book.resting_entry(side)
@@ -341,7 +355,7 @@ class MakerRebateStrategy:
             if want >= ask:
                 want = _round_down_tick(ask - _TICK)
             if want < _TICK:
-                book.cancel_entries("no_quote_band", now)
+                book.cancel_entries("no_quote_band", now, direction=side)
                 return
 
             resting = book.resting_entry(side)

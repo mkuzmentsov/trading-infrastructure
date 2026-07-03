@@ -109,6 +109,7 @@ class _BarState:
     fills: int = 0
     # Bracket mode: entry fills spawn positions with a TP sell + taker stop.
     entry_fills: int = 0
+    entry_fills_by_side: dict = field(default_factory=dict)  # {"UP": n, "DOWN": n}
     positions: list = field(default_factory=list)   # list[BracketPosition]
     pos_seq: int = 0
 
@@ -342,12 +343,16 @@ class PaperBook:
                 return o
         return None
 
-    def bar_entry_fills(self) -> int:
-        return self._bar.entry_fills if self._bar else 0
+    def bar_entry_fills(self, direction: str | None = None) -> int:
+        if self._bar is None:
+            return 0
+        if direction is None:
+            return self._bar.entry_fills
+        return self._bar.entry_fills_by_side.get(direction, 0)
 
-    def cancel_entries(self, reason: str, now: float) -> None:
+    def cancel_entries(self, reason: str, now: float, direction: str | None = None) -> None:
         for order_id, order in list(self.orders.items()):
-            if order.purpose == "entry":
+            if order.purpose == "entry" and (direction is None or order.direction == direction):
                 self.cancel_quote(order_id, reason, now)
 
     def place_quote(
@@ -524,6 +529,9 @@ class PaperBook:
     def _open_bracket(self, order: PaperOrder, size: float, price: float, now: float) -> None:
         bar = self._bar
         bar.entry_fills += 1
+        bar.entry_fills_by_side[order.direction] = (
+            bar.entry_fills_by_side.get(order.direction, 0) + 1
+        )
         bar.pos_seq += 1
         pos = BracketPosition(
             pos_id=bar.pos_seq,
@@ -535,10 +543,12 @@ class PaperBook:
             stop_price=STOP_LOSS_PRICE,
         )
         bar.positions.append(pos)
-        # Max fills per bar: no refill conveyor — pull remaining entry quotes
-        # (including the just-filled order's remainder) as soon as the cap hits.
-        if bar.entry_fills >= MAX_FILLS_PER_BAR:
-            self.cancel_entries("max_fills_per_bar", now)
+        # Max fills per bar PER SIDE: no refill conveyor — pull this side's
+        # remaining entry quotes (including the just-filled order's remainder)
+        # as soon as the cap hits. The other side's entry (BRACKET_SIDES=both)
+        # keeps resting.
+        if bar.entry_fills_by_side[order.direction] >= MAX_FILLS_PER_BAR:
+            self.cancel_entries("max_fills_per_bar", now, direction=order.direction)
         # Bracket immediately: resting maker TP sell + armed taker stop.
         self._place_tp(pos, now)
 

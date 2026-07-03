@@ -15,7 +15,8 @@ bot:
   coin: "btc"               # gamma slug: {coin}-updown-5m-{ts}; keep feeds below consistent
   # ── Paper mode / maker-rebate quoting (see PLAN.md) ────────────────────────
   paperMode: "true"          # maker_rebate simulates quotes; no CLOB calls
-  entryStyle: "fixed"        # rest AT 50c (clamp ask−tick, always maker), no repricing; "chase" = old mid-follow
+  entryStyle: "fixed"        # rest AT entryPriceCap (clamp ask−tick, always maker), no repricing; "chase" = old mid-follow
+  bracketSides: "one"        # "both" = rest entry on UP AND DOWN (both-fill = riskless pair + 2x rebates)
   quoteHalfSpread: "0.02"    # bid = mid − halfSpread
   quoteFloor: "0.45"         # skip the bar if the maker-clamped entry lands below (cheap fills measured q−p<0)
   quoteCeil: "0.70"

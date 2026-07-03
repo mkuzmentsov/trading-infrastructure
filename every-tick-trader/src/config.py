@@ -67,6 +67,12 @@ ENTRY_PRICE_CAP = float(os.getenv("ENTRY_PRICE_CAP", "0.50"))       # bracket: n
 # chase: the original behavior — bid min(mid − QUOTE_HALF_SPREAD, cap) and
 # cancel/replace on REPRICE_TICKS / REPRICE_Z drift.
 ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
+# one: rest the entry only on the predicted side (p_up estimate at bar open).
+# both: rest the fixed entry on UP AND DOWN — a both-fill pair costs
+# 2×ENTRY_PRICE_CAP < 1 and always settles at $1 (locked profit + double
+# rebate weight); a single fill is the one-sided bet without needing the
+# side prediction (which measured ~0 edge at bar open).
+BRACKET_SIDES = os.getenv("BRACKET_SIDES", "one").strip().lower()
 TAKE_PROFIT_PRICE = float(os.getenv("TAKE_PROFIT_PRICE", "0.99"))   # bracket: resting maker SELL
 STOP_LOSS_PRICE = float(os.getenv("STOP_LOSS_PRICE", "0.10"))       # bracket: taker SELL when best_bid <= this
 MAX_FILLS_PER_BAR = int(os.getenv("MAX_FILLS_PER_BAR", "1"))        # bracket: entry fills per bar (no refill conveyor)

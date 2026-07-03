@@ -430,12 +430,16 @@ class LiveBook:
                 return o
         return None
 
-    def bar_entry_fills(self) -> int:
-        return self._bar.entry_fills if self._bar else 0
+    def bar_entry_fills(self, direction: str | None = None) -> int:
+        if self._bar is None:
+            return 0
+        if direction is None:
+            return self._bar.entry_fills
+        return self._bar.entry_fills_by_side.get(direction, 0)
 
-    def cancel_entries(self, reason: str, now: float) -> None:
+    def cancel_entries(self, reason: str, now: float, direction: str | None = None) -> None:
         for order_id, order in list(self.orders.items()):
-            if order.purpose == "entry":
+            if order.purpose == "entry" and (direction is None or order.direction == direction):
                 self.cancel_quote(order_id, reason, now)
 
     # ── order placement / cancellation ────────────────────────────────────────
@@ -771,6 +775,9 @@ class LiveBook:
     def _open_bracket(self, order: LiveOrder, size: float, price: float, now: float) -> None:
         bar = self._bar
         bar.entry_fills += 1
+        bar.entry_fills_by_side[order.direction] = (
+            bar.entry_fills_by_side.get(order.direction, 0) + 1
+        )
         bar.pos_seq += 1
         pos = BracketPosition(
             pos_id=bar.pos_seq,
@@ -782,8 +789,8 @@ class LiveBook:
             stop_price=STOP_LOSS_PRICE,
         )
         bar.positions.append(pos)
-        if bar.entry_fills >= MAX_FILLS_PER_BAR:
-            self.cancel_entries("max_fills_per_bar", now)
+        if bar.entry_fills_by_side[order.direction] >= MAX_FILLS_PER_BAR:
+            self.cancel_entries("max_fills_per_bar", now, direction=order.direction)
         self._place_tp(pos, now)
 
     def _record_tp_fill(self, order: LiveOrder, size: float, price: float, basis: str, now: float) -> None:
