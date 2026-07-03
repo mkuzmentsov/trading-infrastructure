@@ -1,6 +1,6 @@
-# btc-every-tick-trader — maker-rebate PAPER quoting on the btc 5m up/down market.
-# Install: helm upgrade --install btc-every-tick-trader ../ -f bots/btc_every_tick.yaml
-botName: btc-every-tick-trader
+# btc-every-tick-both — BOTH-SIDES (pair) trader on the btc 5m up/down market.
+# Install: ./deploy.sh btc   (LIVE: ./golive.sh btc)
+botName: btc-every-tick-both
 
 bot:
   coin: "btc"
@@ -8,7 +8,9 @@ bot:
   paperMode: "true"
   quoteMode: "bracket"       # predict side, one entry fill, TP/SL bracket (one_sided/two_sided kept)
   quoteSide: "cheaper"       # only used by quoteMode=one_sided
-  bracketSides: "both"      # A/B: two-sided vs sol/xrp one-sided
+  bracketSides: "both"
+  pairExitMakerSecs: "90"    # pair incomplete -> free maker exit at max(entry, bid+tick)
+  pairExitTakerSecs: "165"   # still holding -> taker cut into the bid
   entryPriceCap: "0.48"      # flat resting bid — fills if the flow comes to us, otherwise skip the bar
   takeProfitPrice: "0.99"    # bracket: resting maker SELL
   stopLossPrice: "0"        # disabled 2026-07-02: 7/7 stopped positions recovered to win (PLAN.md backlog analysis)      # bracket: taker SELL when best bid <= this

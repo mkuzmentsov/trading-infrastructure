@@ -1,5 +1,5 @@
 # LIVE overlay for btc — apply ON TOP of btc_every_tick.yaml + creds.secret.yaml:
-#   ./golive.sh btc
+#   ./golive.sh btc  (release btc-every-tick-both, ns every-tick-both)
 # Real orders, real money. eth/sol/xrp stay paper until given their own overlay.
 bot:
   paperMode: "false"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the every-tick LIVE project (two-sided btc; single-side lives in every-tick-single/). Code ships as a helm ConfigMap (no docker build):
+# Deploy every-tick-both — the BOTH-SIDES (pair) trader; single-side lives in every-tick-single/. Code ships as a helm ConfigMap (no docker build):
 # this script syncs src/ -> chart/files/scripts/, then helm-upgrades each coin.
 # The image (mkuzmentsov/pm-btc-bot, deps only) never changes for code edits.
 #
@@ -18,6 +18,8 @@ fi
 COINS=("$@")
 [[ ${#COINS[@]} -eq 0 ]] && COINS=(btc)
 
+kubectl get ns every-tick-both >/dev/null 2>&1 || kubectl create ns every-tick-both
+
 rsync -a --delete \
   --exclude '__pycache__' --exclude 'test_*.py' --exclude '_user_ws_listen.py' \
   --include '*/' --include '*.py' --exclude '*' \
@@ -26,8 +28,8 @@ rsync -a --delete \
 echo "Synced $(find chart/files/scripts -name '*.py' | wc -l | tr -d ' ') files into chart/files/scripts/"
 
 for coin in "${COINS[@]}"; do
-  helm upgrade --install "${coin}-every-tick-trader" ./chart \
-    -f "chart/bots/${coin}_every_tick.yaml" -n every-tick
+  helm upgrade --install "${coin}-every-tick-both" ./chart \
+    -f "chart/bots/${coin}_both.yaml" -n every-tick-both
 done
 
-kubectl get pods -n every-tick
+kubectl get pods -n every-tick-both

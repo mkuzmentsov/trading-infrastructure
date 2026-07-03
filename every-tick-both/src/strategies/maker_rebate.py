@@ -33,6 +33,8 @@ from config import (
     BRACKET_SIDES,
     ENTRY_PRICE_CAP,
     ENTRY_STYLE,
+    PAIR_EXIT_MAKER_SECS,
+    PAIR_EXIT_TAKER_SECS,
     LIVE_MAX_ORDER_USD,
     LIVE_QUOTE_WARMUP_SECS,
     LIVE_TRADING,
@@ -323,6 +325,48 @@ class MakerRebateStrategy:
 
         for side in sides:
             self._maintain_bracket_side(ctx, book, now, side)
+
+        if BRACKET_SIDES == "both" and PAIR_EXIT_MAKER_SECS > 0:
+            self._manage_pair_exit(ctx, book, now, elapsed)
+
+    def _manage_pair_exit(
+        self, ctx: StrategyContext, book, now: float, elapsed: float
+    ) -> None:
+        """Escalating exit for a single-fill bar (pair incomplete).
+
+        Stage 1 (PAIR_EXIT_MAKER_SECS): the pair didn't complete — give it up:
+        cancel the unfilled opposite entry and reprice the filled side's TP
+        down to max(entry, bid+tick). Free: fills only on recovery, stays
+        maker, earns rebate. Stage 2 (PAIR_EXIT_TAKER_SECS): still holding —
+        force the position's stop marketable so the existing stop machinery
+        taker-cuts into the bid (loss ~-1..-2 instead of riding to 0)."""
+        for pos in book.open_positions():
+            opposite = "DOWN" if pos.direction == "UP" else "UP"
+            if book.bar_entry_fills(opposite) > 0:
+                continue  # pair completed — normal bracket handles it
+            if pos.pair_exit_stage == 0 and elapsed >= PAIR_EXIT_MAKER_SECS:
+                pos.pair_exit_stage = 1
+                book.cancel_entries("pair_exit_giveup", now, direction=opposite)
+                bid = ctx.up_bid if pos.direction == "UP" else ctx.down_bid
+                exit_px = pos.entry_price
+                if 0 < bid < 1:
+                    exit_px = max(exit_px, round(bid + _TICK, 2))
+                exit_px = min(round(exit_px, 2), TAKE_PROFIT_PRICE)
+                pos.tp_price = exit_px
+                if pos.tp_order_id is not None and pos.tp_order_id in book.orders:
+                    book.cancel_quote(pos.tp_order_id, "pair_exit_reprice", now)
+                pos.tp_order_id = None
+                log.info(
+                    "PAIR_EXIT stage1  %s pos=%d pair incomplete at %.0fs — maker exit @ %.2f (entry %.2f, bid %.2f)",
+                    pos.direction, pos.pos_id, elapsed, exit_px, pos.entry_price, bid,
+                )
+            elif pos.pair_exit_stage == 1 and elapsed >= PAIR_EXIT_TAKER_SECS:
+                pos.pair_exit_stage = 2
+                pos.stop_price = 2.0  # always marketable → stop monitor cuts at bid
+                log.info(
+                    "PAIR_EXIT stage2  %s pos=%d maker exit unfilled at %.0fs — taker cut armed",
+                    pos.direction, pos.pos_id, elapsed,
+                )
 
     def _maintain_bracket_side(
         self, ctx: StrategyContext, book, now: float, side: str

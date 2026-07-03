@@ -12,6 +12,7 @@ if [[ "$CTX" != "hetzner-k3s-cluster-master1" ]]; then
   echo "Run: cd <repo root> && source .dev-env-source" >&2
   exit 1
 fi
+kubectl get ns every-tick-both >/dev/null 2>&1 || kubectl create ns every-tick-both
 [[ -f chart/bots/creds.secret.yaml ]] || { echo "ERROR: chart/bots/creds.secret.yaml missing" >&2; exit 1; }
 [[ -f "chart/bots/${COIN}_live.yaml" ]] || { echo "ERROR: chart/bots/${COIN}_live.yaml missing" >&2; exit 1; }
 
@@ -20,13 +21,13 @@ rsync -a --delete \
   --include '*/' --include '*.py' --exclude '*' \
   src/ chart/files/scripts/
 
-helm upgrade --install "${COIN}-every-tick-trader" ./chart \
-  -f "chart/bots/${COIN}_every_tick.yaml" \
+helm upgrade --install "${COIN}-every-tick-both" ./chart \
+  -f "chart/bots/${COIN}_both.yaml" \
   -f chart/bots/creds.secret.yaml \
   -f "chart/bots/${COIN}_live.yaml" \
   -n every-tick
 
 echo
 echo ">>> ${COIN} is going LIVE. Watching startup logs (Ctrl-C to detach; bot keeps running):"
-kubectl rollout status -n every-tick "deploy/${COIN}-every-tick-trader" --timeout=120s
-kubectl logs -n every-tick "deploy/${COIN}-every-tick-trader" -f --tail=50
+kubectl rollout status -n every-tick-both "deploy/${COIN}-every-tick-both" --timeout=120s
+kubectl logs -n every-tick-both "deploy/${COIN}-every-tick-both" -f --tail=50

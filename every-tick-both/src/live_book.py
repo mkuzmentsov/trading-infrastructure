@@ -454,6 +454,11 @@ class LiveBook:
                 return o
         return None
 
+    def open_positions(self) -> list:
+        if self._bar is None:
+            return []
+        return [p for p in self._bar.positions if p.open]
+
     def bar_entry_fills(self, direction: str | None = None) -> int:
         if self._bar is None:
             return 0

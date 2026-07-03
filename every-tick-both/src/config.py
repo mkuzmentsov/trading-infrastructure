@@ -73,6 +73,15 @@ ENTRY_STYLE = os.getenv("ENTRY_STYLE", "fixed").strip().lower()
 # rebate weight); a single fill is the one-sided bet without needing the
 # side prediction (which measured ~0 edge at bar open).
 BRACKET_SIDES = os.getenv("BRACKET_SIDES", "one").strip().lower()
+# Pair-incomplete escalating exit (both mode only; 0 disables a stage).
+# Analysis 2026-07-03 (first 30 live bars): BOTH-fill bars won 21/21 (+$0.40
+# avg), SINGLE-fill bars lost 9/9 (-$4.75); 83% of pairs complete by 120s.
+# Stage 1 at PAIR_EXIT_MAKER_SECS: give up the pair (cancel unfilled entry),
+# reprice the filled side's TP down to max(entry, bid+tick) — a free maker
+# exit that fills on recovery. Stage 2 at PAIR_EXIT_TAKER_SECS: force the
+# taker stop (cut into the bid) — caps the single at ~-1..-2 instead of -4.8.
+PAIR_EXIT_MAKER_SECS = int(os.getenv("PAIR_EXIT_MAKER_SECS", "90"))
+PAIR_EXIT_TAKER_SECS = int(os.getenv("PAIR_EXIT_TAKER_SECS", "165"))
 TAKE_PROFIT_PRICE = float(os.getenv("TAKE_PROFIT_PRICE", "0.99"))   # bracket: resting maker SELL
 STOP_LOSS_PRICE = float(os.getenv("STOP_LOSS_PRICE", "0.10"))       # bracket: taker SELL when best_bid <= this
 MAX_FILLS_PER_BAR = int(os.getenv("MAX_FILLS_PER_BAR", "1"))        # bracket: entry fills per bar (no refill conveyor)

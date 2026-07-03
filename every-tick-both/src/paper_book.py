@@ -81,6 +81,10 @@ class BracketPosition:
     exit_price: float | None = None
     taker_fee: float = 0.0
     realized_pnl: float = 0.0
+    # Pair-incomplete escalating exit (BRACKET_SIDES=both):
+    # 0 = normal bracket; 1 = maker exit armed (TP repriced to ~entry);
+    # 2 = taker cut armed (stop_price forced marketable).
+    pair_exit_stage: int = 0
 
     @property
     def remaining(self) -> float:
@@ -342,6 +346,11 @@ class PaperBook:
             if o.direction == direction and o.purpose == "entry":
                 return o
         return None
+
+    def open_positions(self) -> list:
+        if self._bar is None:
+            return []
+        return [p for p in self._bar.positions if p.open]
 
     def bar_entry_fills(self, direction: str | None = None) -> int:
         if self._bar is None:
