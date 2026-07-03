@@ -92,6 +92,16 @@ class ClobAdapter:
         from clob import fetch_order_status
         return fetch_order_status(self._clob, order_id)
 
+    def conditional_balance(self, token_id: str) -> float:
+        """Sellable shares of a CTF token per the exchange (raw 1e6 units).
+        The chain credits fills with a lag (and sometimes a dust haircut), so
+        this is the ONLY truth for how many shares a SELL may reference."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        r = self._clob.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL, token_id=token_id)
+        )
+        return float(r.get("balance", 0) or 0) / 1e6
+
 
 @dataclass
 class LiveOrder:
@@ -131,6 +141,8 @@ class LiveBook:
         self._emit = None                             # main._write_training_event
         self._tasks: set = set()
         self._stop_pending: set[int] = set()          # pos_ids with an in-flight stop
+        self._tp_retry_at: dict[int, float] = {}      # pos_id → earliest next TP submit
+        self._tp_size_cap: dict[int, float] = {}      # pos_id → exchange-confirmed sellable shares
         self._day: str = ""
         self._daily = self._fresh_daily()
         self._halted_day: str = ""
@@ -547,6 +559,23 @@ class LiveBook:
             )
             order.state = "dead"
             self.orders.pop(order.order_id, None)
+            if order.purpose == "tp" and order.pos_id is not None:
+                # Typical cause: the exchange hasn't credited the entry's CTF
+                # shares yet (chain lag) or credited slightly fewer than the
+                # fill (dust haircut). Learn the sellable balance so the next
+                # attempt (3s backoff in _place_tp) sizes to what exists.
+                try:
+                    bal = await asyncio.to_thread(
+                        self._adapter.conditional_balance, order.token_id
+                    )
+                    if bal > 0:
+                        self._tp_size_cap[order.pos_id] = bal
+                        log.info(
+                            "LIVE TP size capped to exchange balance  pos=%d  %.4f shares",
+                            order.pos_id, bal,
+                        )
+                except Exception as exc:
+                    log.debug("LIVE conditional balance fetch failed: %s", exc)
             return
 
         order.exchange_id = str(eid)
@@ -660,6 +689,14 @@ class LiveBook:
                 price = user_state.avg_price.get(eid, 0.0)
                 if not (0 < price < 1):
                     price = order.price
+                # Maker orders can never fill worse than their limit. Polymarket
+                # reports cross-token matches in the complement's terms (a DOWN
+                # buy resting at 0.48 shows price 0.52) — clamp to the limit so
+                # PnL/kill-switch accounting uses what we actually paid.
+                if order.side == "BUY":
+                    price = min(price, order.price)
+                else:
+                    price = max(price, order.price)
                 self._record_fill(order, fill, price, "user_ws", now)
             status = user_state.order_status.get(eid, "")
             if status == "cancelled" and order.order_id in self.orders and not order.cancel_requested:
@@ -765,8 +802,22 @@ class LiveBook:
     def _place_tp(self, pos: BracketPosition, now: float) -> None:
         if not pos.open or pos.tp_order_id in self.orders:
             return
+        if now < self._tp_retry_at.get(pos.pos_id, 0.0):
+            return
+        # Never reference more shares than the exchange says are sellable:
+        # fills credit on-chain with a lag (and occasionally a dust haircut,
+        # e.g. 9.9946 credited for a 10-share fill), and a SELL for more than
+        # the credited balance is rejected outright.
+        size = pos.remaining
+        cap = self._tp_size_cap.get(pos.pos_id)
+        if cap is not None:
+            size = min(size, cap)
+        size = math.floor(size * 100) / 100.0
+        if size <= 0:
+            return
+        self._tp_retry_at[pos.pos_id] = now + 3.0
         order_id = self.place_quote(
-            pos.direction, pos.tp_price, pos.remaining, now,
+            pos.direction, pos.tp_price, size, now,
             side="SELL", purpose="tp", pos_id=pos.pos_id,
         )
         if order_id is not None:
@@ -902,7 +953,8 @@ class LiveBook:
                     break
                 await asyncio.sleep(0.1)
             shares = shares or remaining
-            price = price if 0 < price < 1 else floor_price
+            # FAK can't fill below its floor; clamp complement-flipped reports.
+            price = max(price, floor_price) if 0 < price < 1 else floor_price
             taker_fee = shares * MAKER_FEE_RATE * price * (1.0 - price)
             realized = shares * (price - pos.entry_price) - taker_fee
             pos.taker_fee += taker_fee
