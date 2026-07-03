@@ -47,6 +47,16 @@ at bar open. Charge the config for gate-lag bars (first trend bars misclassified
   params: P∈[0.40..0.49], fill=ask-crossed, no gate | result: all P negative ungated
   (best 0.40: −0.34/bar w/ cut); monotone deeper=better | verdict: KEEP COLLECTING
   (need chop-window grid before gating conclusion).
+- 2026-07-03 | data: 06:00–14:45 UTC, 184 settled bars w/ snapshots, 4 coins | regime
+  mix: chop-heavy by trailing classification | baseline: sim commit (backtest/sim.py v1) |
+  params: NO-LOOKAHEAD gate (bar t classified by |ret(t-1)| vs trailing-36 p60/p85),
+  fill proxy = ask crossed P, both sides counted | result: **negative at ALL (P, regime)**
+  — q(0.48|chop)=37.1% (n=175) vs 48% needed; best cell trend/0.44 EV −0.049 |
+  ⚠ METHOD FINDING: proxy fills q=37% vs the bot's REALIZED fills q=52% same window —
+  ask-crossed overcounts toxic moments and the prev-bar gate is far weaker than the
+  same-hour (lookahead) classification used in earlier eyeball analysis. NEXT: add
+  trade_print logging (exact fills) and re-test; also test one-side-per-bar sampling
+  to match the real bot. | verdict: KEEP COLLECTING (proxy inadequate, do not conclude).
 
 ## E2 — Late-bar salvage sell
 **Question**: when nearly dead late in the bar, does a resting maker sell salvage more
@@ -61,6 +71,11 @@ series. Rule: at ≤arm_secs left, if held side's bid ≤ arm_below → rest sel
   arm_below∈{.10,.15,.20,.30} × salvage∈{.20,.30,.50}; TP-exited positions excluded |
   result: best 90s/0.20/0.20 → +$6.32, 5 saved, 0 capped; arm 0.30 capped 4 wins
   → −$2.94 | verdict: KEEP COLLECTING (need n≥300, incl. trend-heavy windows).
+- 2026-07-03 | data: 06:00–14:45 UTC, 121 positions, 4 coins | regime mix: full-day |
+  baseline: alternate@0.48 hold-to-expiry (pnl +6.61), sim backtest/sim.py v1 |
+  params: 90s / bid≤0.20 / sell@0.20 | result: delta +2.61 (9 saved, 2 CAPPED wins —
+  knife edge is real) | verdict: KEEP COLLECTING (capped>0 fails the ≈0 rule; retest
+  with trade_print fills at n≥300).
 
 ## E3 — Early exit vs hold-to-expiry
 **Question**: cut a losing position at T if unrecovered, or always hold? (Old finding:
