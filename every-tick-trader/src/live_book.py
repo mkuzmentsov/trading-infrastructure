@@ -102,6 +102,14 @@ class ClobAdapter:
         )
         return float(r.get("balance", 0) or 0) / 1e6
 
+    def collateral_balance(self) -> float:
+        """USDC cash on the exchange (raw 1e6 units)."""
+        from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+        r = self._clob.get_balance_allowance(
+            BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+        )
+        return float(r.get("balance", 0) or 0) / 1e6
+
 
 @dataclass
 class LiveOrder:
@@ -393,6 +401,10 @@ class LiveBook:
             live=True,
         )
 
+        # Equity snapshot (cash + open position value) — the number the user
+        # tracks; cash alone swings every bar as orders fill and settle.
+        self._spawn(self._log_equity(now), "live_equity_snapshot")
+
         self._roll_daily(now)
         d = self._daily
         d["bars_settled"] += 1
@@ -620,6 +632,42 @@ class LiveBook:
         if order.cancel_requested:
             self._zombies[order.exchange_id] = order
             await self._do_cancel(order, "cancel_requested_during_submit")
+
+    async def _log_equity(self, now: float) -> None:
+        """Emit a live_equity event: exchange cash + open position value."""
+        try:
+            cash = await asyncio.to_thread(self._adapter.collateral_balance)
+        except Exception as exc:
+            log.debug("LIVE equity: collateral fetch failed: %s", exc)
+            return
+        pos_value = 0.0
+        try:
+            import requests
+            from config import DATA_API, POLYMARKET_FUNDER
+
+            def _positions() -> float:
+                r = requests.get(
+                    f"{DATA_API}/positions",
+                    params={"user": POLYMARKET_FUNDER, "sizeThreshold": "0.01"},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                return sum(float(p.get("currentValue") or 0) for p in r.json())
+
+            pos_value = await asyncio.to_thread(_positions)
+        except Exception as exc:
+            log.debug("LIVE equity: positions fetch failed: %s", exc)
+        equity = cash + pos_value
+        log.info(
+            "LIVE_EQUITY  cash=%.2f positions=%.2f equity=%.2f", cash, pos_value, equity
+        )
+        self._event(
+            "live_equity",
+            cash=round(cash, 2),
+            positions_value=round(pos_value, 2),
+            equity=round(equity, 2),
+            live=True,
+        )
 
     async def _do_cancel(self, order: LiveOrder, reason: str) -> None:
         try:
