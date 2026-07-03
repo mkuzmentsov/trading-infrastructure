@@ -256,13 +256,13 @@ _IS_LIVE_MAKER = _IS_MAKER and LIVE_TRADING and not PAPER_MODE and not DRY_RUN
 _maker_book = live_book if _IS_LIVE_MAKER else paper_book
 
 
-_LOG_ROTATE_KEEP_DAYS = int(os.getenv("LOG_ROTATE_KEEP_DAYS", "14"))
+_LOG_ROTATE_KEEP_DAYS = int(os.getenv("LOG_ROTATE_KEEP_DAYS", "30"))
 _last_rotate_day = time.strftime("%Y-%m-%d", time.gmtime())
 
 
 def _rotate_if_new_day(path: str) -> None:
     """At UTC midnight: gzip the live file to <path>.<yesterday>.gz and start
-    fresh; prune rotated files beyond LOG_ROTATE_KEEP_DAYS. Keeps the events
+    fresh; prune rotated files beyond LOG_ROTATE_KEEP_DAYS (default 30). Keeps the events
     file bounded on ephemeral disk while preserving a rolling window of daily
     files for the EXPERIMENTS.md sims."""
     global _last_rotate_day
