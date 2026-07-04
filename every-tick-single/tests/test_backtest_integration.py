@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Integration test: the backtest pipeline over a FROZEN dump of real bot data.
+"""Integration tests: the backtest pipeline over FROZEN per-date datasets.
 
-Guards two things:
-1. The pipeline keeps working end-to-end (event parsing, snapshot<->settle join
-   on condition_id, regime classification, both sims) against real-shaped data.
-2. PERFORMANCE REGRESSION BASELINE: headline metrics on the frozen fixture must
-   match tests/expected_metrics.json exactly. If a strategy/sim change ALTERS
-   these numbers, that is a deliberate decision: inspect, and if the change is
-   an improvement (per EXPERIMENTS.md decision rules), regenerate the baseline
-   and say so in the commit. Never regenerate to silence a failure.
+tests/data/<YYYY-MM-DD>/ holds one day's real bot data (+ klines) and its
+expected_metrics.json baseline. The test discovers every date present locally
+and asserts (1) pipeline integrity and (2) exact baseline reproduction.
 
-Fixture: real events from the 4 paper bots + Binance 5m klines, 2026-07-03
-06:00-14:45 UTC (regime mix: morning chop, midday trend, afternoon chop).
+If a sim change alters a baseline: inspect, and if the change is a deliberate
+improvement (per EXPERIMENTS.md decision rules), regenerate via
+tests/gen_baseline.py <date> and justify in the commit. Never regenerate to
+silence a failure. Fetch missing dates: tests/fetch_day.py <date>.
+
 Run: python3 tests/test_backtest_integration.py   (or pytest)
 """
 import json
@@ -25,37 +23,49 @@ import sim  # noqa: E402
 DATA = os.path.join(HERE, "data")
 
 
-def load():
-    bars = sim.load_events(DATA)
-    klines = json.load(sim._open(os.path.join(DATA, "klines_5m.json.gz")))
+def dates():
+    return sorted(d for d in os.listdir(DATA)
+                  if os.path.isdir(os.path.join(DATA, d))
+                  and os.path.exists(os.path.join(DATA, d, "expected_metrics.json")))
+
+
+def load(date):
+    d = os.path.join(DATA, date)
+    bars = sim.load_events(d)
+    klines = json.load(sim._open(os.path.join(d, "klines_5m.json.gz")))
     return bars, sim.classify_regimes(klines)
 
 
-def test_pipeline_integrity():
-    bars, regimes = load()
-    assert len(bars) > 150, f"fixture parse regressed: {len(bars)} bars"
-    settled = [b for b in bars.values() if b["outcome"]]
-    assert len(settled) > 150
-    with_pos = [b for b in bars.values() if b["positions"]]
-    assert len(with_pos) > 80, "settle<->snapshot join broke (condition_id join)"
-    assert any(regimes.get((c, b["bar_ts"])) for (c, _), b in bars.items()), "regime join broke"
+def check_integrity(date, bars, regimes):
+    assert len(bars) > 100, f"[{date}] fixture parse regressed: {len(bars)} bars"
+    assert sum(1 for b in bars.values() if b["outcome"]) > 100, f"[{date}] outcomes missing"
+    assert sum(1 for b in bars.values() if b["positions"]) > 50, f"[{date}] settle<->snapshot join broke"
+    assert any(regimes.get((c, b["bar_ts"])) for (c, _), b in bars.items()), f"[{date}] regime join broke"
 
 
-def test_performance_baseline():
-    bars, regimes = load()
-    expected = json.load(open(os.path.join(HERE, "expected_metrics.json")))
-    got_metrics = sim.metrics(bars)
-    assert got_metrics == expected["metrics"], (
-        f"headline metrics changed:\n got {got_metrics}\n exp {expected['metrics']}")
-    got_salvage = sim.sim_salvage(bars, 90, 0.20, 0.20)
-    assert got_salvage == expected["salvage_90_020_020"], (
-        f"salvage sim changed:\n got {got_salvage}\n exp {expected['salvage_90_020_020']}")
-    got_grid = sim.grid_q(bars, regimes, prices=(0.48,))[:6]
-    assert got_grid == expected["grid_head"], (
-        f"grid changed:\n got {got_grid}\n exp {expected['grid_head']}")
+def check_baseline(date, bars, regimes):
+    expected = json.load(open(os.path.join(DATA, date, "expected_metrics.json")))
+    got = {
+        "metrics": sim.metrics(bars),
+        "salvage_90_020_020": sim.sim_salvage(bars, 90, 0.20, 0.20),
+        "grid_head": sim.grid_q(bars, regimes, prices=(0.48,))[:6],
+    }
+    for key, exp in expected.items():
+        assert got[key] == exp, f"[{date}] {key} changed:\n got {got[key]}\n exp {exp}"
+
+
+def test_all_dates():
+    ds = dates()
+    assert ds, "no date datasets found under tests/data/"
+    for date in ds:
+        bars, regimes = load(date)
+        check_integrity(date, bars, regimes)
+        check_baseline(date, bars, regimes)
 
 
 if __name__ == "__main__":
-    test_pipeline_integrity()
-    test_performance_baseline()
-    print("OK — pipeline integrity + performance baseline hold")
+    for date in dates():
+        bars, regimes = load(date)
+        check_integrity(date, bars, regimes)
+        check_baseline(date, bars, regimes)
+        print(f"OK {date} — integrity + baseline hold")

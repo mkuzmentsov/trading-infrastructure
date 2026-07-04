@@ -1,2 +1,4 @@
 chart/files/scripts/
 *.secret.yaml
+tests/data/*/
+!tests/data/2026-07-03/

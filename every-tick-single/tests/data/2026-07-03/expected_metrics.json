@@ -1,0 +1,44 @@
+{
+ "grid_head": [
+  {
+   "P": 0.48,
+   "ev_per_fill": -0.0312,
+   "fills": 459,
+   "q": 0.4488,
+   "regime": "chop",
+   "wins": 206
+  },
+  {
+   "P": 0.48,
+   "ev_per_fill": -0.026,
+   "fills": 174,
+   "q": 0.454,
+   "regime": "mid",
+   "wins": 79
+  },
+  {
+   "P": 0.48,
+   "ev_per_fill": -0.0611,
+   "fills": 74,
+   "q": 0.4189,
+   "regime": "trend",
+   "wins": 31
+  }
+ ],
+ "metrics": {
+  "bars": 392,
+  "fills": 271,
+  "pnl_hold_to_expiry": 47.52,
+  "q": 0.5092,
+  "wins": 138
+ },
+ "salvage_90_020_020": {
+  "armed": 76,
+  "baseline": 47.52,
+  "capped_wins": 2,
+  "delta": 12.98,
+  "positions": 271,
+  "saved": 15,
+  "with_rule": 60.49
+ }
+}
