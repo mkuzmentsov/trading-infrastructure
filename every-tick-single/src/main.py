@@ -21,7 +21,6 @@ import sys
 import time
 
 from binance_ws import binance_state, run_binance_ws
-from btc_next_bar_model import blend_model_probabilities, predict_next_bar_p_up
 from btc_ws import btc_state, run_btc_ws
 from clob import (
     build_clob_client,
@@ -93,7 +92,6 @@ from config import (
     log,
 )
 from live_book import ClobAdapter, live_book
-from ml_signal import predict_p_up as ml_predict_p_up
 from paper_book import paper_book
 from pm_ws import (
     apply_prefetched_market_now,
@@ -397,23 +395,9 @@ def _build_ml_snapshot(seconds_left: int) -> dict:
 
 
 def _combined_ml_probability(seconds_left: int, ml_snapshot: dict | None = None) -> float | None:
-    snapshot = ml_snapshot or _build_ml_snapshot(seconds_left)
-    pm_prob = ml_predict_p_up(snapshot)
-    prior_prob = predict_next_bar_p_up(
-        binance_state.completed_bars(before_ts=pm_state.market_start_ts, limit=64),
-        market_start_ts=pm_state.market_start_ts,
-    )
-    combined, info = blend_model_probabilities(pm_prob, prior_prob, seconds_left)
-    if combined is not None and (pm_prob is not None or prior_prob is not None):
-        log.debug(
-            "ML blend  combined=%.4f pm=%.4f prior=%.4f prior_weight=%.3f prior_conf=%.3f",
-            combined,
-            pm_prob if pm_prob is not None else -1.0,
-            prior_prob if prior_prob is not None else -1.0,
-            float(info.get("prior_weight") or 0.0),
-            float(info.get("prior_confidence") or 0.0),
-        )
-    return combined
+    """ML models were removed with the taker path — the maker strategy computes
+    its own p_up estimate (math_signal fair value / momentum fallback)."""
+    return None
 
 
 def _write_training_snapshot(

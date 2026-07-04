@@ -20,8 +20,35 @@ from collections import deque
 
 import websockets
 
-from btc_next_bar_model import BinanceBarHistory
 from config import BINANCE_WS_URL, log
+
+
+class _MinuteBars:
+    """Minimal 1m OHLC tracker (replaces the deleted btc_next_bar_model
+    BinanceBarHistory — only completed_bars() consumers remain, and the sole
+    caller was the removed ML prior; kept for the feed heartbeat/diagnostics)."""
+
+    def __init__(self) -> None:
+        self._bars: dict[int, dict] = {}
+
+    def update(self, wall_time: float, price: float, quantity: float = 0.0,
+               buyer_is_maker: bool | None = None) -> None:
+        ts = int(wall_time // 60 * 60)
+        bar = self._bars.setdefault(ts, {"ts": ts, "open": price, "high": price,
+                                         "low": price, "close": price, "volume": 0.0})
+        bar["high"] = max(bar["high"], price)
+        bar["low"] = min(bar["low"], price)
+        bar["close"] = price
+        bar["volume"] += quantity
+        if len(self._bars) > 300:
+            for k in sorted(self._bars)[:-300]:
+                self._bars.pop(k, None)
+
+    def completed_bars(self, before_ts: int | None = None, limit: int = 64) -> list[dict]:
+        now_bar = int(__import__("time").time() // 60 * 60)
+        keys = [k for k in sorted(self._bars) if k < now_bar
+                and (before_ts is None or k < before_ts)]
+        return [self._bars[k] for k in keys[-limit:]]
 
 
 class BinanceState:
@@ -35,7 +62,7 @@ class BinanceState:
 
         # Rolling price history for returns: (wall_time, log_price)
         self._prices: deque[tuple[float, float]] = deque(maxlen=600)
-        self._bar_history = BinanceBarHistory()
+        self._bar_history = _MinuteBars()
 
     def _record(self, wall_time: float, price: float, quantity: float = 0.0, buyer_is_maker: bool | None = None) -> None:
         if price <= 0:
