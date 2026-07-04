@@ -125,7 +125,14 @@ Cheap complement to E1 (calendar prior vs realized-vol gate).
 fee_equivalent weights we logged? Calibrates the rebate term in all EV math.
 **Method**: check the live account (proxy 0xD632…1b2F) for the pUSD credit from
 2026-07-03's ~90 filled maker orders; divide by logged fee_eq sum.
-**Runs**: pending first payout (due ~2026-07-04 morning).
+**Runs**:
+- 2026-07-04 | data: MAKER_REBATE credit +$3.327 at 00:45 UTC for 2026-07-03's live
+  maker fills (164 trades, ~1312 shares, fee_eq sum $16.93) | regime mix: n/a |
+  baseline: live two-sided day | params: none | result: **capture = exactly 20.0% of
+  OWN fee-equivalent** (= rebateRate, no pool dilution observed) → calibrated constant:
+  rebate/share = 0.2 × 0.07 × p(1−p) ≈ 0.35c/share at ~50c fills → breakeven-q shift
+  ≈ +0.35pp only. Does NOT bridge E1's ~8pp gap. | verdict: CALIBRATED (use
+  0.014·p(1−p) $/share in all EV math; retest capture if fill volume grows 10x).
 
 ## E8 — Coin selection
 **Question**: is eth/sol outperformance persistent (less informed 5m flow) or drift?
