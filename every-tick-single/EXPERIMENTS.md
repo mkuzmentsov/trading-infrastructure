@@ -57,6 +57,15 @@ at bar open. Charge the config for gate-lag bars (first trend bars misclassified
   same-hour (lookahead) classification used in earlier eyeball analysis. NEXT: add
   trade_print logging (exact fills) and re-test; also test one-side-per-bar sampling
   to match the real bot. | verdict: KEEP COLLECTING (proxy inadequate, do not conclude).
+- 2026-07-04 | data: 00:00–05:15 UTC (overnight Asia), 256 bars ALL with trade prints,
+  4 coins, 200ms-tick fleet | regime mix: chop-heavy overnight | baseline: alternate@0.48,
+  fleet realized q=41.6% pnl −99.19 in window | params: PRINT-EXACT fills (bid at P fills
+  iff print ≤ P), no-lookahead trailing-36 gate, P∈[0.40..0.49] | result: **negative at
+  ALL 18 (P, regime) cells** — best cell mid/0.44 EV −0.023; q(0.48|chop)=40.2% (n=256)
+  vs 48% needed. Combined with 2026-07-03 full day (q=50.9%, +47.52): two-day realized
+  q ≈ 47-48% ≈ exactly breakeven BEFORE adverse nights like this one. | verdict:
+  E1 GO criterion (+5pp) is FAILING with exact fills. One more full-day cycle to
+  confirm, then E1 → REJECT unless the rebate calibration (E7) changes the math.
 
 ## E2 — Late-bar salvage sell
 **Question**: when nearly dead late in the bar, does a resting maker sell salvage more
