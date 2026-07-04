@@ -183,3 +183,69 @@ fee_equivalent weights we logged? Calibrates the rebate term in all EV math.
 - **C4 live pilot**: smallest size, one coin, only after A1 composite is +EV on
   >=1 week AND an out-of-sample day; per-bot budget + own-orders-only cancels
   (multi-bot account safety from PLAN).
+
+
+---
+
+# RESEARCH PROGRAM — discipline-based experiments (from 2026-07-06, with ≥3 days of print data)
+
+All experiments follow the RUN RECORD format; nothing is adopted without the joint
+composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom.
+
+## I. Market microstructure (highest priority)
+- **MS-1 order-flow imbalance gate** (Glosten-Milgrom/O'Hara): aggressor ratio of first
+  30-60s of prints predicts the bar, available AT QUOTE TIME. Sim "quote only when
+  balanced". GO: gated q − ungated ≥ +4pp, n≥200.
+- **MS-2 book-pressure toxicity** (VPIN-flavored; supersedes E5): bid/ask size ratios
+  from snapshots → same GO.
+- **MS-3 large-print pull rule**: one big aggressive print → pull quote N secs.
+  GO: avoided fills have q < 40%.
+- **MS-4 implied vs realized vol ⭐ highest-conviction**: binary price = digital
+  option; fair p_up from Binance realized vol vs market mid; trade only
+  |divergence| > θ as TAKER (sidesteps maker adverse selection entirely).
+  GO: net +EV after 7% taker fee schedule on ≥1wk sim.
+- **MS-5 resolution-source divergence**: Chainlink (resolution) vs trading flow near
+  bar end; measure mispricing episodes in final 30s before considering latency play.
+
+## II. Betting & gambling theory
+- **BB-1 Kelly / risk-of-ruin** (Thorp; Chen & Ankenman): for any +EV config —
+  fractional Kelly + bankroll for <1% ruin (algo-trader leverage-frontier method).
+  Blocks live sizing.
+- **BB-2 CLV standing metric** (Wong): fill price vs bar-end price in every sim
+  output; fast edge-quality signal. DO FIRST (cheap).
+- **BB-3 dutching / middles**: after one leg fills, bid the other wherever pair-sum
+  < 0.95 → locked middle. Print-exact simulatable.
+- **BB-4 game selection formalized** (poker): coins × hours × regimes where q clears
+  breakeven; refuse everything else. Umbrella over all gates (grows E6/E8).
+
+## III. Statistics & econometrics
+- **ST-1 calibrated outcome model**: logistic/GBM on all logged features, walk-forward,
+  Brier vs 0.5. If nothing beats 0.5 OOS → formal proof direction is unpredictable at
+  5m; retire all side-picking permanently.
+- **ST-2 HMM regime model** (Hamilton): 2-3 state HMM on 5m |ret| — persistence
+  built in (what the trailing-percentile gate lacked). GO: beats E1 gate.
+- **ST-3 edge-decay CUSUM**: rolling edge + changepoint detection on every adopted
+  rule; data retires rules, not losses.
+- **ST-4 multiple-testing haircut** (White's Reality Check / DSR): family-wide
+  correction over the whole config grid. GATE FOR ANY LIVE PILOT.
+- **ST-5 block-bootstrap CIs**: hour-block resampled PnL confidence intervals in
+  every run record.
+
+## IV. Technical analysis (low prior, cheap)
+- **TA-1 mean-reversion oscillators**: RSI(1m)/Bollinger %B at open → fade side.
+  GO: q(fade|extreme) ≥ 52%.
+- **TA-2 round-number magnets**: BTC near round levels → chop-probability feature.
+- **TA-3 volume-spike trend filter**: 1m volume z at open → skip bar.
+- **TA-4 ATR-adaptive entry depth**: P as function of current ATR instead of fixed.
+
+## V. Crypto-specific
+- **CR-1 funding-rate drift prior** (via trading-mcp data) → slow side prior.
+- **CR-2 liquidation-cascade detector**: extreme 1m bar → gate off (forced-flow
+  continuation).
+- **CR-3 calendar structure**: dow × hour heatmaps at ≥2 weeks.
+
+## Sequencing
+- **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
+- **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
+- **Week 3+**: TA/CR block, ST-4 haircut over everything, then BB-1 sizing if
+  anything survives.
