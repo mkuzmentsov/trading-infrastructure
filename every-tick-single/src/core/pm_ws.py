@@ -17,13 +17,13 @@ from collections import deque
 
 import websockets
 
-from btc_ws import btc_state
+from core.btc_ws import btc_state
 from config import (
     POLYMARKET_WS,
     WS_HEARTBEAT_SECS,
     log,
 )
-from gamma import (
+from core.gamma import (
     fetch_btc_5m_market,
     fetch_market_for_window,
     get_market_window,

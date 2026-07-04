@@ -15,7 +15,7 @@ from config import (
     POLYMARKET_ADDRESS, POLYMARKET_FUNDER, POLYMARKET_PK,
     SIGNATURE_TYPE, USDC_ADDRESS, log,
 )
-from positions import Position, pos_store
+from core.positions import Position, pos_store
 
 
 _redeemed_conditions: set[str] = set()

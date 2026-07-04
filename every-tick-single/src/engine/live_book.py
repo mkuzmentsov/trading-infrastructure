@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from btc_ws import btc_state
+from core.btc_ws import btc_state
 from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
     LIVE_MAX_DAILY_LOSS_USD,
@@ -52,10 +52,10 @@ from config import (
     TAKE_PROFIT_PRICE,
     log,
 )
-from paper_book import BracketPosition, _BarState, fee_equivalent
-from pm_ws import pm_state
-from telegram import tg
-from user_ws import user_state
+from engine.paper_book import BracketPosition, _BarState, fee_equivalent
+from core.pm_ws import pm_state
+from core.telegram import tg
+from engine.user_ws import user_state
 
 _TICK = 0.01
 
@@ -76,20 +76,20 @@ class ClobAdapter:
         self._clob = clob
 
     def place_limit(self, token_id: str, side: str, size: float, price: float):
-        from clob import place_limit_order
+        from engine.clob import place_limit_order
         return place_limit_order(self._clob, token_id, side, size, price)
 
     def cancel(self, order_id: str) -> bool:
-        from clob import cancel_order
+        from engine.clob import cancel_order
         return cancel_order(self._clob, order_id)
 
     def sell_fak(self, token_id: str, size: float, min_price: float):
-        from clob import post_signed_sell_fak, sign_sell_order
+        from engine.clob import post_signed_sell_fak, sign_sell_order
         signed = sign_sell_order(self._clob, token_id, size, min_price)
         return post_signed_sell_fak(self._clob, signed)
 
     def order_status(self, order_id: str):
-        from clob import fetch_order_status
+        from engine.clob import fetch_order_status
         return fetch_order_status(self._clob, order_id)
 
     def conditional_balance(self, token_id: str) -> float:

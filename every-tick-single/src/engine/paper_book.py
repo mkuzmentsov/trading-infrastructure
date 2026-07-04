@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from btc_ws import btc_state
+from core.btc_ws import btc_state
 from config import (
     MAKER_FEE_RATE,
     MAX_FILLS_PER_BAR,
@@ -37,7 +37,7 @@ from config import (
     TAKE_PROFIT_PRICE,
     log,
 )
-from pm_ws import pm_state
+from core.pm_ws import pm_state
 
 
 def fee_equivalent(size: float, price: float) -> float:

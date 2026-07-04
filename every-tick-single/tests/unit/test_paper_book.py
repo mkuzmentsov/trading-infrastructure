@@ -13,9 +13,9 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "src"))
 
 os.environ.setdefault("QUOTE_MODE", "bracket")
 
-from btc_ws import btc_state  # noqa: E402
-from paper_book import PaperBook  # noqa: E402
-from pm_ws import pm_state  # noqa: E402
+from core.btc_ws import btc_state  # noqa: E402
+from engine.paper_book import PaperBook  # noqa: E402
+from core.pm_ws import pm_state  # noqa: E402
 
 
 def fresh_book(now=1000.0, start=1000, end=1300):

@@ -10,7 +10,7 @@ suites = [
     os.path.join(HERE, "unit", "test_paper_book.py"),
     os.path.join(HERE, "unit", "test_strategy_rules.py"),
     os.path.join(HERE, "unit", "test_rotation.py"),
-    os.path.join(HERE, "..", "src", "test_live_book.py"),
+    os.path.join(HERE, "unit", "test_live_book.py"),
     os.path.join(HERE, "test_backtest_integration.py"),
 ]
 fail = 0

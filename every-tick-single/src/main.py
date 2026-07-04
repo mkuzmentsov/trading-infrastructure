@@ -20,9 +20,9 @@ import re
 import sys
 import time
 
-from binance_ws import binance_state, run_binance_ws
-from btc_ws import btc_state, run_btc_ws
-from clob import (
+from core.binance_ws import binance_state, run_binance_ws
+from core.btc_ws import btc_state, run_btc_ws
+from engine.clob import (
     build_clob_client,
     cancel_order,
     ensure_approvals,
@@ -91,9 +91,9 @@ from config import (
     WS_HEARTBEAT_SECS,
     log,
 )
-from live_book import ClobAdapter, live_book
-from paper_book import paper_book
-from pm_ws import (
+from engine.live_book import ClobAdapter, live_book
+from engine.paper_book import paper_book
+from core.pm_ws import (
     apply_prefetched_market_now,
     enable_external_market_apply,
     pm_state,
@@ -101,11 +101,11 @@ from pm_ws import (
     refresh_pm_quotes_from_rest,
     run_pm_ws,
 )
-from positions import pos_store
-from user_ws import run_user_ws, set_runtime_creds as _user_ws_set_creds, user_state
-from redemptions import redeem_resolved_positions
+from core.positions import pos_store
+from engine.user_ws import run_user_ws, set_runtime_creds as _user_ws_set_creds, user_state
+from engine.redemptions import redeem_resolved_positions
 from strategy import StrategyContext, build_strategy
-from telegram import tg, tg_async
+from core.telegram import tg, tg_async
 
 _approved_ctf_tokens: set[str] = set()
 
@@ -326,7 +326,7 @@ def _write_training_event(event_type: str, **payload) -> None:
 
 # Give pm_ws the event writer so every trade print is persisted (exact fill
 # truth for backtests). Set at import time — pm_ws only calls it when set.
-pm_ws_module = sys.modules.get("pm_ws")
+pm_ws_module = sys.modules.get("core.pm_ws")
 if pm_ws_module is not None:
     pm_ws_module.trade_print_logger = _write_training_event
 

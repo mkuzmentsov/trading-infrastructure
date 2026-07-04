@@ -58,8 +58,9 @@ from config import (
     TAKE_PROFIT_PRICE,
     log,
 )
-from math_signal import Signal, _fair_p_up
-from positions import Position
+from .math_signal import Signal, _fair_p_up
+from .side_rules import pick_side
+from core.positions import Position
 
 from .base import PositionDecision, StrategyContext
 
@@ -222,7 +223,7 @@ class MakerRebateStrategy:
             return "DOWN"
         if QUOTE_SIDE == "alternate":
             # Flip by bar window parity — deterministic and unbiased across bars.
-            from pm_ws import pm_state
+            from core.pm_ws import pm_state
             bar_idx = int(pm_state.market_start_ts // 300) if pm_state.market_start_ts else 0
             return "UP" if bar_idx % 2 == 0 else "DOWN"
         # "cheaper" (default): the side with mid ≤ 0.5 — closest to the p(1−p)
@@ -242,7 +243,7 @@ class MakerRebateStrategy:
         notional knob is unset/0."""
         if self._notional <= 0 or price <= 0:
             return float(QUOTE_SIZE), False
-        from pm_ws import pm_state
+        from core.pm_ws import pm_state
         shares = float(math.floor(self._notional / price))
         min_size = float(pm_state.order_min_size or 5.0)
         if shares < min_size:
@@ -273,7 +274,7 @@ class MakerRebateStrategy:
         return 0.5, "ret_60s_momentum_flat"
 
     def _maintain_bracket(self, ctx: StrategyContext, book, now: float) -> None:
-        from pm_ws import pm_state
+        from core.pm_ws import pm_state
 
         # New bar → forget the locked side.
         if pm_state.condition_id != self._bracket_cid:
@@ -316,16 +317,9 @@ class MakerRebateStrategy:
         else:
             if self._bracket_side is None:
                 p_up, source = self._bracket_p_up_estimate(ctx)
-                if BRACKET_SIDE_RULE == "alternate":
-                    # Control experiment: flip sides each bar — removes the
-                    # accidental market-drift bias of the signal picker (which
-                    # measured ~always-UP at bar open) and isolates the pure
-                    # maker-discount / adverse-selection economics.
-                    self._bracket_side = "DOWN" if self._last_alt_side == "UP" else "UP"
-                    self._last_alt_side = self._bracket_side
-                    source = "alternate"
-                else:
-                    self._bracket_side = "UP" if p_up >= 0.5 else "DOWN"
+                self._bracket_side, source, self._last_alt_side = pick_side(
+                    BRACKET_SIDE_RULE, p_up, source, self._last_alt_side
+                )
                 self._bracket_p_up = p_up
                 self._bracket_p_up_source = source
                 if hasattr(book, "set_bar_meta"):
@@ -418,7 +412,7 @@ class MakerRebateStrategy:
         if BAR_SNAPSHOT_SECS <= 0 or now - self._last_snapshot < BAR_SNAPSHOT_SECS:
             return
         self._last_snapshot = now
-        from pm_ws import pm_state
+        from core.pm_ws import pm_state
         book._event(
             "bar_snapshot",
             seconds_left=ctx.seconds_left,
@@ -450,7 +444,7 @@ class MakerRebateStrategy:
 
         # Warmup after bar open.
         bar_len = max(1, ctx.seconds_left)  # fallback if window unknown
-        from pm_ws import pm_state
+        from core.pm_ws import pm_state
         if pm_state.market_start_ts > 0 and pm_state.market_end_ts > 0:
             bar_len = pm_state.market_end_ts - pm_state.market_start_ts
         elapsed = bar_len - ctx.seconds_left

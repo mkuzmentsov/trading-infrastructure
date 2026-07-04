@@ -31,8 +31,8 @@ from config import (
     WS_HEARTBEAT_SECS,
     log,
 )
-from pm_ws import pm_state
-from positions import pos_store
+from core.pm_ws import pm_state
+from core.positions import pos_store
 
 USER_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/user"
 
@@ -142,7 +142,7 @@ def _fetch_chain_balance(token_id: str) -> float | None:
     Returns shares as float (6-decimal units on-chain → float shares),
     or None if no user address is configured or the RPC call fails.
     """
-    from redemptions import _erc1155_balance  # local import avoids import-time cycle
+    from engine.redemptions import _erc1155_balance  # local import avoids import-time cycle
 
     user = POLYMARKET_FUNDER or POLYMARKET_ADDRESS
     if not user:

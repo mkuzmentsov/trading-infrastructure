@@ -15,17 +15,17 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src"))
 
-from btc_ws import btc_state                                    # noqa: E402
+from core.btc_ws import btc_state                                    # noqa: E402
 from config import (                                            # noqa: E402
     LIVE_MAX_DAILY_LOSS_USD,
     LIVE_MAX_ORDER_USD,
     TAKE_PROFIT_PRICE,
 )
-from live_book import LiveBook                                  # noqa: E402
-from pm_ws import pm_state                                      # noqa: E402
-from user_ws import user_state                                  # noqa: E402
+from engine.live_book import LiveBook                                  # noqa: E402
+from core.pm_ws import pm_state                                      # noqa: E402
+from engine.user_ws import user_state                                  # noqa: E402
 
 
 class StubAdapter:

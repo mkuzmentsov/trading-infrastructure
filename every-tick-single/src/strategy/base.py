@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from math_signal import Signal
-from positions import Position
+from .math_signal import Signal
+from core.positions import Position
 
 
 @dataclass

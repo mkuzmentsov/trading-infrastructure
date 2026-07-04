@@ -12,10 +12,10 @@ os.environ.setdefault("BRACKET_SIDES", "one")
 os.environ.setdefault("BRACKET_SIDE_RULE", "alternate")
 os.environ.setdefault("PAPER_MODE", "true")
 
-from btc_ws import btc_state  # noqa: E402
-from paper_book import PaperBook  # noqa: E402
-from pm_ws import pm_state  # noqa: E402
-import strategies.maker_rebate as mr  # noqa: E402
+from core.btc_ws import btc_state  # noqa: E402
+from engine.paper_book import PaperBook  # noqa: E402
+from core.pm_ws import pm_state  # noqa: E402
+import strategy.maker_rebate as mr  # noqa: E402
 
 
 class Ctx:
