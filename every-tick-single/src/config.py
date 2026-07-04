@@ -222,3 +222,41 @@ CHAIN_ID     = 137
 CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 POLYGON_RPC  = os.getenv("POLYGON_RPC_URL", "https://rpc.ankr.com/polygon")
+
+
+# ── Startup validation ────────────────────────────────────────────────────────
+# Fail fast on numerically insane values; warn on unknown enum-ish values
+# (unknown values historically fell through to a default branch — warning
+# keeps that behavior visible without changing it).
+
+def _validate() -> None:
+    def _die(msg: str) -> None:
+        raise ValueError(f"config: {msg}")
+
+    if not (0 < ENTRY_PRICE_CAP < 1):
+        _die(f"ENTRY_PRICE_CAP={ENTRY_PRICE_CAP} must be in (0, 1)")
+    if not (0 <= QUOTE_FLOOR < QUOTE_CEIL <= 1):
+        _die(f"QUOTE_FLOOR/QUOTE_CEIL=({QUOTE_FLOOR}, {QUOTE_CEIL}) must satisfy 0<=floor<ceil<=1")
+    if not (0 < TAKE_PROFIT_PRICE <= 1):
+        _die(f"TAKE_PROFIT_PRICE={TAKE_PROFIT_PRICE} must be in (0, 1]")
+    if not (0 <= STOP_LOSS_PRICE < 1):
+        _die(f"STOP_LOSS_PRICE={STOP_LOSS_PRICE} must be in [0, 1) (0 disables)")
+    if QUOTE_NOTIONAL_USD < 0:
+        _die(f"QUOTE_NOTIONAL_USD={QUOTE_NOTIONAL_USD} must be >= 0 (0 = legacy QUOTE_SIZE)")
+    if LOOP_INTERVAL <= 0:
+        _die(f"LOOP_INTERVAL_SECS={LOOP_INTERVAL} must be > 0")
+    if BAR_SNAPSHOT_SECS < 0:
+        _die(f"BAR_SNAPSHOT_SECS={BAR_SNAPSHOT_SECS} must be >= 0 (0 disables)")
+    if MAX_FILLS_PER_BAR < 1:
+        _die(f"MAX_FILLS_PER_BAR={MAX_FILLS_PER_BAR} must be >= 1")
+    for name, val, allowed in (
+        ("QUOTE_MODE", QUOTE_MODE, {"bracket", "one_sided", "two_sided"}),
+        ("BRACKET_SIDES", BRACKET_SIDES, {"one", "both"}),
+        ("BRACKET_SIDE_RULE", BRACKET_SIDE_RULE, {"alternate", "signal"}),
+        ("ENTRY_STYLE", ENTRY_STYLE, {"fixed", "chase"}),
+    ):
+        if val not in allowed:
+            log.warning("config: %s=%r not in %s — falls through to default behavior", name, val, allowed)
+
+
+_validate()
