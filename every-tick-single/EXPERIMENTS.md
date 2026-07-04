@@ -138,3 +138,48 @@ fee_equivalent weights we logged? Calibrates the rebate term in all EV math.
 **Question**: is eth/sol outperformance persistent (less informed 5m flow) or drift?
 **Method**: per-coin q with confidence bands, weekly; drop/add coins only at n ≥ 300.
 **Runs**: 2026-07-03: eth 70%/sol 72% vs btc 48%/xrp 47% — one afternoon, no verdict.
+
+
+---
+
+# ROADMAP — experiments unlocked as data accumulates
+
+## Tier A — after ~3 full days (print-exact)
+- **A1 composite config sim**: best-per-experiment rules combined (gate + salvage +
+  side rule) re-simulated jointly per the composition rule — THE go/no-go artifact.
+- **A2 print-flow regime signal**: print RATE and aggressor imbalance (BUY vs SELL
+  prints) in the first 30-60s of a bar as a same-bar gate — faster than prev-bar
+  klines, purely implementable at quote time. Compare vs E1 trailing gate.
+- **A3 time-of-fill conditioning (print-exact)**: q by fill second within bar; if
+  early fills are less toxic, quote only a window (revisits the old chase-era finding
+  with exact fills).
+- **A4 TP level grid**: TP 0.99 vs 0.90/0.80/0.70 vs none — prints tell exactly which
+  TPs fill; maybe harvesting partial wins beats holding for 1.00.
+- **A5 deep two-sided revisit**: 0.40-0.44 pair pricing + fast cuts (the deleted
+  both-project's most promising direction) simulated print-exact — pairs = both sides
+  print through P; requires modeling both legs.
+
+## Tier B — after ~1 week
+- **B1 cross-coin lead-lag**: do btc prints/moves lead alt bar outcomes by seconds?
+  If yes: quote alts using btc order flow (the only genuinely predictive signal
+  candidate we have not measured).
+- **B2 queue/competition model**: our fill share vs printed size per level (thin xrp
+  vs thick btc); calibrates paper optimism per coin, feeds E8 coin selection verdict.
+- **B3 large-print toxicity**: does an unusually large aggressive print predict
+  continuation? If yes: pull the resting quote on big prints (GM in its purest form).
+- **B4 calendar structure**: day-of-week x hour heatmap of q; weekend regime; US data
+  release minutes blacklist.
+- **B5 p_up calibration** (E4 continuation): enough bars to fit calibration curve;
+  conviction-gated single-side sim.
+
+## Tier C — after ~1 month / only if some config is +EV
+- **C1 Kelly sizing** on the measured edge distribution (risk-of-ruin bankroll calc
+  like the algo-trader leverage frontier).
+- **C2 size laddering**: multiple resting levels (0.48 + 0.44 + 0.40) as one book;
+  per-level q from prints already measurable, joint inventory needs sim work.
+- **C3 rebate-aware volume config**: if capture stays 20% of own fee_eq, optimal
+  volume maximization at breakeven-q configs (rebate as the only profit) — check
+  whether 20% holds at 10x volume first (E7 retest).
+- **C4 live pilot**: smallest size, one coin, only after A1 composite is +EV on
+  >=1 week AND an out-of-sample day; per-bot budget + own-orders-only cancels
+  (multi-bot account safety from PLAN).
