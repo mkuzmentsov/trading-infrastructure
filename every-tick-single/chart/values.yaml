@@ -113,7 +113,8 @@ telegram:
   chatId: ""
 
 persistence:
-  enabled: false
+  enabled: true      # logs survive pod restarts (rotation keeps 30 days ~1-2GB)
+  size: 5Gi
 
 nodeSelector:
   topology.kubernetes.io/region: hel1

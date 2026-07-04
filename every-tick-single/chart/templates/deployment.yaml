@@ -63,7 +63,12 @@ spec:
                 path: {{ $path | trimPrefix "files/scripts/" }}
               {{- end }}
         - name: logs
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "polymarket-btc-5m-bot.name" . }}-pvc
+        {{- else }}
           emptyDir: {}
+        {{- end }}
         # The model ConfigMap is managed outside Helm (apply-model-configmap.sh)
         # so the Helm release Secret stays under the 1 MiB Kubernetes cap.
         # Optional: the maker_rebate paper bots don't ship any ML model.
