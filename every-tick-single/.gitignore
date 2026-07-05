@@ -1,4 +1,9 @@
 chart/files/scripts/
 *.secret.yaml
-tests/data/*/
-!tests/data/2026-07-03/
+# Per-date test data: commit the tiny expected_metrics.json baselines for every
+# date (the regression ledger), but NOT the bulk *.gz event dumps (~20MB/day) —
+# except the 2026-07-03 reference fixture, which stays committed so the test
+# always has one date to run fully. Fetch other dates' data with
+# tests/fetch_day.py <date> to re-verify their baselines locally.
+tests/data/*/*.gz
+!tests/data/2026-07-03/*.gz

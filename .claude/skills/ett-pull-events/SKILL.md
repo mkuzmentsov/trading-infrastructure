@@ -29,3 +29,20 @@ Pulls event files from the 4 paper bots (btc/eth/sol/xrp, ns `every-tick-single`
 - ALWAYS dump before any helm upgrade/restart (even though logs are on PVCs now — belt and braces).
 - `cat` via kubectl needs no `-i`; writing INTO a pod (`sh -c 'cat >> file'`) DOES need `kubectl exec -i`.
 - Event-file schema notes and join traps live in `every-tick-single/backtest/sim.py` docstring.
+
+## Rule: every rotated day gets a test baseline
+
+When a pod has a rotated archive `logs-training-events.jsonl.<DATE>.gz` with NO
+committed baseline yet (`every-tick-single/tests/data/<DATE>/expected_metrics.json`
+absent), close the gap immediately:
+```
+python3 every-tick-single/tests/fetch_day.py <DATE>     # pulls archives + klines
+python3 every-tick-single/tests/gen_baseline.py <DATE>  # writes expected_metrics.json
+python3 every-tick-single/tests/test_backtest_integration.py   # must pass
+git add every-tick-single/tests/data/<DATE>/expected_metrics.json   # baseline only (.gz gitignored)
+```
+Check for the gap on any status/experiment session:
+`kubectl exec -n every-tick-single deploy/btc-every-tick-single -- ls /app/logs/*.gz`
+vs `ls every-tick-single/tests/data/`. Each committed baseline is a permanent
+regression check; the bulk .gz is fetchable on demand, not committed (except the
+2026-07-03 reference fixture).
