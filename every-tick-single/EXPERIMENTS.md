@@ -232,6 +232,14 @@ composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom
     NO FORECASTABLE EDGE. Only "signal" is the current price, which is efficient. Re-run
     at ≥1-2 weeks; add MS-5 resolution-source features (the one unpriced candidate)
     before concluding permanently.
+  - 2026-07-05b | same 3 days, current-price feature REMOVED, "hist" set = last 12
+    bars OHLC (intrabar returns + gaps) + vol + hour, NO current-bar info | result:
+    AUC 0.530, Brier 0.250-0.254 (logreg/gbm) — indistinguishable from a coin flip and
+    WORSE than predict-base-rate (Brier 0.249). Pure price history does NOT forecast the
+    next 5m outcome. | verdict: **5m bar direction is a martingale** — unpredictable from
+    history OR same-bar priced info. Direction-prediction is dead pending (a) much more
+    data and (b) MS-5 resolution-source (Chainlink-vs-Binance) features, the only
+    unpriced candidate left. Re-run: mlvenv python backtest/ml_outcome.py <dates>.
 - **ST-2 HMM regime model** (Hamilton): 2-3 state HMM on 5m |ret| — persistence
   built in (what the trailing-percentile gate lacked). GO: beats E1 gate.
 - **ST-3 edge-decay CUSUM**: rolling edge + changepoint detection on every adopted

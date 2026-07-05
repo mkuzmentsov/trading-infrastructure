@@ -29,6 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import experiments as X  # richer loader (prints, snaps, positions, outcome)
 
 
+HIST_N = 12  # prior bars of OHLC history used by the "hist" feature set
+
+
 def build_dataset(dates, root):
     """→ list of per-bar dicts sorted by time, each with features + label.
     Prior-bar features use ONLY earlier bars of the same coin (no lookahead)."""
@@ -81,7 +84,28 @@ def build_dataset(dates, root):
         pre = [r1*100, r3*100, vol*100, math.sin(2*math.pi*hour/24),
                math.cos(2*math.pi*hour/24), coin_idx.get(c, 0), y1, y2]
         earlyf = pre + [flow, move*10]
-        out.append({"ts": ts, "coin": c, "y": r["y"], "pre": pre, "early": earlyf})
+        # HIST: pure price history — last HIST_N prior bars, NO current-bar info.
+        # Per lag: intrabar log-return (close/open) and overnight gap (open vs
+        # prior close), both x100. Zero-padded when history is short.
+        lags = prev[-HIST_N:]   # [(ts,(open,close)), ...] ascending
+        histf = []
+        for j in range(HIST_N):
+            idx = len(lags) - 1 - j
+            if idx >= 0:
+                op, cl = lags[idx][1]
+                intrab = math.log(cl/op)*100 if op > 0 and cl > 0 else 0.0
+                if idx - 1 >= 0:
+                    prev_cl = lags[idx-1][1][1]
+                    gap = math.log(op/prev_cl)*100 if op > 0 and prev_cl > 0 else 0.0
+                else:
+                    gap = 0.0
+            else:
+                intrab = gap = 0.0
+            histf += [intrab, gap]
+        histf += [vol*100, math.sin(2*math.pi*hour/24), math.cos(2*math.pi*hour/24),
+                 coin_idx.get(c, 0)]
+        out.append({"ts": ts, "coin": c, "y": r["y"], "pre": pre,
+                    "early": earlyf, "hist": histf})
         h.append(r["y"])
     return out
 
@@ -135,10 +159,12 @@ def main():
         r["flowonly"] = r["pre"] + [r["early"][8]]
         r["moveonly"] = r["pre"] + [r["early"][9]]
     out = {"dates": dates, "n": len(rows)}
-    for fk in ("pre", "flowonly", "moveonly", "early"):
+    for fk in ("pre", "hist"):
         r = evaluate(rows, fk)
         out[fk] = r
-        note = {"pre": "known AT OPEN (true forecast)", "flowonly": "pre + early flow",
+        note = {"pre": "known AT OPEN (true forecast)",
+                "hist": f"pure history: last {HIST_N} bars OHLC, NO current-bar info",
+                "flowonly": "pre + early flow",
                 "moveonly": "pre + early PRICE move (already priced)",
                 "early": "pre + flow + move"}[fk]
         print(f"=== {fk.upper()} — {note} (train {r['n_train']} → test {r['n_test']}, base-UP {r['test_base_up']}) ===")
