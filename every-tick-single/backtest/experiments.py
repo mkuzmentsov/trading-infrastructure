@@ -189,3 +189,97 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ── follow-ups (2026-07-05): chase the MS-1 lead + new angles ──────────────────
+def flow_side_picker(bars, early_secs=60):
+    """Does bidding the FLOW side beat alternate (coin-flip)? For each bar compute
+    early cross-token flow direction; 'flow-pick' q = outcome matches flow side.
+    Compare to base outcome rate (best a blind picker gets)."""
+    fp = [0, 0]; base_up = [0, 0]
+    for b in bars.values():
+        if not b["outcome"]:
+            continue
+        early = [pr for pr in b["prints"] if pr[0] >= 300 - early_secs]
+        up_v = sum(pr[3] for pr in early if pr[1] == "UP")
+        dn_v = sum(pr[3] for pr in early if pr[1] == "DOWN")
+        if up_v + dn_v == 0:
+            continue
+        flow = "UP" if up_v > dn_v else "DOWN"
+        fp[0] += (b["outcome"] == flow); fp[1] += 1
+        base_up[0] += (b["outcome"] == "UP"); base_up[1] += 1
+    return {"flow_pick_q": round(fp[0]/fp[1], 3) if fp[1] else None, "n": fp[1],
+            "base_up_rate": round(base_up[0]/base_up[1], 3) if base_up[1] else None}
+
+
+def momentum(bars):
+    """Does the price MOVE in the first ~60s predict the outcome? Sign of
+    (up_mid at ~240s left) − (up_mid at open). Continuation vs reversion at 5m."""
+    cont = [0, 0]
+    for b in bars.values():
+        if not b["outcome"] or len(b["snaps"]) < 3:
+            continue
+        ss = sorted(b["snaps"], key=lambda s: -s[0])
+        open_mid = (ss[0][1] + ss[0][2]) / 2
+        early = [s for s in ss if s[0] <= 240]
+        if not early:
+            continue
+        e_mid = (early[0][1] + early[0][2]) / 2
+        if abs(e_mid - open_mid) < 0.02:
+            continue
+        pred = "UP" if e_mid > open_mid else "DOWN"   # continuation bet
+        cont[0] += (b["outcome"] == pred); cont[1] += 1
+    return {"continuation_q": round(cont[0]/cont[1], 3) if cont[1] else None, "n": cont[1]}
+
+
+def loss_streaks(bars):
+    """Do our fills clump into losing streaks (regime persistence)? P(next fill
+    loses | this fill lost) vs base loss rate — tests a 'stop after N losses' gate."""
+    seq = []
+    for b in sorted(bars.values(), key=lambda x: x["bar_ts"] or 0):
+        for p in b["positions"]:
+            seq.append(0 if (b["outcome"] == p["side"]) else 1)
+    if len(seq) < 20:
+        return None
+    base = sum(seq)/len(seq)
+    after_loss = [seq[i+1] for i in range(len(seq)-1) if seq[i] == 1]
+    return {"base_loss_rate": round(base, 3),
+            "loss_after_loss": round(sum(after_loss)/len(after_loss), 3) if after_loss else None,
+            "n": len(seq)}
+
+
+def momentum_taker(bars, move_secs=240, min_move=0.02, fee_rate=0.07):
+    """Momentum as a TAKER: if by `move_secs`-left the up_mid has moved > min_move
+    from open, BUY the moved side AT ITS ASK (pay the adjusted price), hold to
+    expiry. The 60s continuation win rate only matters net of the price already
+    paid + taker fee. This is the real MS-4 (trend, not fade)."""
+    trades = []
+    for b in bars.values():
+        if not b["outcome"] or len(b["snaps"]) < 3:
+            continue
+        ss = sorted(b["snaps"], key=lambda s: -s[0])
+        open_mid = (ss[0][1] + ss[0][2]) / 2
+        sig = [s for s in ss if s[0] <= move_secs]
+        if not sig:
+            continue
+        s = sig[0]
+        e_mid = (s[1] + s[2]) / 2
+        move = e_mid - open_mid
+        if abs(move) < min_move:
+            continue
+        if move > 0:
+            side, ask = "UP", s[2]      # buy UP at up_ask
+        else:
+            side, ask = "DOWN", s[4]    # buy DOWN at down_ask
+        if not (0 < ask < 1):
+            continue
+        won = b["outcome"] == side
+        fee = fee_rate * ask * (1 - ask)
+        trades.append(((1 - ask - fee) if won else (-ask - fee), won, ask))
+    if not trades:
+        return None
+    n = len(trades)
+    return {"n": n, "q": round(sum(w for _, w, _ in trades)/n, 3),
+            "avg_ask_paid": round(sum(a for _, _, a in trades)/n, 3),
+            "pnl_per_share": round(sum(p for p, _, _ in trades)/n, 4),
+            "total_10sh": round(10*sum(p for p, _, _ in trades), 1)}

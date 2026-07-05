@@ -269,6 +269,39 @@ Prototyped early so the harness is ready; RE-RUN with >=1 week + ST-4 haircut be
   regime variance, pooled ~flat | verdict: INCONCLUSIVE, v1 too crude. Rebuild with
   proper realized-vol fair p_up before judging; still the best structural idea.
 
+## FOLLOW-UP RUNS (2026-07-05 — chase MS-1, test momentum + streaks) — a clean efficiency result
+
+- **MS-1 as SIDE-PICKER (downgrade)** | pooled n=2138 | flow-pick q = 0.524 vs
+  base-UP rate 0.525 → picking the early-flow side is NO better than always-UP
+  (crypto up-drift). The earlier "with-flow beats against-flow +3-4pp" was real but
+  OVERLAPS the up-drift, not additive. MS-1 demoted: keep only as a possible gate,
+  not a side edge.
+
+- **MOMENTUM continuation is REAL but PRICED (the key finding)** | pooled n≈2000 |
+  bars TREND intra-bar: continuation q rises 0.61 (30s) → 0.67 (60s) → 0.775 (120s).
+  BUT traded as taker (buy moved side at its ask), q ≈ avg_ask_paid at EVERY threshold
+  (60s: q0.67/ask0.667; 120s: q0.749/ask0.744) → edge before fee ≈ 0, and the 7% taker
+  fee makes it net −0.002 to −0.03 $/share EVERYWHERE. The market has already priced
+  the continuation into the ask. | verdict: MOMENTUM NOT EXPLOITABLE — market efficient
+  to within the fee. This closes MS-4's momentum variant too: the maker side loses to
+  adverse selection, the taker side loses to efficient pricing + fee. Same wall from
+  both directions.
+
+- **LOSS CLUSTERING (only actionable output)** | pooled n=1355 | P(fill loses | prev
+  fill lost) = 0.659 vs base loss 0.534 → losses cluster hard (regime persistence).
+  A "stop quoting for the rest of the hour after N consecutive losses" gate would dodge
+  the worst streaks. Doesn't CREATE edge but cuts drawdown/variance — matters only IF a
+  breakeven-rebate-farming config exists. | verdict: KEEP for the composite as a
+  risk/variance gate, not an edge source.
+
+**Session synthesis**: these 5m binaries are priced efficiently to within the taker
+fee. Maker resting loses to adverse selection (q<breakeven); taker momentum loses to
+already-adjusted asks + fee (q≈ask). CLV ≈ 0. No directional edge found in 3 days of
+print-exact data. Remaining live hopes: (a) rebate-farming AT breakeven (needs a gate
+that lifts q to ~0.48 while keeping volume — MS-1-gate + loss-streak-gate + regime),
+(b) MS-5 resolution-source (Chainlink vs Binance) divergence in the final seconds —
+the one angle untested and the only place a latency/data edge could still hide.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
