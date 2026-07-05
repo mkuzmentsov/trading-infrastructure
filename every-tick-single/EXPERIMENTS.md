@@ -219,9 +219,19 @@ composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom
   breakeven; refuse everything else. Umbrella over all gates (grows E6/E8).
 
 ## III. Statistics & econometrics
-- **ST-1 calibrated outcome model**: logistic/GBM on all logged features, walk-forward,
-  Brier vs 0.5. If nothing beats 0.5 OOS → formal proof direction is unpredictable at
-  5m; retire all side-picking permanently.
+- **ST-1 calibrated outcome model** (backtest/ml_outcome.py; needs sklearn venv):
+  logistic + GBM, TIME-ORDERED walk-forward (train earlier→test later, no shuffle),
+  Brier/AUC vs coin-flip. Two feature sets: PRE-BAR (at open = true forecast) and
+  EARLY-BAR (~60s in). **Runs:**
+  - 2026-07-05 | 2146 bars, 3 days, 60/40 time split (train 1287 / test 859) | result:
+    PRE-BAR features AUC 0.518, Brier 0.252 = NO edge (worse than coin flip) → outcome
+    UNPREDICTABLE at bar open. EARLY-BAR AUC 0.691 "beats coin flip" BUT attribution
+    shows it is ENTIRELY the price-move feature (moveonly AUC 0.691; flowonly 0.523 ≈
+    nothing) — i.e. the model reads the current mid, which is already priced (momentum_
+    taker proved q≈ask there). The ML CONFIRMS efficiency, does not break it. | verdict:
+    NO FORECASTABLE EDGE. Only "signal" is the current price, which is efficient. Re-run
+    at ≥1-2 weeks; add MS-5 resolution-source features (the one unpriced candidate)
+    before concluding permanently.
 - **ST-2 HMM regime model** (Hamilton): 2-3 state HMM on 5m |ret| — persistence
   built in (what the trailing-percentile gate lacked). GO: beats E1 gate.
 - **ST-3 edge-decay CUSUM**: rolling edge + changepoint detection on every adopted

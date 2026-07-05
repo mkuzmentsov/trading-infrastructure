@@ -46,3 +46,15 @@ Check for the gap on any status/experiment session:
 vs `ls every-tick-single/tests/data/`. Each committed baseline is a permanent
 regression check; the bulk .gz is fetchable on demand, not committed (except the
 2026-07-03 reference fixture).
+
+## Running the ML outcome model (ST-1)
+
+Needs numpy+sklearn (not in system python). Use a venv:
+```
+python3 -m venv /tmp/mlvenv && /tmp/mlvenv/bin/pip install -q scikit-learn
+/tmp/mlvenv/bin/python every-tick-single/backtest/ml_outcome.py <date> [<date> ...]
+```
+Saves per-run JSON to backtest/ml_runs/. ALWAYS read the flowonly/moveonly
+attribution: a high AUC that lives entirely in the "moveonly" feature is the
+current price (already priced, not tradeable) — not a real forecast. Pre-bar AUC
+is the only honest "can we forecast at open" number.
