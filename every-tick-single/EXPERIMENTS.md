@@ -244,6 +244,31 @@ composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom
   continuation).
 - **CR-3 calendar structure**: dow × hour heatmaps at ≥2 weeks.
 
+## PRELIMINARY RUNS (2026-07-05, backtest/experiments.py, 3 days: Jul 3 full + Jul 4 full + Jul 5 partial)
+Prototyped early so the harness is ready; RE-RUN with >=1 week + ST-4 haircut before any conclusion.
+
+- **BB-2 CLV** | data: 3 days, 271+501+583 positions | result: mean CLV = +0.001 /
+  -0.019 / -0.029 (t = 0.0 / -1.0 / -1.7); held-side final mid - entry | verdict:
+  CONFIRMS NO MAKER EDGE — CLV at-or-below zero every day, trending negative. Fast-
+  converging proof that resting-maker fills have no positive edge, matching E1. KEEP
+  as a standing metric in every future sim.
+
+- **MS-1 order-flow gate** (FIRST CONSISTENT SIGNAL) | data: 3 days | method: cross-token
+  directional flow (UP-vol - DOWN-vol)/total in first 60s, bucket fill q by
+  with/against our side | result: with-flow q BEATS against-flow ALL 3 days:
+  0.535 vs 0.467 (Jul3, +6.8pp), 0.481 vs 0.454 (Jul4, +2.7), 0.475 vs 0.456
+  (Jul5, +1.9); pooled ~+3-4pp, sign stable | verdict: PROMISING — early order flow
+  has predictive content (only signal found with a consistent sign). NOT yet a
+  standalone winner (with-flow q ~0.48 ≈ breakeven). NEXT: use as SIDE-PICKER (bid the
+  flow side vs alternate) + as gate (skip when flow disagrees); re-run n>=1000 with
+  block-bootstrap CI (ST-5); put in the composite. Lead to develop.
+
+- **MS-4 implied-vs-realized (taker fade)** | data: 3 days | method: crude v1 — fade
+  market deviation from 0.5 beyond theta=0.05, buy underpriced side at ask as taker
+  (7% fee) | result: +0.154 / -0.061 / +0.015 $/share (q 0.569/0.375/0.443) — huge
+  regime variance, pooled ~flat | verdict: INCONCLUSIVE, v1 too crude. Rebuild with
+  proper realized-vol fair p_up before judging; still the best structural idea.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
