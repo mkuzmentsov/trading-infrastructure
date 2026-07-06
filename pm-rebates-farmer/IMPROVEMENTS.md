@@ -91,3 +91,18 @@ Confirms whether rebates can cover the residual single-fill drag.
 Every measured edge in this project has died to execution. T1.1 (single-fill cut) is the
 one genuinely-untested lever with a real mechanism. If it doesn't flip the net, nothing in
 Tiers 2–3 will — they're amplifiers of an edge that must first exist.
+
+---
+
+## CHECKPOINT (2026-07-06, leaving it running to accumulate bars)
+- LIVE config: per-leg pricing (UP@0.50 / DOWN@ask-tick), +2 pre-open, cancel-at-open,
+  redemption sweep, balance+positions TG ping. Release `pm-rebates-farmer-btc`, account A.
+- State: **net holding flat ~$50** (baseline $59; the −$9 was front-loaded by the earlier
+  UP-only + cancel-at-open versions, this per-leg version holds its ground). Both-fill
+  pairs print +$0.10, single-fill losers cost −$4.90, netting ~flat.
+- **Decision pending more bars + the nightly MAKER_REBATE credit**: if net holds flat/up
+  and the rebate tips it positive → build T1 (websocket single-fill cut + balanced sizing)
+  to scale. If it resumes bleeding → single-fills win, retire per the honest prior.
+- Next check: pull balance + fill mix after a few hours / next morning (rebate lands ~00:45
+  UTC). Balance/positions helper: scratchpad pmvenv + account A creds (in
+  polymarket/k8s/helm/bots/pm_btc_5m_smart.yaml).
