@@ -364,6 +364,16 @@ during the current bar (log preopen_print/preopen_snapshot tagged with target wi
 then measure real pre-open fill rate + win rate + queue. If ~breakeven holds print-exact,
 rebate-farming on unbiased pre-open fills = first viable config. THE lead to pursue.
 
+## OFFSET SWEEP (2026-07-06) — predicting bar +1..+5, not just next
+Idea: maybe a farther-out individual 5m bar carries more structure (oscillation).
+backtest/ml_offset.py + raw autocorrelation, 72k bars:
+- ML AUC by offset: +1=0.529, +2=0.528, +3=0.524, +4=0.524, +5=0.520 — all ~coin
+  flip, DECREASING with offset (farther = less predictable).
+- Raw autocorrelation: the ONLY structure is lag-1 reversion (P(+1 up|big up move)
+  =0.470); by +2 it's 0.50-0.51 = gone; NO oscillation across offsets, just decay to
+  noise. verdict: NO farther-bar edge. Each 5m bar is an independent martingale; the
+  lag-1 reversion (already priced, see TA-1) is the sole structure.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
