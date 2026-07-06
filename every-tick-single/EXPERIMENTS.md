@@ -404,6 +404,17 @@ by +3. verdict: +2 is the sweet spot; more lead time buys nothing (unbiasedness
 comes from "no realized move yet" which holds at any pre-open lead; thinner far-out
 books add no fills). Farmer stays at FARM_LEAD_BARS=2.
 
+## EXHAUSTIVE Optuna search (2026-07-06, 4300 trials, 12 cores)
+18 indicators x 13 periods x 6 timeframes(5m-4h) x 1-3 combos x model+hparams,
+Optuna TPE, 12 independent seeds, train/val/test time-split (test UNSEEN by search).
+Result: **best held-out TEST AUC = 0.5335** (offset+1), 0.516 (offset+3) — highest
+ever but still coin-flip (tradeable ~0.55+). THREE failure signatures: (1) search
+overfits val (every seed val~0.54 -> test~0.52; e.g. train 0.59/val 0.55/test 0.53);
+(2) winning configs UNSTABLE across seeds (each picks different indicators — noise
+fitted differently, not a stable signal); (3) no combo/timeframe/param breaks 0.534.
+GPU note: sklearn GBM is CPU-only (no Metal); parallelism via processes not threads
+(GIL). DEFINITIVE: direction unpredictable, confirmed by exhaustive tuned search.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.

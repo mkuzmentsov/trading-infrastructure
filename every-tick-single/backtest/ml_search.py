@@ -99,7 +99,7 @@ def build_feature(S,name,P,tf,N):
     return np.array(vals,float),np.array(ys)
 
 def main():
-    bdir=sys.argv[1];NT=int(sys.argv[2]) if len(sys.argv)>2 else 400;N=int(sys.argv[3]) if len(sys.argv)>3 else 1
+    bdir=sys.argv[1];NT=int(sys.argv[2]) if len(sys.argv)>2 else 400;N=int(sys.argv[3]) if len(sys.argv)>3 else 1;SEED=int(sys.argv[4]) if len(sys.argv)>4 else 1
     S={}
     for coin in ("btc","eth","sol","xrp"):
         rows=json.load(open(os.path.join(bdir,f"{coin}_5m.json")))
@@ -136,10 +136,12 @@ def main():
         trial.set_user_attr("train_auc",roc_auc_score(y[:a],clf.predict_proba(Xs[:a])[:,1]))
         return vauc
 
-    study=optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=1))
+    study=optuna.create_study(direction="maximize",sampler=optuna.samplers.TPESampler(seed=SEED))
     study.optimize(objective,n_trials=NT,show_progress_bar=False)
     bt=study.best_trial
-    print(f"\n=== Optuna: {NT} trials, offset +{N} ===")
+    print(f"SEED{SEED} val {bt.value:.4f} test {bt.user_attrs['test_auc']:.4f} train {bt.user_attrs['train_auc']:.4f} cfg {[(bt.params.get(f'ind{j}'),bt.params.get(f'P{j}'),bt.params.get(f'tf{j}')) for j in range(bt.params.get('k',1))]}")
+    return
+    print(f"=== Optuna: {NT} trials, offset +{N} ===")
     print(f"BEST validation AUC = {bt.value:.4f}")
     print(f"  its HELD-OUT TEST AUC = {bt.user_attrs['test_auc']:.4f}  (train {bt.user_attrs['train_auc']:.4f})")
     print(f"  config: {bt.params}")
