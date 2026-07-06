@@ -383,6 +383,20 @@ the majority is itself a coin flip. "3/5 always" needs ~75% per-bar; real ceilin
 is ~52%. verdict: NOT achievable; confirms the martingale from the majority-vote
 angle. Stop iterating models — the info is not in the data.
 
+## ⭐⭐ PRE-OPEN vs ACTIVE two-sided EV (2026-07-06) — the farmer bug + the fix
+Two-sided 50/50 net EV/pair (arb + rebates), 200 resolved btc mkts, 1-min mid proxy:
+- ACTIVE bar:   -0.117/pair (both-fill 66%, single 34% @ -0.48 each = adverse)
+- PRE-OPEN (+2): -0.0001/pair ≈ BREAKEVEN (both 39%, single 61% but ~UNBIASED)
+FINDING: trading 2 markets away flips two-sided from deep-loss to ~breakeven because
+pre-open single-fills carry no realized-move adverse selection. The live farmer BLED
+(-$10.47/2.5h) because it left GTC orders resting INTO the active bar → adverse
+intra-bar fills (the -0.117 case), not pre-open fills. FIX: cancel any unfilled leg
+at bar open; keep only pre-open fills + rebates. Also: 0.50 is the sweet spot —
+at 0.49 pre-open both-fill collapses to 1% (price rarely crosses the 0.49-0.51 band
+pre-open). Active two-sided price grid (paper prints, all -0.07..-0.08) confirms no
+active-bar price is +EV. Caveat: mid proxy overstates fills/ignores queue; the -0.0001
+is the ceiling, real is lower — but the pre-open-vs-active GAP (~12c/pair) is the signal.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
