@@ -72,11 +72,38 @@ def track_window(coin: str, window_ts: int):
                   "down": {"buy": None, "tp": None, "filled": 0.0, "tp_done": False}}
 
 
+def positions_value() -> float:
+    """Total current value of open positions (data-api), for the balance ping."""
+    try:
+        import requests
+        from config import POLYMARKET_FUNDER, DATA_API
+        r = requests.get(f"{DATA_API}/positions",
+                         params={"user": POLYMARKET_FUNDER, "sizeThreshold": "0.01"}, timeout=10)
+        r.raise_for_status()
+        return sum(float(p.get("currentValue") or 0) for p in r.json())
+    except Exception as exc:
+        log.debug("positions_value: %s", exc)
+        return 0.0
+
+
+def best_ask(clob, token: str):
+    """Lowest ask on a token (or None). Used to price each leg just below its
+    OWN ask so both sides rest as makers (a flat 0.50 crosses whichever side is
+    priced <=0.50 on a leaning market → only one leg ever rests)."""
+    try:
+        ob = clob.get_order_book(token)
+        asks = getattr(ob, "asks", None) or (ob.get("asks") if isinstance(ob, dict) else None)
+        ps = [float(a.get("price")) for a in (asks or []) if a.get("price")]
+        return min(ps) if ps else None
+    except Exception as exc:
+        log.debug("best_ask %s: %s", token[:10], exc)
+        return None
+
+
 def maintain_entries(clob, now: float):
-    """Ensure BOTH 0.50 legs are resting on every tracked window — RETRY every
-    loop until each rests (a leg that would cross is post-only-rejected now but
-    becomes placeable as the book oscillates around 0.50). Never gives up while
-    the window is open."""
+    """Rest BOTH legs, pricing each at min(ENTRY, own_ask − tick) so neither
+    crosses — this actually gets both UP and DOWN resting (capped at 0.50, never
+    overpaying). RETRY every loop until each rests. Pre-open only."""
     for (coin, ws), rec in state.items():
         if now >= ws:            # only place PRE-OPEN (before the bar opens)
             continue
@@ -84,11 +111,16 @@ def maintain_entries(clob, now: float):
             s = rec[side_name]
             if s["buy"] or s["filled"] >= SHARES:
                 continue  # already resting or filled — leave it
-            oid = place_limit_order(clob, tok, "BUY", SHARES, ENTRY)
+            ask = best_ask(clob, tok)
+            price = min(ENTRY, round(ask - 0.01, 2)) if ask else round(ENTRY - 0.01, 2)
+            if price < 0.01:
+                continue
+            oid = place_limit_order(clob, tok, "BUY", SHARES, price)
             if oid:
                 s["buy"] = oid
-                log.info("PLACED %s %s BUY %.0f @ %.2f  slug=%s-updown-5m-%d  order=%s",
-                         coin, side_name.upper(), SHARES, ENTRY, coin, ws, oid)
+                s["price"] = price
+                log.info("PLACED %s %s BUY %.0f @ %.2f (ask %.2f)  slug=%s-updown-5m-%d  order=%s",
+                         coin, side_name.upper(), SHARES, price, ask or -1, coin, ws, oid)
             # else: crossed/failed — retry next loop (no give-up)
 
 
@@ -182,10 +214,11 @@ def main():
         try:
             now = time.time()
             cur = int(now // BAR) * BAR
-            if cur != last_cur:          # new 5m market — report balance
+            if cur != last_cur:          # new 5m market — report balance + positions
                 last_cur = cur
                 try:
-                    tg(f"💰 balance ${fetch_usdc_balance(clob):.2f}")
+                    c = fetch_usdc_balance(clob); pv = positions_value()
+                    tg(f"💰 cash ${c:.2f} + positions ${pv:.2f} = ${c+pv:.2f}")
                 except Exception:
                     pass
             if now - last_redeem >= REDEEM_EVERY:  # cycle capital out of resolved winners
