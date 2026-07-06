@@ -374,6 +374,15 @@ backtest/ml_offset.py + raw autocorrelation, 72k bars:
   noise. verdict: NO farther-bar edge. Each 5m bar is an independent martingale; the
   lag-1 reversion (already priced, see TA-1) is the sole structure.
 
+## 5-BAR MAJORITY (2026-07-06) — target: 3 of 5 correct "always"
+backtest/ml_five.py, 72k bars, non-overlapping 5-blocks, walk-forward: per-bar acc
+model 51.7% / always-UP 51.2% / momentum 48.9%. hits/5 distribution is an EXACT
+binomial at ~52% [0.02,0.14,0.30,0.33,0.17,0.04] — no clustering (no 5/5-in-trend
+vs 0/5-in-chop bimodality to exploit). **P(>=3/5) = 53.2%** (model), 51.7% (UP) —
+the majority is itself a coin flip. "3/5 always" needs ~75% per-bar; real ceiling
+is ~52%. verdict: NOT achievable; confirms the martingale from the majority-vote
+angle. Stop iterating models — the info is not in the data.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
