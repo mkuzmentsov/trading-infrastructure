@@ -415,6 +415,21 @@ fitted differently, not a stable signal); (3) no combo/timeframe/param breaks 0.
 GPU note: sklearn GBM is CPU-only (no Metal); parallelism via processes not threads
 (GIL). DEFINITIVE: direction unpredictable, confirmed by exhaustive tuned search.
 
+## ⭐⭐⭐ MS-5 LATENCY/RESOLUTION EDGE (2026-07-06) — FIRST POSITIVE RESULT
+Outcome is DETERMINED by price near close: P(sign@mark==outcome) = 65%(T-4m) /
+71%(T-3m) / 77%(T-2m) / 83%(T-1m), robust n=2999. Market UNDERPRICES it: n=147
+resolved btc mkts, at T-60s the price-leading side wins 83-95% but the market
+prices it at only ~0.72 -> buying the leading side EV +$0.10-0.22/share after 7%
+fee. NOT a direction prediction (impossible) — reading the ALREADY-DETERMINED
+outcome (resolves on CHAINLINK) faster than the CLOB reprices. THE one edge that
+could be real. CAVEATS (all execution): (1) 1-min mid PROXY may overstate the lag
+(live book could already be repriced) — MAKE-OR-BREAK; (2) liquidity/queue at
+T-60s; (3) Chainlink vs Binance; (4) may be arbed already. DECISIVE NEXT: LIVE
+monitor — at T-30s log (binance-determined side, leading-side ASK, outcome); if
+live ask << win-prob, build fast aggregator + executor. tool: reversion/preopen
+style, needs real-time book. This is the pivot from "prediction dead" to
+"possible latency edge — test executability live."
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
