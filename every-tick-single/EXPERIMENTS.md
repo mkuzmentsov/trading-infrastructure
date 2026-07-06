@@ -343,6 +343,27 @@ that lifts q to ~0.48 while keeping volume — MS-1-gate + loss-streak-gate + re
 (b) MS-5 resolution-source (Chainlink vs Binance) divergence in the final seconds —
 the one angle untested and the only place a latency/data edge could still hide.
 
+## ⭐ PRE-OPEN RESTING HYPOTHESIS (2026-07-06, user idea) — FIRST non-negative result
+The next 5m market is live + liquid (50-80k sh/side) DURING the current bar. Pre-open
+there is NO realized move to be informed about (the bar open isn't set), so fills there
+should be unbiased. backtest/preopen_study.py, 120 resolved btc markets, 1-min mid proxy:
+```
+   P     PRE-OPEN win%   INTRA-BAR win%   pre edge(win-P)
+ 0.48    45.9% (n37)     38.6% (n176)     -0.021
+ 0.49    44.8% (n67)     40.0% (n185)     -0.042
+ 0.50    50.9% (n163)    41.5% (n195)     +0.009
+```
+FINDING: pre-open fills are ~7-9pp LESS adversely selected than intra-bar at every price
+— the ONLY place the ~4pp adverse-selection gap closes. At 0.50, pre-open win 50.9% is
+ABOVE breakeven (+0.009 on outcome, before rebate). This is qualitatively different from
+every other result (all ~4pp below price). HEAVY CAVEATS: (1) 1-min MID proxy, not trade
+prints — overstates fills, ignores queue position (a 0.50 bid sits behind ~50k sh); (2)
+n=120 mkts ≈ 10h; (3) +0.009 within noise. VERDICT: PROMISING, needs print-exact test.
+NEXT (decisive): instrument the bot to also track the next 1-3 future markets' prints+book
+during the current bar (log preopen_print/preopen_snapshot tagged with target window),
+then measure real pre-open fill rate + win rate + queue. If ~breakeven holds print-exact,
+rebate-farming on unbiased pre-open fills = first viable config. THE lead to pursue.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
