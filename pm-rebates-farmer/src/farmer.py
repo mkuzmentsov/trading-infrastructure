@@ -156,22 +156,22 @@ def main():
     bal = fetch_usdc_balance(clob)
     tg(f"🌾 rebates-farmer started · balance ${bal:.2f}")
     cancel_stale_entries(clob)
-    last_bal = time.time()
+    last_cur = int(time.time() // BAR) * BAR   # first ping fires on the next roll
     while True:
         try:
             now = time.time()
             cur = int(now // BAR) * BAR
+            if cur != last_cur:          # new 5m market — report balance
+                last_cur = cur
+                try:
+                    tg(f"💰 balance ${fetch_usdc_balance(clob):.2f}")
+                except Exception:
+                    pass
             for coin in COINS:
                 track_window(coin, cur + LEAD * BAR)
             maintain_entries(clob, now)   # place/retry both legs until they rest
             service_fills(clob)
             cleanup(now)
-            if now - last_bal >= BAL_EVERY:
-                last_bal = now
-                try:
-                    tg(f"💰 balance ${fetch_usdc_balance(clob):.2f}")
-                except Exception:
-                    pass
         except Exception as exc:
             log.error("loop error: %s", exc)
         time.sleep(LOOP)
