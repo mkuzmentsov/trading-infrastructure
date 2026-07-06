@@ -442,6 +442,23 @@ Aggregator's only value = LATENCY lead over RTDS, fragile given $40 cross-exchan
 noise on close calls. Focus = live monitor: (a) does binance lead RTDS timing,
 (b) does the market lag repricing the determined side. Both measuring now.
 
+## ⭐⭐⭐ CHAINLINK IS DELAYED ~12s — CONFIRMED (2026-07-06, latency/leadlag2.py)
+User hypothesis CONFIRMED. Event study (161 sharp Binance moves >=$6/4s): Chainlink
+echoes with median delay 12.5s (mean 12.8, p25 6s, p75 20s). Cross-corr peaks at
++13s and +22s (Binance leads). RTDS delivery adds 1.6s on top. So Chainlink =
+multi-exchange aggregate delivered ~12s LATE -> in the final ~12s of a bar a
+real-time aggregate already knows Chainlink's close, before the market (watching
+laggy RTDS) reprices. THE mechanical edge. CAVEAT (reshapes exploit): only 30% of
+sharp BINANCE moves echo in Chainlink — Binance alone too noisy, Chainlink filters
+single-venue noise. So must build a REAL-TIME MULTI-EXCHANGE aggregate (Chainlink's
+own methodology, unlagged) to predict Chainlink's 12s-late print, and trade ONLY
+decisive-move bars (>~$20, beyond aggregate noise), abstain on close calls.
+NEXT: (1) build clean real-time WS aggregate (median/VWAP of binance+coinbase+
+kraken+okx+bitstamp); (2) re-measure echo rate/lead by move-size (bigger moves ->
+higher echo); (3) live monitor executability: on decisive bars is the determined
+side still cheap at T-12s? Aggfit earlier: not simply volume-weighted, ~$40 REST
+tracking error (halve with WS). This is the first CONFIRMED mechanical edge.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
