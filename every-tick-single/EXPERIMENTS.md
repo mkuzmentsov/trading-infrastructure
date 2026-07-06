@@ -397,6 +397,13 @@ pre-open). Active two-sided price grid (paper prints, all -0.07..-0.08) confirms
 active-bar price is +EV. Caveat: mid proxy overstates fills/ignores queue; the -0.0001
 is the ceiling, real is lower — but the pre-open-vs-active GAP (~12c/pair) is the signal.
 
+## LEAD-DEPTH sweep (2026-07-06) — is further than +2 better?
+Two-sided 50/50 pre-open EV by lead (200 mkts, mid proxy): +2 = -0.003 (BEST),
++3..+6 all = -0.010 (flat, slightly worse). Both/single-fill saturate at ~40/60%
+by +3. verdict: +2 is the sweet spot; more lead time buys nothing (unbiasedness
+comes from "no realized move yet" which holds at any pre-open lead; thinner far-out
+books add no fills). Farmer stays at FARM_LEAD_BARS=2.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
