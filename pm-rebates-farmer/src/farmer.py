@@ -23,7 +23,7 @@ import time
 from config import log
 from engine.clob import (
     build_clob_client, place_limit_order, fetch_order_status,
-    fetch_usdc_balance, ensure_approvals,
+    fetch_usdc_balance, ensure_approvals, cancel_order,
 )
 from core.gamma import _gamma_get
 from core.telegram import tg
@@ -57,23 +57,37 @@ def market_for(coin: str, window_ts: int):
     return None
 
 
-def ensure_pair(clob, coin: str, window_ts: int):
+def track_window(coin: str, window_ts: int):
+    """Register a window for servicing (does not place yet)."""
     key = (coin, window_ts)
     if key in state:
         return
     toks = market_for(coin, window_ts)
     if not toks:
         return
-    up, down = toks
-    rec = {"tokens": (up, down), "end": window_ts + BAR,
-           "up": {"buy": None, "tp": None, "filled": 0.0, "tp_done": False},
-           "down": {"buy": None, "tp": None, "filled": 0.0, "tp_done": False}}
-    for side_name, tok in (("up", up), ("down", down)):
-        oid = place_limit_order(clob, tok, "BUY", SHARES, ENTRY)
-        rec[side_name]["buy"] = oid
-        log.info("PLACED %s %s BUY %.0f @ %.2f  slug=%s-updown-5m-%d  order=%s",
-                 coin, side_name.upper(), SHARES, ENTRY, coin, window_ts, oid)
-    state[key] = rec
+    state[key] = {"tokens": toks, "end": window_ts + BAR, "ws": window_ts, "coin": coin,
+                  "up": {"buy": None, "tp": None, "filled": 0.0, "tp_done": False},
+                  "down": {"buy": None, "tp": None, "filled": 0.0, "tp_done": False}}
+
+
+def maintain_entries(clob, now: float):
+    """Ensure BOTH 0.50 legs are resting on every tracked window — RETRY every
+    loop until each rests (a leg that would cross is post-only-rejected now but
+    becomes placeable as the book oscillates around 0.50). Never gives up while
+    the window is open."""
+    for (coin, ws), rec in state.items():
+        if now > rec["end"]:
+            continue
+        for side_name, tok in (("up", rec["tokens"][0]), ("down", rec["tokens"][1])):
+            s = rec[side_name]
+            if s["buy"] or s["filled"] >= SHARES:
+                continue  # already resting or filled — leave it
+            oid = place_limit_order(clob, tok, "BUY", SHARES, ENTRY)
+            if oid:
+                s["buy"] = oid
+                log.info("PLACED %s %s BUY %.0f @ %.2f  slug=%s-updown-5m-%d  order=%s",
+                         coin, side_name.upper(), SHARES, ENTRY, coin, ws, oid)
+            # else: crossed/failed — retry next loop (no give-up)
 
 
 def service_fills(clob):
@@ -91,7 +105,15 @@ def service_fills(clob):
             except (TypeError, ValueError):
                 matched = 0.0
             if matched > s["filled"] + 1e-9:
+                new = matched - s["filled"]
                 s["filled"] = matched
+                log.info("FILLED %s %s %.2f @ %.2f  (total %.2f)  slug=%s-updown-5m-%d",
+                         coin, side_name.upper(), new, ENTRY, matched, coin, ws)
+                try:
+                    tg(f"✅ FILLED {coin.upper()} {side_name.upper()} {new:.0f} @ {ENTRY:.2f} · "
+                       f"{coin}-updown-5m-{ws}")
+                except Exception:
+                    pass
             if s["filled"] >= 5 and not s["tp"]:  # min sellable size 5
                 tok = rec["tokens"][0 if side_name == "up" else 1]
                 tp_id = place_limit_order(clob, tok, "SELL", round(s["filled"], 2), TP)
@@ -107,17 +129,23 @@ def cleanup(now: float):
         state.pop(key, None)
 
 
-def seed_from_exchange(clob):
-    """Avoid double-placing after a restart: mark windows that already have our
-    open orders so ensure_pair skips them (their TPs get serviced normally)."""
+def cancel_stale_entries(clob):
+    """No persistent storage → on (re)start, cancel our open BUY entries so we
+    don't accumulate DUPLICATE resting orders across restarts. SELL take-profits
+    are left resting (they cover already-filled positions). Fresh entries are
+    then placed by the normal loop."""
     try:
         from py_clob_client_v2.clob_types import OpenOrderParams
-        oo = clob.get_open_orders(OpenOrderParams())
-        seeded = {o.get("market") or o.get("asset_id") for o in (oo or [])}
-        if seeded:
-            log.info("Startup: %d open orders already on the exchange — will not re-place their windows", len(oo))
+        oo = clob.get_open_orders(OpenOrderParams()) or []
+        buys = [o for o in oo if str(o.get("side", "")).upper() == "BUY"]
+        for o in buys:
+            oid = o.get("id") or o.get("orderID")
+            if oid:
+                cancel_order(clob, oid)
+        log.info("Startup: cancelled %d stale BUY entries (%d open orders total, TPs kept)",
+                 len(buys), len(oo))
     except Exception as exc:
-        log.warning("open-order seed failed (proceeding): %s", exc)
+        log.warning("startup cancel failed (proceeding): %s", exc)
 
 
 def main():
@@ -127,14 +155,15 @@ def main():
     ensure_approvals(clob)
     bal = fetch_usdc_balance(clob)
     tg(f"🌾 rebates-farmer started · balance ${bal:.2f}")
-    seed_from_exchange(clob)
+    cancel_stale_entries(clob)
     last_bal = time.time()
     while True:
         try:
             now = time.time()
             cur = int(now // BAR) * BAR
             for coin in COINS:
-                ensure_pair(clob, coin, cur + LEAD * BAR)
+                track_window(coin, cur + LEAD * BAR)
+            maintain_entries(clob, now)   # place/retry both legs until they rest
             service_fills(clob)
             cleanup(now)
             if now - last_bal >= BAL_EVERY:
