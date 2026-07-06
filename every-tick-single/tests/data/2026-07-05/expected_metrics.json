@@ -2,43 +2,43 @@
  "grid_head": [
   {
    "P": 0.48,
-   "ev_per_fill": -0.0394,
-   "fills": 1060,
-   "q": 0.4406,
+   "ev_per_fill": -0.0405,
+   "fills": 1247,
+   "q": 0.4395,
    "regime": "chop",
-   "wins": 467
+   "wins": 548
   },
   {
    "P": 0.48,
-   "ev_per_fill": -0.0526,
-   "fills": 351,
-   "q": 0.4274,
+   "ev_per_fill": -0.0504,
+   "fills": 433,
+   "q": 0.4296,
    "regime": "mid",
-   "wins": 150
+   "wins": 186
   },
   {
    "P": 0.48,
-   "ev_per_fill": -0.0469,
-   "fills": 254,
-   "q": 0.4331,
+   "ev_per_fill": -0.0415,
+   "fills": 358,
+   "q": 0.4385,
    "regime": "trend",
-   "wins": 110
+   "wins": 157
   }
  ],
  "metrics": {
-  "bars": 938,
-  "fills": 583,
-  "pnl_hold_to_expiry": -99.97,
-  "q": 0.4511,
-  "wins": 263
+  "bars": 1148,
+  "fills": 716,
+  "pnl_hold_to_expiry": -151.82,
+  "q": 0.4469,
+  "wins": 320
  },
  "salvage_90_020_020": {
-  "armed": 159,
-  "baseline": -99.97,
-  "capped_wins": 4,
-  "delta": 4.05,
-  "positions": 583,
-  "saved": 24,
-  "with_rule": -95.92
+  "armed": 194,
+  "baseline": -151.82,
+  "capped_wins": 5,
+  "delta": -0.48,
+  "positions": 716,
+  "saved": 28,
+  "with_rule": -152.3
  }
 }
