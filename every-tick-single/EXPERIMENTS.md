@@ -459,6 +459,20 @@ higher echo); (3) live monitor executability: on decisive bars is the determined
 side still cheap at T-12s? Aggfit earlier: not simply volume-weighted, ~$40 REST
 tracking error (halve with WS). This is the first CONFIRMED mechanical edge.
 
+## AGGREGATE validation (2026-07-06, latency/aggval.py) — no predictive lead over Binance
+Built real-time 5-venue aggregate (aggregator.py, self-calibrating USDT/USD basis,
+median). Event study: OUR-AGGREGATE echoes in Chainlink 17% vs binance-alone 17%
+(IDENTICAL) — noise-filtering hypothesis FAILED. Realization: the low echo isn't
+single-venue noise, it's SHORT-TERM MEAN REVERSION (most $6/4s moves revert, never
+persist 12s to echo in anything) = BTC microstructure, not aggregate quality. So
+can't "predict Chainlink's next tick" from any feed. The 12s lag is still real, but
+the edge (if any) is LEVEL near close: at T-12s cumulative bar move is mostly locked;
+edge exists ONLY IF market prices off laggy RTDS so determined side stays cheap =
+EXECUTABILITY, the sole make-or-break, STILL open + quiet bars lean AGAINST it
+(leader already 0.97-0.99 before close). Aggregate kept as clean real-time price.
+NEXT: need VOLATILE decisive-move bars from live monitor to settle executability;
+if market prices fast there too, MS-5 joins the graveyard despite the real 12s lag.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
