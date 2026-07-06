@@ -261,6 +261,20 @@ composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom
     subset (q collapses to 0.466). | verdict: SIGNAL REAL BUT PRICED — efficiency to within
     the fee, third confirmation. Not exploitable maker or taker. Re-run with more data; the
     only edge would need a FASTER read of the move than the market (latency), i.e. MS-5.
+- **TA-1b/2/3/4 technical indicators** (backtest/ml_technical.py). **Runs:**
+  - 2026-07-06 | data: 72k Binance bars (RSI, Boll %B, MACD, Stoch, ATR, ROC, SMA-dist,
+    streak, candle body/wicks — 12 indicators, all prior-bar, no lookahead) | result:
+    OUTCOME prediction AUC 0.527 logreg / 0.533 gbm (same ~0.53 ceiling as raw lags);
+    confident preds beat 50c ON OUTCOME (|p-.5|>.05 → 54.6% win). **DECISIVE combined
+    test** (train TA on Binance < 2026-07-03, apply to paper bars, place MAKER bid at P
+    on predicted side, print-exact fill): win% 46.2% @0.50 all preds → EV −0.035/sh;
+    and CONFIDENCE INVERTS IT — at |p-.5|≥0.10 the filled win rate DROPS to 29.6%
+    (not rises). Reason: the model is confident when price moved; those bars price the
+    move, so a maker bid only fills when the market REVERSES against the prediction —
+    the fill selects the wrong-prediction subset. The 54% outcome edge becomes 30%
+    realized. | verdict: TA + maker placement NEGATIVE at every price/confidence; the
+    better the signal, the worse the maker fill adversely selects. Fourth confirmation
+    of the wall, and the sharpest: signal quality cannot survive the fill mechanism.
 - **TA-2 round-number magnets**: BTC near round levels → chop-probability feature.
 - **TA-3 volume-spike trend filter**: 1m volume z at open → skip bar.
 - **TA-4 ATR-adaptive entry depth**: P as function of current ATR instead of fixed.
