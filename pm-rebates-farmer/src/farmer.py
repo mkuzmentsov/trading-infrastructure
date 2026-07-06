@@ -27,6 +27,7 @@ from engine.clob import (
 )
 from core.gamma import _gamma_get
 from core.telegram import tg
+from engine.redemptions import redeem_resolved_positions
 
 COINS = [c.strip() for c in os.getenv("FARM_COINS", "btc").split(",") if c.strip()]
 SHARES = float(os.getenv("FARM_SHARES", "10"))
@@ -35,6 +36,7 @@ TP = float(os.getenv("FARM_TP", "0.99"))
 LEAD = int(os.getenv("FARM_LEAD_BARS", "2"))
 LOOP = int(os.getenv("FARM_LOOP_SECS", "5"))
 BAL_EVERY = int(os.getenv("FARM_BALANCE_SECS", "1800"))
+REDEEM_EVERY = int(os.getenv("FARM_REDEEM_SECS", "600"))
 BAR = 300
 
 # state: (coin, window_ts) -> {"tokens": (up, down), "end": ts,
@@ -157,6 +159,7 @@ def main():
     tg(f"🌾 rebates-farmer started · balance ${bal:.2f}")
     cancel_stale_entries(clob)
     last_cur = int(time.time() // BAR) * BAR   # first ping fires on the next roll
+    last_redeem = 0.0
     while True:
         try:
             now = time.time()
@@ -167,6 +170,12 @@ def main():
                     tg(f"💰 balance ${fetch_usdc_balance(clob):.2f}")
                 except Exception:
                     pass
+            if now - last_redeem >= REDEEM_EVERY:  # cycle capital out of resolved winners
+                last_redeem = now
+                try:
+                    redeem_resolved_positions()
+                except Exception as exc:
+                    log.warning("redeem sweep failed: %s", exc)
             for coin in COINS:
                 track_window(coin, cur + LEAD * BAR)
             maintain_entries(clob, now)   # place/retry both legs until they rest
