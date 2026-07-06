@@ -250,8 +250,17 @@ composite re-sim AND the ST-4 multiple-testing haircut. Sequencing at the bottom
   every run record.
 
 ## IV. Technical analysis (low prior, cheap)
-- **TA-1 mean-reversion oscillators**: RSI(1m)/Bollinger %B at open → fade side.
-  GO: q(fade|extreme) ≥ 52%.
+- **TA-1 mean-reversion / lag-1,2,3 direction+magnitude** (backtest/reversion.py). **Runs:**
+  - 2026-07-06 | data: 62d/72k Binance bars + 3d paper | result: REAL short-term
+    mean-reversion, MONOTONIC in prior-move size — P(continue) 0.500 (<5bps) → 0.484
+    (5-15) → 0.464 (>15bps); on OUR paper bars reversion win rate 0.543(>10) → 0.547(>15)
+    → 0.556(>20) → 0.574(>30bps); OOS lag-1/2/3 model AUC 0.52. Signal is genuine and
+    corroborated (documented overreaction + Binance OOS + paper agree). BUT PRICED: the
+    reversion side OPENS at avg ask 0.529 ≈ the 0.547 win rate → taker entry EV +0.0005/sh
+    (break-even, neg after fee); maker rest@0.48 fills only the adversely-selected losing
+    subset (q collapses to 0.466). | verdict: SIGNAL REAL BUT PRICED — efficiency to within
+    the fee, third confirmation. Not exploitable maker or taker. Re-run with more data; the
+    only edge would need a FASTER read of the move than the market (latency), i.e. MS-5.
 - **TA-2 round-number magnets**: BTC near round levels → chop-probability feature.
 - **TA-3 volume-spike trend filter**: 1m volume z at open → skip bar.
 - **TA-4 ATR-adaptive entry depth**: P as function of current ATR instead of fixed.
