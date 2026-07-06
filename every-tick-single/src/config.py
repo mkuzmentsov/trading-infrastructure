@@ -173,7 +173,12 @@ MIN_BOOK_DIVERGENCE = float(os.getenv("MIN_BOOK_DIVERGENCE", "0.04"))
 LATE_ENTRY_SECS = int(os.getenv("LATE_ENTRY_SECS", "90"))
 LATE_ENTRY_EDGE_DISCOUNT = float(os.getenv("LATE_ENTRY_EDGE_DISCOUNT", "0.30"))
 
-# ── Binance feed ─────────────────────────────────────────────────────────────
+# ── Fast reference feed (Binance or custom 5-venue aggregate) ─────────────────
+# PRICE_LEAD_SOURCE: "binance" (single-venue, default) or "aggregate" (custom
+# multi-exchange median from core.agg_ws). The aggregate feeds the SAME
+# binance_state, so binance_price / price_divergence / best_price transparently
+# use whichever source is selected.
+PRICE_LEAD_SOURCE = os.getenv("PRICE_LEAD_SOURCE", "binance").strip().lower()
 BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@aggTrade")
 BINANCE_STALE_SECS = float(os.getenv("BINANCE_STALE_SECS", "5.0"))
 

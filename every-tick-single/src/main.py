@@ -40,6 +40,7 @@ from config import (
     AGGRESSIVE_EXIT_SLIPPAGE,
     BINANCE_STALE_SECS,
     BINANCE_WS_URL,
+    PRICE_LEAD_SOURCE,
     BET_SIZE_MAX,
     BET_SIZE_MIN,
     DRIFT_A3,
@@ -2185,7 +2186,11 @@ async def main() -> None:
     global _retry_now_event
     _retry_now_event = asyncio.Event()
 
-    asyncio.create_task(run_binance_ws(), name="binance_ws")
+    if PRICE_LEAD_SOURCE == "aggregate":
+        from core.agg_ws import run_agg_ws
+        asyncio.create_task(run_agg_ws(), name="agg_ws")
+    else:
+        asyncio.create_task(run_binance_ws(), name="binance_ws")
     asyncio.create_task(run_btc_ws(), name="btc_ws")
     asyncio.create_task(run_pm_ws(), name="pm_ws")
     if not DRY_RUN and not _IS_PAPER_MAKER:
