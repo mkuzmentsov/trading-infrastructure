@@ -430,6 +430,18 @@ live ask << win-prob, build fast aggregator + executor. tool: reversion/preopen
 style, needs real-time book. This is the pivot from "prediction dead" to
 "possible latency edge — test executability live."
 
+## AGGREGATOR / volume-weight test (2026-07-06, latency/aggfit.py)
+Hypothesis: Chainlink = volume-weighted exchange index. Sampled RTDS Chainlink +
+5 exchanges price/volume (86 samples, 3s REST), NNLS fit on returns: fitted
+weights = kraken 1.0 / rest 0 (collinearity artifact), corr(fitted, volume)
+= -0.41 -> NOT confirmed volume-weighted. All aggregators ~$40-49 off Chainlink
+(dominated by USDT/USD premium + 3s REST jitter) = TOO COARSE to call close
+outcomes. PIVOT: don't replicate Chainlink -> READ it via RTDS (resolution truth,
+~1s updates); single exchange (binance) already matches OUTCOME 98.5% (Phase0).
+Aggregator's only value = LATENCY lead over RTDS, fragile given $40 cross-exchange
+noise on close calls. Focus = live monitor: (a) does binance lead RTDS timing,
+(b) does the market lag repricing the determined side. Both measuring now.
+
 ## Sequencing
 - **Week 1** (≥3 days prints): BB-2, MS-1, MS-2, ST-5 + Tier-A composite (A1).
 - **Week 2**: MS-4 ⭐, ST-1, ST-2, BB-3.
