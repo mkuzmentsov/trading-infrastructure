@@ -78,7 +78,7 @@ def maintain_entries(clob, now: float):
     becomes placeable as the book oscillates around 0.50). Never gives up while
     the window is open."""
     for (coin, ws), rec in state.items():
-        if now > rec["end"]:
+        if now >= ws:            # only place PRE-OPEN (before the bar opens)
             continue
         for side_name, tok in (("up", rec["tokens"][0]), ("down", rec["tokens"][1])):
             s = rec[side_name]
@@ -124,6 +124,24 @@ def service_fills(clob):
                          coin, side_name.upper(), s["filled"], TP, tp_id)
                 if info.get("status") in ("matched", "filled"):
                     s["tp_done"] = True
+
+
+def cancel_at_open(clob, now: float):
+    """THE pre-open edge: cancel any still-unfilled BUY the moment its bar opens.
+    Pre-open fills are ~unbiased (no realized move); fills that happen AFTER the
+    bar opens are adversely selected (the -0.117/pair case). So we keep only
+    pre-open fills and drop the rest at the boundary. Filled legs + their TPs stay."""
+    for (coin, ws), rec in state.items():
+        if now < ws:            # still pre-open — leave resting
+            continue
+        for side_name in ("up", "down"):
+            s = rec[side_name]
+            if s["buy"] and s["filled"] < 5:   # unfilled entry, bar has opened
+                cancel_order(clob, s["buy"])
+                s["buy"] = None
+                s["filled"] = SHARES + 1  # mark done so maintain won't re-place
+                log.info("CANCEL-AT-OPEN %s %s (unfilled pre-open) slug=%s-updown-5m-%d",
+                         coin, side_name.upper(), coin, ws)
 
 
 def cleanup(now: float):
@@ -178,8 +196,9 @@ def main():
                     log.warning("redeem sweep failed: %s", exc)
             for coin in COINS:
                 track_window(coin, cur + LEAD * BAR)
-            maintain_entries(clob, now)   # place/retry both legs until they rest
+            maintain_entries(clob, now)   # place/retry both legs (pre-open only)
             service_fills(clob)
+            cancel_at_open(clob, now)     # drop unfilled legs once the bar opens
             cleanup(now)
         except Exception as exc:
             log.error("loop error: %s", exc)
