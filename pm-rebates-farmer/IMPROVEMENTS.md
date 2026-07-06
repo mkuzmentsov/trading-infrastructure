@@ -106,3 +106,45 @@ Tiers 2–3 will — they're amplifiers of an edge that must first exist.
 - Next check: pull balance + fill mix after a few hours / next morning (rebate lands ~00:45
   UTC). Balance/positions helper: scratchpad pmvenv + account A creds (in
   polymarket/k8s/helm/bots/pm_btc_5m_smart.yaml).
+
+---
+
+## MULTI-FARMER on one account (postponed eth, 2026-07-06)
+Deferred eth. When running >1 coin-farmer on the SAME account, they must be separated:
+- **Startup cancel** (`cancel_stale_entries`) is account-global — it cancels ALL open
+  BUYs, so a 2nd bot nukes the 1st's orders. Gate per-bot (FARM_STARTUP_CANCEL) or scope
+  the cancel to the bot's own-coin markets.
+- **Capital** is shared — partition a per-bot budget (each ~$X) so one coin can't starve
+  the others; at ~$50 total, btc alone already uses most of it.
+- **Redemption / positions** are account-wide (fine, but PnL attribution needs the coin).
+Cleanest long-term: one proxy wallet per coin (separate accounts), or a single multi-coin
+farmer process managing all coins with one shared capital pool (preferred — no cross-bot
+order/capital conflicts). Do this before deploying eth/sol/xrp.
+
+---
+
+## EXPECTED IMPACT (honest, 2026-07-06)
+Underlying directional PnL ≈ 0 (efficient market, proven exhaustively). The arb is tiny
+(+$0.10/pair). So improvements can't manufacture a big edge — realistic best case is a
+THIN positive from rebate volume at ~breakeven directional. Per lever:
+
+- **T4.1 logging** — no PnL, but ESSENTIAL: we're currently blind to both-fill rate,
+  single-fill win rate, rebate/fill. Gates judging everything else. Do first.
+- **T1.2 balanced sizing** — clear structural win, no downside. Partial fills leave a
+  directional residue (UP10/DOWN4 = net long 6); removing it stops a real leak. Expected:
+  meaningful, reliable.
+- **T1.1 single-fill cut** — VALUE UNCERTAIN, possibly NEGATIVE. If pre-open singles are
+  ~fair 50/50 (as the proxy suggests), cutting them LOCKS the spread cost and forgoes the
+  winners → worse than holding. Only helps if singles are actually adverse (<50%). Must
+  measure with T4.1 before building — do NOT assume it helps.
+- **T2.1 book gate** — modest: fewer single-fills by skipping leaning windows. Reduces
+  variance more than it adds edge.
+- **T3 (merge / multi-coin / size)** — pure amplifiers. Scaling ~0 edge = ~0. The ONE real
+  positive is rebate volume: more filled maker shares = more nightly MAKER_REBATE, which is
+  the actual product IF directional is held flat. Multi-coin + size lift rebate income
+  linearly; merge lifts capital velocity.
+
+**Bottom line**: expected outcome is "hovers near flat; rebate provides a thin positive
+(order of a few $/day at this size) IF T1.2 + T2.1 keep directional neutral." NOT a large
+edge. Real chance it stays flat/negative because the market is efficient to within fees +
+execution. T1.1 is the risky lever (could hurt); T1.2 + rebate-volume is the safe thesis.
