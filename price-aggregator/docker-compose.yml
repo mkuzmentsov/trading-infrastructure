@@ -1,0 +1,40 @@
+services:
+  price-aggregator:
+    build: .
+    image: mkuzmentsov/price-aggregator:0.1
+    container_name: price-aggregator
+    ports:
+      - "8899:8080"
+    environment:
+      SYMBOLS: "btcusdt"
+      VENUES: "binance"
+      WS_PORT: "8080"
+      BROADCAST_MS: "100"
+      DEPTH_LEVELS: "10"
+      LOG_LEVEL: "INFO"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/healthz',timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  recorder:
+    build: .
+    image: mkuzmentsov/price-aggregator:0.1
+    container_name: delay-recorder
+    depends_on:
+      price-aggregator:
+        condition: service_healthy
+    command: ["python", "-m", "recorder.record"]
+    environment:
+      AGG_WS: "ws://price-aggregator:8080"
+      SYMBOL: "btcusdt"
+      COIN: "btc"
+      RTDS_SYMBOL: "btc/usd"
+      ROW_MS: "250"
+      DEPTH_LEVELS: "10"
+      OUT: "/data/delay.jsonl"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
