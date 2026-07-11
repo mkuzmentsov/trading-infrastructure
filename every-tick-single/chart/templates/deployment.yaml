@@ -30,7 +30,7 @@ spec:
         - name: polymarket-btc
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "/app/scripts/main.py"]
+          command: ["python", "-u", {{ printf "/app/scripts/%s" (.Values.bot.entrypoint | default "main.py") | quote }}]
           env:
             - name: PYTHONPATH
               value: /app/scripts

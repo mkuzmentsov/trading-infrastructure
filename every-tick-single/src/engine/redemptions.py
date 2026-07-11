@@ -13,7 +13,7 @@ import requests
 from config import (
     CHAIN_ID, CTF_CONTRACT, DATA_API, POLYGON_RPC,
     POLYMARKET_ADDRESS, POLYMARKET_FUNDER, POLYMARKET_PK,
-    SIGNATURE_TYPE, USDC_ADDRESS, log,
+    SIGNATURE_TYPE, USDC_ADDRESS, USE_RELAYER, log,
 )
 from core.positions import Position, pos_store
 
@@ -313,15 +313,25 @@ def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) ->
     if not to_redeem:
         return
 
-    account   = Account.from_key(POLYMARKET_PK)
-    nonce     = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
-    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
+    # Relayer path (gasless) fetches its own Safe nonce per tx; the account
+    # nonce / gas price are only needed for the self-broadcast RPC fallback.
+    use_relayer = USE_RELAYER and SIGNATURE_TYPE == 2 and bool(POLYMARKET_FUNDER)
+    account = Account.from_key(POLYMARKET_PK)
+    nonce = gas_price = 0
+    if not use_relayer:
+        nonce     = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
+        gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
+    if use_relayer:
+        log.info("Redemption submission via Polymarket relayer (gasless, Safe)")
 
     for condition_id, question, token_id, payload in to_redeem:
         log.info("Market resolved, redeeming: %s", question[:60])
         try:
             calldata = _build_redeem_calldata(condition_id)
-            if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
+            if use_relayer:
+                from engine.relayer import submit_and_wait
+                tx_hash = submit_and_wait(CTF_CONTRACT, calldata)
+            elif SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
                 tx_hash = _send_tx_via_safe(calldata, CTF_CONTRACT, nonce, gas_price)
             else:
                 tx_hash = _send_tx(calldata, nonce, gas_price)
@@ -341,7 +351,9 @@ def redeem_resolved_positions(on_event: Optional[Callable[..., None]] = None) ->
             else:
                 log.error("Redeem failed for %s: %s", question[:40], exc)
 
-    if POLYMARKET_FUNDER:
+    # Under the relayer/Safe path, redeemed USDC already lands in the Safe
+    # (funder) — the EOA→funder sweep doesn't apply and would need gas.
+    if POLYMARKET_FUNDER and not use_relayer:
         try:
             _claim_to_funder()
         except Exception as exc:

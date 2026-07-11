@@ -228,6 +228,15 @@ CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
 POLYGON_RPC  = os.getenv("POLYGON_RPC_URL", "https://rpc.ankr.com/polygon")
 
+# ── Polymarket Relayer (gasless on-chain submission; Gnosis Safe) ──────────────
+# When USE_RELAYER=true, on-chain Safe txs (redemptions) are submitted through
+# Polymarket's relayer-v2 instead of self-signed eth_sendRawTransaction (no gas,
+# no MATIC balance needed). Requires SIGNATURE_TYPE=2 + a funder (the Safe).
+USE_RELAYER             = os.getenv("POLYMARKET_USE_RELAYER", "false").lower() in ("true", "1", "yes")
+RELAYER_URL             = os.getenv("POLYMARKET_RELAYER_URL", "https://relayer-v2.polymarket.com")
+RELAYER_API_KEY         = os.getenv("POLYMARKET_RELAYER_API_KEY", "")
+RELAYER_API_KEY_ADDRESS = os.getenv("POLYMARKET_RELAYER_API_KEY_ADDRESS", "")
+
 
 # ── Startup validation ────────────────────────────────────────────────────────
 # Fail fast on numerically insane values; warn on unknown enum-ish values

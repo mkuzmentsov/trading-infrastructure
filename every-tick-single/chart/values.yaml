@@ -1,11 +1,13 @@
 botName: polymarket-btc-5m-bot
 
 image:
-  # Deps-only image (same as the old polymarket bot): code is NOT baked in —
+  # Deps-only shared base (see ../../generic-crypto-image). Code is NOT baked in —
   # deploy.sh syncs src/ -> chart/files/scripts/ and helm injects it as a
   # ConfigMap mounted over /app/scripts. Code changes = helm upgrade, no build.
-  repository: mkuzmentsov/pm-btc-bot
-  tag: "0.8"
+  # generic-crypto-image adds the ML stack (pandas/scikit-learn/lightgbm) on top
+  # of the old pm-btc-bot deps, so the cur+2 direction models load in-process.
+  repository: mkuzmentsov/generic-crypto-image
+  tag: "0.1"
   pullPolicy: IfNotPresent
 
 bot:
