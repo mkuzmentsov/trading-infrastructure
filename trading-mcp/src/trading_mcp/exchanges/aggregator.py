@@ -5,8 +5,8 @@ merge the results, and return a normalized view. Each individual venue call is
 wrapped so missing creds / upstream errors degrade gracefully into a per-venue
 "skipped" / "error" entry rather than failing the whole call.
 
-Currently covered: Binance, Kraken, WhiteBIT, Hyperliquid. (Bybit + OKX modules
-were drafted then removed — see project_trading_mcp_profit_maximization memo.)
+Currently covered: Binance, Kraken, WhiteBIT, Hyperliquid, Bybit, Bitget, MEXC,
+OKX.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from . import hyperliquid as _hl
 from . import kraken as _kr
 from . import kraken_futures as _krf
 from . import mexc as _mx
+from . import okx as _ok
 from . import whitebit as _wb
 
 # Stablecoins we treat as $1 for NAV roll-ups when a venue lacks a USD oracle.
@@ -96,7 +97,7 @@ def register(mcp: FastMCP) -> int:
 
         Sources scanned: Binance Simple Earn (flexible + locked), Kraken Earn,
         Hyperliquid HLP (USDC only), WhiteBIT Crypto Lending, Bybit Earn,
-        Bitget Savings.
+        Bitget Savings, OKX Simple Earn.
 
         Returns rows sorted by APR descending. Each row has {venue, kind, asset,
         apr, duration_days, …}. Use this *before* picking an Earn product.
@@ -297,6 +298,41 @@ def register(mcp: FastMCP) -> int:
             elif isinstance(res, dict) and "error" in res:
                 rows.append({"venue": "bitget", "error": res["error"]})
 
+        # --- OKX Simple Earn Flexible (savings) ---
+        if _ok._credentials_present():
+            def _okx():
+                params = {"ccy": asset.upper()} if asset else {}
+                data = _ok._request(
+                    "GET",
+                    "/api/v5/finance/savings/lending-rate-summary",
+                    params,
+                    signed=False,
+                )
+                out = []
+                for p in data if isinstance(data, list) else []:
+                    apr = 0.0
+                    for k in ("estRate", "estApy", "rate", "avgRate"):
+                        v = p.get(k)
+                        if v is not None:
+                            try:
+                                apr = float(str(v).replace("%", ""))
+                                break
+                            except (TypeError, ValueError):
+                                continue
+                    if apr <= 0:
+                        continue
+                    out.append({
+                        "venue": "okx", "kind": "earn_flexible",
+                        "asset": p.get("ccy"), "apr": apr,
+                    })
+                return out
+
+            res = _safe(_okx)
+            if isinstance(res, list):
+                rows.extend(res)
+            elif isinstance(res, dict) and "error" in res:
+                rows.append({"venue": "okx", "error": res["error"]})
+
         rankable = [r for r in rows if "apr" in r and "error" not in r]
         rankable.sort(key=lambda r: r.get("apr") or 0, reverse=True)
         errors = [r for r in rows if "error" in r]
@@ -350,7 +386,7 @@ def register(mcp: FastMCP) -> int:
     @mcp.tool()
     def compare_perp_funding(coin: str) -> dict[str, Any]:
         """Side-by-side current funding rate (annualized) for a coin's perp
-        across Hyperliquid, Binance USDⓈ-M, Kraken Futures, Bybit, Bitget & MEXC.
+        across Hyperliquid, Binance USDⓈ-M, Kraken Futures, Bybit, Bitget, MEXC & OKX.
 
         Direct feeder for funding-carry basket expansion: identifies the venue
         offering the wider funding spread vs the long leg.
@@ -474,6 +510,24 @@ def register(mcp: FastMCP) -> int:
         if isinstance(res, dict):
             rows.append(res)
 
+        def _okx_call():
+            inst = f"{coin_u}-USDT-SWAP"
+            r = _hx.get("https://www.okx.com/api/v5/public/funding-rate",
+                        params={"instId": inst}, timeout=15)
+            data = (r.json() or {}).get("data") or []
+            if not data:
+                return None
+            row = data[0]
+            fr = float(row.get("fundingRate") or 0)
+            interval_h, apr = _ok._funding_apr(
+                fr, row.get("fundingTime"), row.get("nextFundingTime"))
+            return {"venue": "okx", "symbol": inst, "hourly": fr / interval_h,
+                    "apr": apr, "interval_h": interval_h}
+
+        res = _safe(_okx_call)
+        if isinstance(res, dict):
+            rows.append(res)
+
         rankable = [r for r in rows if "error" not in r]
         rankable.sort(key=lambda r: r["apr"], reverse=True)
         spread = None
@@ -507,7 +561,7 @@ def register(mcp: FastMCP) -> int:
         buy at the bid), plus whether each top level absorbs notional_usd. Open when
         taker_basis_bps ≥ −5 (favourable/flat); use a maker buy if only maker passes.
 
-        short_venue: hyperliquid | binance | kraken_futures | bybit | bitget.
+        short_venue: hyperliquid | binance | kraken_futures | bybit | bitget | okx.
         long_venue:  binance | kraken.
         """
         import httpx
@@ -542,9 +596,12 @@ def register(mcp: FastMCP) -> int:
                 bids = ((r.json() or {}).get("orderBook") or {}).get("bids") or []
                 if not bids:
                     return None
+                # Kraken Futures returns bids sorted ASCENDING (lowest first),
+                # so bids[0] is the worst bid — the best bid is the highest price.
+                best = max(bids, key=lambda b: float(b[0]))
                 return {
-                    "bid": float(bids[0][0]),
-                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "bid": float(best[0]),
+                    "top_usd": float(best[0]) * float(best[1]),
                     "depth_usd": sum(float(p) * float(q) for p, q in bids),
                 }
             if venue == "bybit":
@@ -574,6 +631,21 @@ def register(mcp: FastMCP) -> int:
                     "bid": float(bids[0][0]),
                     "top_usd": float(bids[0][0]) * float(bids[0][1]),
                     "depth_usd": sum(float(p) * float(q) for p, q in bids),
+                }
+            if venue == "okx":
+                r = httpx.get(
+                    "https://www.okx.com/api/v5/market/books",
+                    params={"instId": f"{coin_u}-USDT-SWAP", "sz": 25},
+                    timeout=15,
+                )
+                data = (r.json() or {}).get("data") or []
+                bids = (data[0].get("bids") if data else None) or []
+                if not bids:
+                    return None
+                return {
+                    "bid": float(bids[0][0]),
+                    "top_usd": float(bids[0][0]) * float(bids[0][1]),
+                    "depth_usd": sum(float(l[0]) * float(l[1]) for l in bids),
                 }
             return None
 
@@ -733,7 +805,7 @@ def register(mcp: FastMCP) -> int:
     ) -> dict[str, Any]:
         """Withdrawal fee for an asset from a venue, per network (cheapest first) —
         call this before shuffling capital so the move only fires if worth it.
-        from_venue: binance | bybit | bitget | mexc | whitebit | hyperliquid | kraken.
+        from_venue: binance | bybit | bitget | mexc | okx | whitebit | hyperliquid | kraken.
         Returns {venue, asset, networks:[{network, fee, min}], cheapest, note?}.
         Fees are in the ASSET's units (for stablecoins ≈ USD)."""
         import httpx as _hx
@@ -766,6 +838,14 @@ def register(mcp: FastMCP) -> int:
                 if (c.get("coin") or "").upper() == asset_u:
                     for n in c.get("networkList") or []:
                         nets.append({"network": n.get("network") or n.get("netWork"), "fee": _f(n.get("withdrawFee")), "min": n.get("withdrawMin")})
+        elif from_venue == "okx":
+            data = _safe(lambda: _ok._request("GET", "/api/v5/asset/currencies", {"ccy": asset_u}))
+            for c in data if isinstance(data, list) else []:
+                if (c.get("ccy") or "").upper() == asset_u and c.get("canWd"):
+                    # OKX chain is "USDT-TRC20"; expose just the network part.
+                    ch = c.get("chain") or ""
+                    net = ch.split("-", 1)[1] if "-" in ch else ch
+                    nets.append({"network": net, "fee": _f(c.get("minFee")), "min": c.get("minWd")})
         elif from_venue == "whitebit":
             fees = _safe(lambda: _wb._private("/api/v4/main-account/fee"))
             entry = fees.get(asset_u) if isinstance(fees, dict) else None

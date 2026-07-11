@@ -12,6 +12,7 @@ Multi-exchange MCP server. Each exchange's tools live in their own module under 
 | Bybit           | ✅ implemented | `bybit_*`           |
 | MEXC            | ✅ spot + read-only futures | `mexc_*`   |
 | Bitget          | ✅ implemented (needs passphrase) | `bitget_*` |
+| OKX             | ✅ implemented (needs passphrase) | `okx_*`    |
 
 Plus a **cross-venue aggregator** (no prefix) that fans out to every configured
 exchange — yield / borrow / funding / NAV / promotions, plus a one-call

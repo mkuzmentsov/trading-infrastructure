@@ -24,6 +24,7 @@ from .exchanges import (
     kraken,
     kraken_futures,
     mexc,
+    okx,
     whitebit,
 )
 
@@ -37,7 +38,7 @@ def _register_all() -> None:
     summary: list[str] = []
     for module in (
         binance, kraken, kraken_futures, hyperliquid, whitebit,
-        bybit, mexc, bitget, aggregator,
+        bybit, mexc, bitget, okx, aggregator,
     ):
         short = module.__name__.rsplit(".", 1)[-1]
         try:

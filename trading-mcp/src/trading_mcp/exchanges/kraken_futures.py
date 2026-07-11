@@ -231,7 +231,13 @@ def register(mcp: FastMCP) -> int:
         ob = _request("GET", "/api/v3/orderbook", {"symbol": symbol}, public=True).get(
             "orderBook", {}
         )
-        bids = [[float(p), float(q)] for p, q in (ob.get("bids") or [])]
+        # Kraken Futures returns both sides ASCENDING (lowest price first). Best
+        # bid is the highest price; best ask is the lowest. Sort bids descending
+        # so bids[0] / bids[:10] are the real top-of-book.
+        bids = sorted(
+            ([float(p), float(q)] for p, q in (ob.get("bids") or [])),
+            key=lambda b: b[0], reverse=True,
+        )
         asks = [[float(p), float(q)] for p, q in (ob.get("asks") or [])]
         bb = bids[0][0] if bids else None
         ba = asks[0][0] if asks else None
