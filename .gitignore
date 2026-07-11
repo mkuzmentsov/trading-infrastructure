@@ -68,3 +68,5 @@ pattern-bot/k8s/helm/bots/*
 !pattern-bot/k8s/helm/bots/*.yaml.example
 # The chart's files/bot/ is populated by deploy.sh from pattern-bot/bot/.
 pattern-bot/k8s/helm/pattern-bot/files/bot/*.py
+
+every-tick-single/backtest/fiftycent/models
