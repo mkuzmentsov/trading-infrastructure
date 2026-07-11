@@ -1,1 +1,0 @@
-./util/hl_leaderboard.py | tee util/output/$(date -u +"%Y%m%d").output
