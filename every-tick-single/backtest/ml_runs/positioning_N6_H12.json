@@ -1,0 +1,26 @@
+{
+ "N": 6,
+ "H": 12,
+ "posn_only": {
+  "n_test": 10254,
+  "logreg": {
+   "auc": 0.489,
+   "brier": 0.2511
+  },
+  "gbm": {
+   "auc": 0.494,
+   "brier": 0.2524
+  }
+ },
+ "price_posn": {
+  "n_test": 10254,
+  "logreg": {
+   "auc": 0.511,
+   "brier": 0.2515
+  },
+  "gbm": {
+   "auc": 0.51,
+   "brier": 0.2507
+  }
+ }
+}

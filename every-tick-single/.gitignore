@@ -7,3 +7,7 @@ chart/files/scripts/
 # tests/fetch_day.py <date> to re-verify their baselines locally.
 tests/data/*/*.gz
 !tests/data/2026-07-03/*.gz
+data/fleet-events-archive-*/
+# Backtest data pulls & console/output dumps (regenerable via fetch.py); keep .py + ml_runs/*.json
+backtest/fiftycent/*.csv
+backtest/fiftycent/*.txt
