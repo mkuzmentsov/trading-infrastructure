@@ -11,3 +11,4 @@ data/fleet-events-archive-*/
 # Backtest data pulls & console/output dumps (regenerable via fetch.py); keep .py + ml_runs/*.json
 backtest/fiftycent/*.csv
 backtest/fiftycent/*.txt
+backtest/fiftycent/*_report.json

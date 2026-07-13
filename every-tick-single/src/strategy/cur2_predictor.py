@@ -82,3 +82,19 @@ def predict(coin: str, klines: pd.DataFrame | None = None) -> float | None:
     if feats.isnull().any(axis=1).iloc[0]:
         return None
     return float(m["model"].predict_proba(feats.values)[0, 1])
+
+
+def predict_recent(coin: str, n: int = 288) -> list[float]:
+    """p_up over the last ~n closed bars — used to seed the bettor's rolling debias
+    center so it's calibrated from the first live bar. Returns [] if unavailable."""
+    m = _load().get(coin)
+    if m is None:
+        return []
+    klines = fetch_klines(coin, limit=min(1000, n + 80))
+    if klines is None or len(klines) < 60:
+        return []
+    feats = compute_features(klines)[m["features"]].dropna()
+    if feats.empty:
+        return []
+    p = m["model"].predict_proba(feats.values)[:, 1]
+    return [float(x) for x in p[-n:]]

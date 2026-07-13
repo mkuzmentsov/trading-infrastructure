@@ -26,6 +26,15 @@ BET_PRICE = float(os.getenv("CUR2_BET_PRICE", "0.50"))
 NOTIONAL = min(float(os.getenv("QUOTE_NOTIONAL_USD", "5")), float(os.getenv("LIVE_MAX_ORDER_USD", "5")))
 MAX_DAILY_LOSS = float(os.getenv("LIVE_MAX_DAILY_LOSS_USD", "50"))
 MIN_SHARES = int(os.getenv("CUR2_MIN_SHARES", "5"))
+# --- debias + conviction gate (fixes the "always bets one side" base-rate lean) ---
+# The model's p_up rides a spurious per-coin base-rate offset (e.g. eth center 0.495 ->
+# DOWN, sol 0.523 -> UP), so a flat 0.50 threshold bets one side almost every bar and
+# gets whipsawed on regime flips. DEBIAS thresholds at the model's own rolling center
+# (trailing mean of p_up) instead of 0.50, so the side reflects signal, not the prior;
+# MIN_CONVICTION then skips bars whose signal is too small to be real.
+DEBIAS = os.getenv("CUR2_DEBIAS", "true").lower() in ("true", "1", "yes")
+MIN_CONVICTION = float(os.getenv("CUR2_MIN_CONVICTION", "0.02"))   # |p_up - center| gate
+CENTER_WINDOW = int(os.getenv("CUR2_CENTER_WINDOW", "288"))        # bars for rolling center (1 day)
 SETTLE_BUFFER = 90          # secs after bar end before reading the outcome
 POLL_SECS = 5
 
@@ -93,10 +102,24 @@ def main():
     shares = max(MIN_SHARES, math.floor(NOTIONAL / BET_PRICE))
     open_bets: dict[int, dict] = {}     # target_ws -> bet
     settled: set[int] = set()
+    processed: set[int] = set()          # targets we've made a bet/no-bet decision on
     day_pnl: dict[str, float] = {}
     halted = False
 
+    from collections import deque
     from strategy import cur2_predictor
+
+    # rolling model-center for debias; seed from recent history so it's calibrated
+    # from the first live bar instead of drifting up from a cold 0.50.
+    phist: deque = deque(maxlen=CENTER_WINDOW)
+    if DEBIAS:
+        try:
+            seed = cur2_predictor.predict_recent(COIN, CENTER_WINDOW)
+            phist.extend(seed)
+            log.info("cur2 debias ON: seeded center from %d recent preds, center=%.4f, gate=%.3f",
+                     len(phist), (sum(phist) / len(phist) if phist else 0.5), MIN_CONVICTION)
+        except Exception as exc:
+            log.warning("cur2 debias seed failed (%s); center starts cold at 0.50", exc)
 
     while True:
         now = time.time()
@@ -105,12 +128,22 @@ def main():
         today = time.strftime("%Y-%m-%d", time.gmtime(now))
 
         # ---- 1. place a bet on the cur+2 target, once ----
-        if not halted and target not in open_bets and target not in settled:
+        if not halted and target not in processed and target not in settled:
             info = market_tokens(target)
             p_up = cur2_predictor.predict(COIN)
             if info and p_up is not None:
+                processed.add(target)
+                phist.append(p_up)
+                # debias: threshold at the model's rolling center, not a flat 0.50
+                center = (sum(phist) / len(phist)) if (DEBIAS and len(phist) >= 48) else 0.5
+                signal = p_up - center
+                if abs(signal) < MIN_CONVICTION:
+                    _event("CUR2_NOBET", target=target, p_up=round(p_up, 4),
+                           center=round(center, 4), signal=round(signal, 4),
+                           gate=MIN_CONVICTION)
+                    continue
                 cond, up_tok, dn_tok = info
-                side = "UP" if p_up >= 0.5 else "DOWN"
+                side = "UP" if signal >= 0 else "DOWN"
                 token = up_tok if side == "UP" else dn_tok
                 order_id, err = None, ""
                 if _real:
@@ -125,6 +158,7 @@ def main():
                                      "order_id": order_id, "p_up": round(p_up, 4),
                                      "shares": shares, "opened_secs_left": round(target - now, 0)}
                 _event("CUR2_BET_PLACED", target=target, side=side, p_up=round(p_up, 4),
+                       center=round(center, 4), signal=round(signal, 4),
                        price=BET_PRICE, shares=shares, order=order_id or "FAILED",
                        secs_to_open=round(target - now), live=_real, err=err)
 

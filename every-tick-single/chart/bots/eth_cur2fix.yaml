@@ -1,0 +1,23 @@
+# eth-cur2fix — cur+2 bettor with the DEBIAS + conviction-gate fix (entrypoint
+# cur2_bettor.py). Thresholds at the model's rolling center instead of a flat 0.50,
+# so it stops betting one side into regime flips, and skips low-conviction bars.
+# PAPER by default (paperMode+dryRun true, liveTrading false) — no real orders.
+#   helm upgrade --install eth-cur2fix-every-tick-single ./chart \
+#     -f chart/bots/eth_cur2fix.yaml -n every-tick-single
+botName: eth-cur2fix
+
+bot:
+  entrypoint: "cur2_bettor.py"
+  coin: "eth"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  liveMaxOrderUsd: "5"
+  liveMaxDailyLossUsd: "50"
+  quoteNotionalUsd: "5"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  # the fix
+  cur2Debias: "true"
+  cur2MinConviction: "0.02"
+  cur2CenterWindow: "288"
