@@ -43,6 +43,14 @@ MIN_TRUE = float(os.getenv("FAV_MIN_TRUE", "0.90"))     # only near-locked favor
 MIN_EDGE = float(os.getenv("FAV_MIN_EDGE", "0.03"))     # fav_true - ask must clear this (covers fee/slip)
 MIN_TLEFT = int(os.getenv("FAV_MIN_TLEFT", "15"))       # secs left: not too late (settle-buffer safety)
 MAX_TLEFT = int(os.getenv("FAV_MAX_TLEFT", "180"))      # secs left: not too early (move not yet decisive)
+# Polymarket taker fee on 5m crypto markets: fee = shares * rate * p * (1-p), USDC at match
+# (live CLOB reports taker_base_fee=1000bps on these markets; makers pay nothing).
+FEE_RATE = float(os.getenv("FAV_TAKER_FEE_RATE", "0.10"))
+
+
+def taker_fee_ps(price: float) -> float:
+    """taker fee per share at `price`."""
+    return FEE_RATE * price * (1.0 - price)
 
 SETTLE_BUFFER = 90
 POLL_SECS = 3
@@ -186,7 +194,7 @@ def evaluate(ws: int):
     ask = best_ask(fav_token)
     if ask is None:
         return None
-    edge = fav_true - ask
+    edge = fav_true - ask - taker_fee_ps(ask)      # net of taker fee
     return fav_side, fav_token, info[0], round(fav_true, 4), round(ask, 4), round(edge, 4), round(lead * 1e4, 1), int(t_left)
 
 
@@ -260,7 +268,7 @@ def main():
                 except Exception as exc:
                     log.debug("settle status: %s", exc)
             won = (oc and bet["side"] == "UP") or ((not oc) and bet["side"] == "DOWN")
-            pnl = filled * ((1.0 if won else 0.0) - bet["entry"])
+            pnl = filled * ((1.0 if won else 0.0) - bet["entry"] - taker_fee_ps(bet["entry"]))
             day_pnl[today] = day_pnl.get(today, 0.0) + pnl
             _event("FAV_BET_SETTLE", bar=t, side=bet["side"], entry=bet["entry"], fav_true=bet["fav_true"],
                    outcome="UP" if oc else "DOWN", filled=round(filled, 2), won=won,
