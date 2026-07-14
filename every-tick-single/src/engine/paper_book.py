@@ -335,6 +335,13 @@ class PaperBook:
     def bar_inventory(self, direction: str) -> float:
         return self._bar.shares.get(direction, 0.0) if self._bar else 0.0
 
+    def bar_avg_cost(self, direction: str) -> float:
+        """Average fill price of this bar's inventory on `direction` (0 if none)."""
+        if not self._bar:
+            return 0.0
+        sh = self._bar.shares.get(direction, 0.0)
+        return (self._bar.cost.get(direction, 0.0) / sh) if sh > 0 else 0.0
+
     def bar_active(self) -> bool:
         return self._bar is not None and self._bar.condition_id == pm_state.condition_id
 

@@ -48,6 +48,12 @@ from config import (
     QUOTE_FLOOR,
     QUOTE_HALF_SPREAD,
     QUOTE_MODE,
+    QUOTE_MODEL_MARGIN,
+    LOCK_MOM_BRAKE_Z,
+    LOCK_ASYM_MOM_Z,
+    LOCK_ASYM_EXTRA,
+    LOCK_COMPLETION_MARGIN,
+    LOCK_PAIR_TARGET,
     QUOTE_NOTIONAL_USD,
     QUOTE_SIDE,
     QUOTE_SIZE,
@@ -113,6 +119,10 @@ class MakerRebateStrategy:
             self._notional = LIVE_MAX_ORDER_USD
         # Bracket-mode per-bar state: the side is LOCKED when first chosen and
         # never flips mid-bar.
+        # model-mode v2 per-tick scratch: book handle (for pair completion) and
+        # per-side completion sizes chosen by desired_quotes.
+        self._quote_book = None
+        self._want_size: dict[str, float] = {}
         self._bracket_cid: str = ""
         self._bracket_side: str | None = None
         self._bracket_p_up: float = 0.5
@@ -175,8 +185,50 @@ class MakerRebateStrategy:
         up_mid = (ctx.up_bid + ctx.up_ask) / 2.0
         down_mid = (ctx.down_bid + ctx.down_ask) / 2.0
 
-        up_q = min(max(up_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
-        down_q = min(max(down_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
+        if QUOTE_MODE == "model":
+            # model-priced two-sided quoting (leaderboard "lock accumulator"):
+            # bid each side at its fair probability minus a margin, so fills
+            # only come from takers crossing through fair value. v2 (measured
+            # on the first 55 bars: locked pairs +EV, one-sided bleeds):
+            #   * momentum brake — pull everything during violent 30s moves
+            #     (that's when the trailing quote is a falling-knife catcher);
+            #   * asymmetric margin — the against-momentum side quotes deeper;
+            #   * pair completion — once one side holds unmatched inventory,
+            #     chase the other side (small margin) while the completed
+            #     pair still costs <= LOCK_PAIR_TARGET, converting one-sided
+            #     risk into a locked spread.
+            sig30 = ctx.sigma_5m * math.sqrt(30.0 / 300.0)
+            mom_z = (ctx.ret_30s / sig30) if sig30 > 0 else 0.0
+            if abs(mom_z) > LOCK_MOM_BRAKE_Z:
+                self._want_size = {}
+                return {}
+            p_up, _src = self._bracket_p_up_estimate(ctx)
+            m_up = QUOTE_MODEL_MARGIN + (LOCK_ASYM_EXTRA if mom_z < -LOCK_ASYM_MOM_Z else 0.0)
+            m_dn = QUOTE_MODEL_MARGIN + (LOCK_ASYM_EXTRA if mom_z > LOCK_ASYM_MOM_Z else 0.0)
+            up_q = min(max(p_up - m_up, QUOTE_FLOOR), QUOTE_CEIL)
+            down_q = min(max((1.0 - p_up) - m_dn, QUOTE_FLOOR), QUOTE_CEIL)
+            self._want_size = {}
+            book = self._quote_book
+            if book is not None:
+                inv_up = book.bar_inventory("UP")
+                inv_dn = book.bar_inventory("DOWN")
+                unmatched = inv_up - inv_dn
+                avg_cost = getattr(book, "bar_avg_cost", lambda d: 0.0)
+                if unmatched > 1.0:        # UP-heavy → chase DOWN to complete
+                    comp_q = min((1.0 - p_up) - LOCK_COMPLETION_MARGIN,
+                                 LOCK_PAIR_TARGET - avg_cost("UP"), QUOTE_CEIL)
+                    if comp_q >= QUOTE_FLOOR:   # below floor → pair can't lock, keep normal quote
+                        down_q = comp_q
+                        self._want_size["DOWN"] = min(float(QUOTE_SIZE), unmatched)
+                elif unmatched < -1.0:     # DOWN-heavy → chase UP to complete
+                    comp_q = min(p_up - LOCK_COMPLETION_MARGIN,
+                                 LOCK_PAIR_TARGET - avg_cost("DOWN"), QUOTE_CEIL)
+                    if comp_q >= QUOTE_FLOOR:
+                        up_q = comp_q
+                        self._want_size["UP"] = min(float(QUOTE_SIZE), -unmatched)
+        else:
+            up_q = min(max(up_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
+            down_q = min(max(down_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
 
         # Pair-lock constraint: up_q + down_q < 1 − minPairEdge. Shave both
         # sides equally; if one hits the floor, take the rest from the other.
@@ -451,6 +503,7 @@ class MakerRebateStrategy:
         if elapsed < self._warmup:
             return
 
+        self._quote_book = book
         desired = self.desired_quotes(ctx)
 
         for direction in ("UP", "DOWN"):
@@ -480,7 +533,8 @@ class MakerRebateStrategy:
                     resting = None
 
             if resting is None:
-                book.place_quote(direction, want, float(QUOTE_SIZE), now)
+                size = self._want_size.get(direction, float(QUOTE_SIZE))
+                book.place_quote(direction, want, size, now)
 
         if desired:
             log.debug(

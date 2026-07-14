@@ -21,8 +21,11 @@ bot:
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   # decision gates (env -> fav_taker.py); tune during testing
   favMinPrice: "0.80"
-  favMaxPrice: "0.97"
+  favMaxPrice: "0.94"
   favMinTrue: "0.90"
   favMinEdge: "0.03"
   favMinTleft: "15"
   favMaxTleft: "180"
+  favMinLeadBps: "4"
+  favPockets: '[{"p_lo": 0.78, "p_hi": 0.9, "tl_lo": 10, "tl_hi": 120, "edge": 0.03, "true": 0.0, "mom": 0}, {"p_lo": 0.62, "p_hi": 0.78, "tl_lo": 10, "tl_hi": 60, "edge": 0.04, "true": 0.0, "mom": 0}]'
+  favTakerFeeRate: "0.10"
