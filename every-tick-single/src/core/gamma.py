@@ -11,7 +11,13 @@ from typing import Optional
 
 import requests
 
-from config import COIN, GAMMA_API, log
+from config import BAR_SECONDS, COIN, GAMMA_API, log
+
+
+def window_slug(window_start_ts: int) -> str:
+    """Deterministic slug for the COIN UpDown market whose bar opens at
+    `window_start_ts` ({coin}-updown-{5|15}m-{ts}); shape set by BAR_SECONDS."""
+    return f"{COIN}-updown-{BAR_SECONDS // 60}m-{int(window_start_ts)}"
 
 
 def _gamma_get(params: dict):
@@ -33,9 +39,9 @@ def fetch_btc_5m_market() -> Optional[dict]:
     Fetch the current {COIN} Up/Down 5-minute market by slug (COIN env, default btc).
     Tries the current 5m boundary; if not found or already closed, tries the next one.
     """
-    for offset_secs in [0, 300]:
-        ts   = (int(time.time()) // 300) * 300 + offset_secs
-        slug = f"{COIN}-updown-5m-{ts}"
+    for offset_secs in [0, BAR_SECONDS]:
+        ts   = (int(time.time()) // BAR_SECONDS) * BAR_SECONDS + offset_secs
+        slug = window_slug(ts)
         try:
             data = _gamma_get({"slug": slug})
             market = (data[0] if isinstance(data, list) else data) if data else None
@@ -52,7 +58,7 @@ def fetch_market_for_window(window_start_ts: int) -> Optional[dict]:
     deterministic slug ({coin}-updown-5m-{ts}). Used by the live maker's
     T−30s pre-discovery: the NEXT bar's slug is known before the bar starts,
     so at bar roll no Gamma call is needed."""
-    slug = f"{COIN}-updown-5m-{int(window_start_ts)}"
+    slug = window_slug(window_start_ts)
     try:
         data = _gamma_get({"slug": slug})
         market = (data[0] if isinstance(data, list) else data) if data else None
@@ -127,7 +133,7 @@ def get_market_window(market: dict) -> tuple[int, int]:
         end_ts = end_ts or (slug_start_ts + duration_secs)
 
     if start_ts and not end_ts:
-        end_ts = start_ts + 300
+        end_ts = start_ts + BAR_SECONDS
 
     return start_ts, end_ts
 

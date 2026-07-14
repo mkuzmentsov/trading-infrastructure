@@ -21,6 +21,7 @@ from collections import deque
 import websockets
 
 from config import BINANCE_WS_URL, log
+from execution.tickbus import tick_bus
 
 
 class _MinuteBars:
@@ -59,6 +60,10 @@ class BinanceState:
         self.price_updates: int = 0
         self.session_id: int = 0
         self.last_error: str = ""
+        # delivery latency: local arrival − exchange trade time (ms), EWMA'd.
+        # Includes local clock offset; useful relatively (before/after, hel/us).
+        self.last_delay_ms: float = 0.0
+        self.delay_ewma_ms: float = 0.0
 
         # Rolling price history for returns: (wall_time, log_price)
         self._prices: deque[tuple[float, float]] = deque(maxlen=600)
@@ -97,6 +102,34 @@ class BinanceState:
 
     def completed_bars(self, before_ts: int | None = None, limit: int = 64) -> list[dict]:
         return self._bar_history.completed_bars(before_ts=before_ts, limit=limit)
+
+    def bar_open_at(self, ts: int) -> float | None:
+        """Open of the 1m bar starting at `ts` (works for any 60s-grid window
+        start, so also 5m/15m bar opens). None if we have no trade there."""
+        bar = self._bar_history._bars.get(int(ts))
+        return bar["open"] if bar else None
+
+    def ret_windowed(self, seconds: float, tol: float = 4.0) -> float | None:
+        """Log-return over the last ~`seconds` seconds, only if a sample exists
+        within ±tol of the target age (sparse tape → None, like the legacy
+        momentum sampler); ret_since() would silently shorten the window."""
+        if len(self._prices) < 2:
+            return None
+        now_t, now_lp = self._prices[-1]
+        for t, lp in reversed(self._prices):
+            if seconds - tol <= now_t - t <= seconds + tol:
+                return now_lp - lp
+            if now_t - t > seconds + tol:
+                break
+        return None
+
+    def seed_minute_bars(self, rows: list[tuple[int, float, float, float, float]]) -> None:
+        """Seed 1m OHLC history from REST klines (ts, open, high, low, close)
+        so sigma and bar opens are available immediately after a restart."""
+        for ts, o, h, l, c in rows:
+            self._bar_history._bars.setdefault(
+                int(ts), {"ts": int(ts), "open": o, "high": h, "low": l,
+                          "close": c, "volume": 0.0})
 
 
 binance_state = BinanceState()
@@ -142,6 +175,12 @@ async def run_binance_ws() -> None:
                         quantity = float(qty_str or 0.0)
                         wall_time = float(trade_ts) / 1000.0
                         binance_state._record(wall_time, price, quantity=quantity, buyer_is_maker=buyer_is_maker)
+                        delay_ms = (time.time() - wall_time) * 1000.0
+                        binance_state.last_delay_ms = delay_ms
+                        binance_state.delay_ewma_ms = (
+                            delay_ms if binance_state.delay_ewma_ms == 0.0
+                            else 0.05 * delay_ms + 0.95 * binance_state.delay_ewma_ms)
+                        tick_bus.fire("binance", wall_time)
 
                     now = time.time()
                     if now - last_heartbeat >= 30:

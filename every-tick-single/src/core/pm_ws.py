@@ -18,7 +18,9 @@ from collections import deque
 import websockets
 
 from core.btc_ws import btc_state
+from execution.tickbus import tick_bus
 from config import (
+    BAR_SECONDS,
     POLYMARKET_WS,
     WS_HEARTBEAT_SECS,
     log,
@@ -172,7 +174,7 @@ def consume_prefetched_market() -> dict | None:
     if not market:
         return None
     now = time.time()
-    if now < start_ts - 1 or now >= start_ts + 300:
+    if now < start_ts - 1 or now >= start_ts + BAR_SECONDS:
         _prefetched_market["start_ts"] = 0
         _prefetched_market["market"] = None
         return None
@@ -275,6 +277,7 @@ def _apply_top_of_book(
 
     pm_state.book_events += 1
     pm_state.last_ws_message_kind = f"{event_type}:{asset_id[:12]}"
+    tick_bus.fire("book", now)
 
     pm_state.ready = (
         pm_state.up_live
@@ -338,6 +341,7 @@ def _handle_last_trade_price(msg: dict) -> None:
         }
     )
     pm_state.last_ws_message_kind = f"last_trade_price:{asset_id[:12]}"
+    tick_bus.fire("trade_print", now)
     # Persist every print: exact fill truth for the EXPERIMENTS.md sims — a
     # hypothetical resting bid at P fills iff a print occurs at <= P on that
     # token (snapshot sampling proxies over/under-count; prints don't).

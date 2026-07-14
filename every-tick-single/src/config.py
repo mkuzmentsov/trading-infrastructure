@@ -48,6 +48,17 @@ QUOTE_NOTIONAL_USD = float(os.getenv("QUOTE_NOTIONAL_USD", "5.0"))
 QUOTE_CUTOFF_SECS = int(os.getenv("QUOTE_CUTOFF_SECS", "60"))       # cancel all, no new quotes
 QUOTE_WARMUP_SECS = int(os.getenv("QUOTE_WARMUP_SECS", "10"))       # wait after bar open
 MIN_PAIR_EDGE = float(os.getenv("MIN_PAIR_EDGE", "0.01"))           # up_q + down_q < 1 − edge
+# model mode: bid each side at fair_p(side) − QUOTE_MODEL_MARGIN (leaderboard
+# "lock accumulator" archetype — model-priced two-sided maker laddering).
+QUOTE_MODEL_MARGIN = float(os.getenv("QUOTE_MODEL_MARGIN", "0.04"))
+# model-mode v2 (2026-07-13, from the 55-bar decomposition: locked pairs +EV,
+# one-sided inventory bleeds): complete pairs aggressively, brake on violent
+# moves, and charge extra margin on the knife (against-momentum) side.
+LOCK_MOM_BRAKE_Z = float(os.getenv("LOCK_MOM_BRAKE_Z", "1.3"))       # |30s move| > z*sigma30 → pull all quotes
+LOCK_ASYM_MOM_Z = float(os.getenv("LOCK_ASYM_MOM_Z", "0.7"))         # momentum threshold for asymmetric margin
+LOCK_ASYM_EXTRA = float(os.getenv("LOCK_ASYM_EXTRA", "0.04"))        # extra margin on the trailing/knife side
+LOCK_COMPLETION_MARGIN = float(os.getenv("LOCK_COMPLETION_MARGIN", "0.01"))  # margin when completing a pair
+LOCK_PAIR_TARGET = float(os.getenv("LOCK_PAIR_TARGET", "0.96"))      # max combined cost of a completed pair
 # bracket (default): predict the side (math-signal p_up, momentum fallback),
 # rest ONE maker BUY at min(mid − halfSpread, ENTRY_PRICE_CAP); on fill place a
 # maker TP SELL at TAKE_PROFIT_PRICE and monitor a taker stop when the token's
@@ -179,14 +190,31 @@ LATE_ENTRY_EDGE_DISCOUNT = float(os.getenv("LATE_ENTRY_EDGE_DISCOUNT", "0.30"))
 # binance_state, so binance_price / price_divergence / best_price transparently
 # use whichever source is selected.
 PRICE_LEAD_SOURCE = os.getenv("PRICE_LEAD_SOURCE", "binance").strip().lower()
-BINANCE_WS_URL = os.getenv("BINANCE_WS_URL", "wss://stream.binance.com:9443/ws/btcusdt@aggTrade")
+# empty env → derive the stream from COIN so per-coin bots need no explicit URL
+BINANCE_WS_URL = (os.getenv("BINANCE_WS_URL", "").strip()
+                  or f"wss://stream.binance.com:9443/ws/{COIN}usdt@aggTrade")
 BINANCE_STALE_SECS = float(os.getenv("BINANCE_STALE_SECS", "5.0"))
+
+# ── Market shape / fast execution ─────────────────────────────────────────────
+# BAR_SECONDS: UpDown market bar length (300=5m, 900=15m). Slugs, windows and
+# settlement all derive from it.
+BAR_SECONDS = int(os.getenv("BAR_SECONDS", "300"))
+# FAST_EXEC: event-driven WS-fed evaluation + prewarm/presign order path
+# (execution/ package). false → legacy REST polling loop.
+FAST_EXEC = os.getenv("FAST_EXEC", "true").strip().lower() in ("true", "1", "yes")
+# keep the shared httpx connection to the CLOB warm (idle conns get dropped by
+# the edge; a cold reconnect costs ~180ms DNS+TLS on the order path)
+CLOB_KEEPALIVE_SECS = float(os.getenv("CLOB_KEEPALIVE_SECS", "25"))
 
 # ── Hold-to-expiry strategy ─────────────────────────────────────────────────
 HOLD_TO_EXPIRY_DEFAULT = os.getenv("HOLD_TO_EXPIRY_DEFAULT", "true").lower() == "true"
 # ── Position management ───────────────────────────────────────────────────────
 EVAL_INTERVAL_MS = max(1, int(float(os.getenv("EVAL_INTERVAL_MS", "5000"))))
 EVAL_INTERVAL_SECS = EVAL_INTERVAL_MS / 1000.0
+# FAST_EXEC wake floor: ticks can wake the eval loop this soon after the last
+# tick (instead of waiting the full EVAL_INTERVAL); caps CPU on busy tapes.
+EVAL_MIN_GAP_MS = max(1, int(float(os.getenv("EVAL_MIN_GAP_MS", "50"))))
+EVAL_MIN_GAP_SECS = EVAL_MIN_GAP_MS / 1000.0
 TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.15"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.08"))
 MIN_EXIT_BID = float(os.getenv("MIN_EXIT_BID", "0.03"))
@@ -264,7 +292,7 @@ def _validate() -> None:
     if MAX_FILLS_PER_BAR < 1:
         _die(f"MAX_FILLS_PER_BAR={MAX_FILLS_PER_BAR} must be >= 1")
     for name, val, allowed in (
-        ("QUOTE_MODE", QUOTE_MODE, {"bracket", "one_sided", "two_sided"}),
+        ("QUOTE_MODE", QUOTE_MODE, {"bracket", "one_sided", "two_sided", "model"}),
         ("BRACKET_SIDES", BRACKET_SIDES, {"one", "both"}),
         ("BRACKET_SIDE_RULE", BRACKET_SIDE_RULE, {"alternate", "signal"}),
         ("ENTRY_STYLE", ENTRY_STYLE, {"fixed", "chase"}),

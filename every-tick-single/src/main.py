@@ -55,6 +55,9 @@ from config import (
     ENTRY_REPLACE_MIN_AGE_SECS,
     EVAL_INTERVAL_MS,
     EVAL_INTERVAL_SECS,
+    EVAL_MIN_GAP_SECS,
+    FAST_EXEC,
+    CLOB_KEEPALIVE_SECS,
     FEED_STALE_SECS,
     HOLD_TO_EXPIRY_DEFAULT,
     LIVE_MAX_DAILY_LOSS_USD,
@@ -94,6 +97,7 @@ from config import (
 )
 from engine.live_book import ClobAdapter, live_book
 from engine.paper_book import paper_book
+from execution.tickbus import tick_bus
 from core.pm_ws import (
     apply_prefetched_market_now,
     enable_external_market_apply,
@@ -823,6 +827,39 @@ async def _prewarm_ctf_approvals(clob) -> None:
     for token_id in (pm_state.token_id_up, pm_state.token_id_down):
         if token_id and token_id not in _approved_ctf_tokens:
             await _ensure_ctf_approval_for_token(clob, token_id)
+
+
+async def _prewarm_order_caches(clob) -> None:
+    """New market: pull tick-size + neg-risk into py_clob_client's caches NOW,
+    so the FIRST create_order of the bar signs in ~10ms instead of ~300ms
+    (measured, latency/LATENCY_BASELINE.md)."""
+    if DRY_RUN or not clob:
+        return
+    t0 = time.time()
+    for token_id in (pm_state.token_id_up, pm_state.token_id_down):
+        if not token_id:
+            continue
+        try:
+            await asyncio.to_thread(clob.get_tick_size, token_id)
+            await asyncio.to_thread(clob.get_neg_risk, token_id)
+        except Exception as exc:
+            log.debug("order-cache prewarm %s: %s", token_id[:16], exc)
+    log.info("Order caches prewarmed in %.0fms", (time.time() - t0) * 1000.0)
+
+
+async def _clob_keepalive(clob) -> None:
+    """Keep the shared httpx connection to the CLOB warm; a cold reconnect
+    costs ~180ms (DNS+TLS) on the next order POST."""
+    while True:
+        await asyncio.sleep(CLOB_KEEPALIVE_SECS)
+        try:
+            t0 = time.time()
+            await asyncio.to_thread(clob.get_server_time)
+            ms = (time.time() - t0) * 1000.0
+            if ms > 200:
+                log.info("CLOB keepalive slow: %.0fms (session went cold?)", ms)
+        except Exception as exc:
+            log.warning("CLOB keepalive failed: %s", exc)
 
 
 def _current_entry_ask(direction: str) -> float:
@@ -2227,6 +2264,7 @@ async def main() -> None:
                 enable_external_market_apply()
                 asyncio.create_task(_maker_roll_watcher(), name="maker_roll_watcher")
                 asyncio.create_task(_live_fill_pump(), name="live_fill_pump")
+                asyncio.create_task(_clob_keepalive(clob), name="clob_keepalive")
                 log.info(
                     "LIVE maker wired  clob adapter set, roll watcher (T−%ds pre-discovery + "
                     "bar-roll immediate entry) + 0.5s fill pump started",
@@ -2247,6 +2285,10 @@ async def main() -> None:
                     _prewarm_ctf_approvals(clob),
                     name="ctf_prewarm",
                 )
+                asyncio.create_task(
+                    _prewarm_order_caches(clob),
+                    name="order_cache_prewarm",
+                )
             await _tick(clob)
         except Exception as exc:
             log.exception("Tick error: %s", exc)
@@ -2265,16 +2307,30 @@ async def main() -> None:
             for key in stale_reason_keys:
                 _last_exit_reason_by_dir.pop(key, None)
 
+        # FAST_EXEC: any feed event (binance trade / book update / trade print)
+        # can wake the loop after a small floor gap, so reaction latency is
+        # bounded by EVAL_MIN_GAP_SECS instead of the full eval interval.
         elapsed = time.time() - tick_start
-        remaining = max(0, EVAL_INTERVAL_SECS - elapsed)
-        if remaining > 0 and _retry_now_event is not None:
-            try:
-                await asyncio.wait_for(_retry_now_event.wait(), timeout=remaining)
-            except asyncio.TimeoutError:
-                pass
-            _retry_now_event.clear()
-        elif remaining > 0:
-            await asyncio.sleep(remaining)
+        gap = max(0.0, EVAL_MIN_GAP_SECS - elapsed)
+        if gap > 0:
+            await asyncio.sleep(gap)
+        remaining = max(0.0, EVAL_INTERVAL_SECS - (time.time() - tick_start))
+        if remaining > 0:
+            waiters = []
+            if _retry_now_event is not None:
+                waiters.append(asyncio.ensure_future(_retry_now_event.wait()))
+            if FAST_EXEC:
+                waiters.append(asyncio.ensure_future(tick_bus.wait(remaining)))
+            if waiters:
+                await asyncio.wait(waiters, timeout=remaining,
+                                   return_when=asyncio.FIRST_COMPLETED)
+                for w in waiters:
+                    if not w.done():
+                        w.cancel()
+                if _retry_now_event is not None and _retry_now_event.is_set():
+                    _retry_now_event.clear()
+            else:
+                await asyncio.sleep(remaining)
 
 
 if __name__ == "__main__":
