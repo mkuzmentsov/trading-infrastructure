@@ -164,22 +164,36 @@ async def run_binance_ws() -> None:
                     except json.JSONDecodeError:
                         continue
 
-                    # aggTrade message format:
-                    # {"e":"aggTrade","s":"BTCUSDT","p":"84532.10","T":1713200000000,...}
-                    price_str = msg.get("p")
-                    qty_str = msg.get("q")
-                    buyer_is_maker = msg.get("m")
-                    trade_ts = msg.get("T")  # ms
-                    if price_str and trade_ts:
-                        price = float(price_str)
-                        quantity = float(qty_str or 0.0)
-                        wall_time = float(trade_ts) / 1000.0
+                    # aggTrade: {"e":"aggTrade","p":"84532.10","q":"0.1","T":ms,...}
+                    # bookTicker (futures fstream): {"e":"bookTicker","b":bid,
+                    #   "a":ask,"T":tx_ms,"E":event_ms,...} — denser than trade
+                    # prints and futures lead spot discovery; price = BBO mid.
+                    # (spot bookTicker has no T/E — falls back to local clock,
+                    # delivery delay then unmeasurable but windowing still works)
+                    price = None
+                    quantity = 0.0
+                    buyer_is_maker = None
+                    if msg.get("p") is not None:                     # trade print
+                        price = float(msg["p"])
+                        quantity = float(msg.get("q") or 0.0)
+                        buyer_is_maker = msg.get("m")
+                        ts_ms = msg.get("T")
+                    elif msg.get("b") is not None and msg.get("a") is not None:
+                        bid, ask = float(msg["b"]), float(msg["a"])
+                        if bid > 0 and ask > 0:
+                            price = (bid + ask) / 2.0
+                        ts_ms = msg.get("T") or msg.get("E")
+                    else:
+                        ts_ms = None
+                    if price:
+                        wall_time = float(ts_ms) / 1000.0 if ts_ms else time.time()
                         binance_state._record(wall_time, price, quantity=quantity, buyer_is_maker=buyer_is_maker)
-                        delay_ms = (time.time() - wall_time) * 1000.0
-                        binance_state.last_delay_ms = delay_ms
-                        binance_state.delay_ewma_ms = (
-                            delay_ms if binance_state.delay_ewma_ms == 0.0
-                            else 0.05 * delay_ms + 0.95 * binance_state.delay_ewma_ms)
+                        if ts_ms:
+                            delay_ms = (time.time() - wall_time) * 1000.0
+                            binance_state.last_delay_ms = delay_ms
+                            binance_state.delay_ewma_ms = (
+                                delay_ms if binance_state.delay_ewma_ms == 0.0
+                                else 0.05 * delay_ms + 0.95 * binance_state.delay_ewma_ms)
                         tick_bus.fire("binance", wall_time)
 
                     now = time.time()

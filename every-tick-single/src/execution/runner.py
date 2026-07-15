@@ -127,10 +127,19 @@ class TakerRunner:
     # ── startup seed (one REST call, off the hot path) ───────────────────────
     def _seed_history(self) -> None:
         sym = f"{COIN.upper()}USDT"
-        for base in ("https://api.binance.com", "https://data-api.binance.vision"):
+        # futures feed (fstream bookTicker mid) → seed from futures klines so
+        # bar_open/sigma share the feed's basis; spot seed would shift lead by
+        # the perp premium (a few bps — enough to matter vs the 4bps floor)
+        from config import BINANCE_WS_URL
+        if "fstream" in BINANCE_WS_URL:
+            paths = [("https://fapi.binance.com", "/fapi/v1/klines")]
+        else:
+            paths = [("https://api.binance.com", "/api/v3/klines"),
+                     ("https://data-api.binance.vision", "/api/v3/klines")]
+        for base, kpath in paths:
             try:
                 req = urllib.request.Request(
-                    f"{base}/api/v3/klines?symbol={sym}&interval=1m&limit=60",
+                    f"{base}{kpath}?symbol={sym}&interval=1m&limit=60",
                     headers={"User-Agent": "Mozilla/5.0"})
                 raw = json.loads(urllib.request.urlopen(req, timeout=10).read())
                 binance_state.seed_minute_bars(
