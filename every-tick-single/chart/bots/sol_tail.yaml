@@ -1,15 +1,15 @@
-# bnb-tail — late-bar extremes sniper (PAPER). Leaderboard archetype 0xee65685d
-# ($13.3k/wk, heavy on BNB where books are weakest): in the last ~30s, buy the
+# btc-tail — late-bar extremes sniper (PAPER). Leaderboard archetype 0xee65685d
+# ($13.3k/wk, btc leg of the archetype): in the last ~30s, buy the
 # "dead" side at 0.01-0.08 when the model says it is still alive (net edge
 # >= 5c). Knife-edge bars are the target -> favMinLeadBps=0 (no lead floor).
 # Fires on the UNDERDOG side (both-sides pocket evaluation in fav_taker).
-# Install: helm upgrade --install bnb-tail-every-tick-single ./chart \
-#   -f chart/bots/bnb_tail.yaml -n every-tick-single
-botName: bnb-tail
+# Install: helm upgrade --install btc-tail-every-tick-single ./chart \
+#   -f chart/bots/btc_tail.yaml -n every-tick-single
+botName: sol-tail
 
 bot:
   entrypoint: "fav_taker.py"
-  coin: "bnb"
+  coin: "sol"
   paperMode: "true"
   dryRun: "true"
   liveTrading: "false"

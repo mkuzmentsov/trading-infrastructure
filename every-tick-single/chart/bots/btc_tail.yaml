@@ -14,7 +14,7 @@ bot:
   dryRun: "true"
   liveTrading: "false"
   liveMaxOrderUsd: "5"
-  liveMaxDailyLossUsd: "25"
+  liveMaxDailyLossUsd: "99999"
   quoteNotionalUsd: "5"
   loopIntervalSecs: "300"
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"

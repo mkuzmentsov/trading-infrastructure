@@ -1,0 +1,31 @@
+# btc-mom — mid-bar MOMENTUM favorite taker (antsaslyku archetype, PAPER).
+# Buys the current favorite at 0.50-0.70 from ~30s into the bar when the model
+# edge clears fees AND the last-30s move is aligned-but-calm (0.2<=mom_z<=1.3).
+# Install: helm upgrade --install btc-mom-every-tick-single ./chart \
+#   -f chart/bots/btc_mom.yaml -n every-tick-single
+botName: bnb-mom
+
+bot:
+  entrypoint: "fav_taker.py"
+  coin: "bnb"
+  # PAPER by default — real orders need liveTrading=true + dryRun=false (overlay)
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  # caps
+  liveMaxOrderUsd: "5"
+  liveMaxDailyLossUsd: "50"
+  quoteNotionalUsd: "5"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  # decision gates (env -> fav_taker.py); tune during testing
+  favMinPrice: "0.80"
+  favMaxPrice: "0.94"
+  favMinTrue: "0.90"
+  favMinEdge: "0.03"
+  favMinTleft: "15"
+  favMaxTleft: "180"
+  favMinLeadBps: "4"
+  favPockets: '[{"p_lo": 0.5, "p_hi": 0.7, "tl_lo": 60, "tl_hi": 270, "edge": 0.03, "true": 0.0, "mom": 1}]'
+  favTakerFeeRate: "0.10"
+
