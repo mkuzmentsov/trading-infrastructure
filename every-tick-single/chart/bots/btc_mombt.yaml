@@ -28,5 +28,3 @@ bot:
   favPockets: '[{"p_lo": 0.5, "p_hi": 0.7, "tl_lo": 60, "tl_hi": 270, "edge": 0.03, "true": 0.0, "mom": 1}]'
   favTakerFeeRate: "0.10"
 
-persistence:
-  enabled: false

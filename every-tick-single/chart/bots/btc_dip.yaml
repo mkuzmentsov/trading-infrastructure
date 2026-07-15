@@ -35,5 +35,3 @@ bot:
   binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
   polymarketRtdsSymbol: "btc/usd"
 
-persistence:
-  enabled: false

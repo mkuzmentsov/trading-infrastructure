@@ -22,5 +22,3 @@ bot:
   favMinLeadBps: "0"
   favTakerFeeRate: "0.10"
 
-persistence:
-  enabled: false

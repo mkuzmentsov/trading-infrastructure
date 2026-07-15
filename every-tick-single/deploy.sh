@@ -20,7 +20,9 @@ COINS=("$@")
 
 kubectl get ns every-tick-single >/dev/null 2>&1 || kubectl create ns every-tick-single
 
-rsync -a --delete \
+# --copy-links: src/execution is a symlink into ../pm-common (shared modules);
+# the chart ConfigMap must ship real files, not the link.
+rsync -a --copy-links --delete \
   --exclude '__pycache__' --exclude 'test_*.py' --exclude '_user_ws_listen.py' \
   --include '*/' --include '*.py' --exclude '*' \
   src/ chart/files/scripts/

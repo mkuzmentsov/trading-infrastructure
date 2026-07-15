@@ -92,15 +92,13 @@ _BINANCE = ["https://api.binance.com", "https://data-api.binance.vision"]
 _real = LIVE_TRADING and not DRY_RUN
 
 
+from execution.events import EventLog
+
+_event_log = EventLog(TRAINING_EVENT_LOG_PATH)
+
+
 def _event(ev: str, **kw):
-    rec = {"ev": ev, "t": round(time.time(), 2), "coin": COIN, **kw}
-    log.info("%s  %s", ev, " ".join(f"{k}={v}" for k, v in kw.items()))
-    if TRAINING_EVENT_LOG_PATH:
-        try:
-            with open(TRAINING_EVENT_LOG_PATH, "a") as f:
-                f.write(json.dumps(rec) + "\n")
-        except Exception:
-            pass
+    _event_log.write(ev, coin=COIN, **kw)
 
 
 def _http(url: str):
