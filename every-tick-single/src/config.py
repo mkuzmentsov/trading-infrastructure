@@ -59,6 +59,10 @@ LOCK_ASYM_MOM_Z = float(os.getenv("LOCK_ASYM_MOM_Z", "0.7"))         # momentum 
 LOCK_ASYM_EXTRA = float(os.getenv("LOCK_ASYM_EXTRA", "0.04"))        # extra margin on the trailing/knife side
 LOCK_COMPLETION_MARGIN = float(os.getenv("LOCK_COMPLETION_MARGIN", "0.01"))  # margin when completing a pair
 LOCK_PAIR_TARGET = float(os.getenv("LOCK_PAIR_TARGET", "0.96"))      # max combined cost of a completed pair
+# v3: stop quoting the heavy side once unmatched one-sided inventory reaches
+# this many shares (the directional leg swings ±$300/day while locked pairs
+# print steadily — cap the noisy leg, keep the completion chase running).
+LOCK_MAX_UNMATCHED = float(os.getenv("LOCK_MAX_UNMATCHED", "10"))
 # bracket (default): predict the side (math-signal p_up, momentum fallback),
 # rest ONE maker BUY at min(mid − halfSpread, ENTRY_PRICE_CAP); on fill place a
 # maker TP SELL at TAKE_PROFIT_PRICE and monitor a taker stop when the token's

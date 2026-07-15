@@ -49,6 +49,7 @@ from config import (
     QUOTE_HALF_SPREAD,
     QUOTE_MODE,
     QUOTE_MODEL_MARGIN,
+    LOCK_MAX_UNMATCHED,
     LOCK_MOM_BRAKE_Z,
     LOCK_ASYM_MOM_Z,
     LOCK_ASYM_EXTRA,
@@ -208,6 +209,7 @@ class MakerRebateStrategy:
             up_q = min(max(p_up - m_up, QUOTE_FLOOR), QUOTE_CEIL)
             down_q = min(max((1.0 - p_up) - m_dn, QUOTE_FLOOR), QUOTE_CEIL)
             self._want_size = {}
+            self._skip_sides = set()
             book = self._quote_book
             if book is not None:
                 inv_up = book.bar_inventory("UP")
@@ -220,12 +222,17 @@ class MakerRebateStrategy:
                     if comp_q >= QUOTE_FLOOR:   # below floor → pair can't lock, keep normal quote
                         down_q = comp_q
                         self._want_size["DOWN"] = min(float(QUOTE_SIZE), unmatched)
+                    # v3: heavy side stops adding one-sided exposure at the cap
+                    if unmatched >= LOCK_MAX_UNMATCHED:
+                        self._skip_sides.add("UP")
                 elif unmatched < -1.0:     # DOWN-heavy → chase UP to complete
                     comp_q = min(p_up - LOCK_COMPLETION_MARGIN,
                                  LOCK_PAIR_TARGET - avg_cost("DOWN"), QUOTE_CEIL)
                     if comp_q >= QUOTE_FLOOR:
                         up_q = comp_q
                         self._want_size["UP"] = min(float(QUOTE_SIZE), -unmatched)
+                    if -unmatched >= LOCK_MAX_UNMATCHED:
+                        self._skip_sides.add("DOWN")
         else:
             up_q = min(max(up_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
             down_q = min(max(down_mid - QUOTE_HALF_SPREAD, QUOTE_FLOOR), QUOTE_CEIL)
@@ -260,6 +267,8 @@ class MakerRebateStrategy:
             quotes["UP"] = up_q
         if QUOTE_FLOOR <= down_q <= QUOTE_CEIL:
             quotes["DOWN"] = down_q
+        for side in getattr(self, "_skip_sides", ()):   # v3 unmatched cap
+            quotes.pop(side, None)
 
         # one_sided mode: keep exactly one quote per bar (rebate-collection
         # test — EV/share = fill_win_rate − price; see PLAN.md §2b).
