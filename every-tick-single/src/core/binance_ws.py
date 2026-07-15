@@ -77,8 +77,14 @@ class BinanceState:
         self.price_updates += 1
         self.ready = True
         lp = math.log(price)
-        if self._prices and wall_time <= self._prices[-1][0]:
-            self._prices[-1] = (wall_time, lp)
+        # bucket appends to >=0.1s spacing: the deque (maxlen 600) must span
+        # ~60s at ANY feed density — bookTicker pushes ~1.1k/s and would
+        # otherwise hold 0.5s of history, starving ret_windowed(30s) → the
+        # momentum gate reads None forever (btc-mombt bug, 2026-07-15)
+        if self._prices and wall_time - self._prices[-1][0] < 0.1:
+            # update the bucket's price but KEEP its anchor timestamp —
+            # advancing it would slide the bucket forever and never append
+            self._prices[-1] = (self._prices[-1][0], lp)
         else:
             self._prices.append((wall_time, lp))
         self._bar_history.update(wall_time, price, quantity=quantity, buyer_is_maker=buyer_is_maker)
