@@ -48,6 +48,7 @@ from config import (
     QUOTE_FLOOR,
     QUOTE_HALF_SPREAD,
     QUOTE_MODE,
+    QUOTE_FIXED_PRICE,
     QUOTE_MODEL_MARGIN,
     LOCK_MAX_UNMATCHED,
     LOCK_MOM_BRAKE_Z,
@@ -186,7 +187,14 @@ class MakerRebateStrategy:
         up_mid = (ctx.up_bid + ctx.up_ask) / 2.0
         down_mid = (ctx.down_bid + ctx.down_ask) / 2.0
 
-        if QUOTE_MODE == "model":
+        if QUOTE_MODE == "fixed":
+            # dip-catcher: rest both sides at the fixed price all bar. No
+            # momentum brake ON PURPOSE — violent moves are when the panic
+            # dump prints through 0.20, which is the entire trade.
+            self._want_size = {}
+            self._skip_sides = set()
+            up_q = down_q = QUOTE_FIXED_PRICE
+        elif QUOTE_MODE == "model":
             # model-priced two-sided quoting (leaderboard "lock accumulator"):
             # bid each side at its fair probability minus a margin, so fills
             # only come from takers crossing through fair value. v2 (measured

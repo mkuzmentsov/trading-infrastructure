@@ -213,20 +213,36 @@ class FavStrategy:
         true_up = norm_cdf(z / z_shrink(t_left))
         fav_up = true_up >= 0.5
         fav_true = true_up if fav_up else 1 - true_up
-        fav_side = "UP" if fav_up else "DOWN"
-        ask = ctx.up_ask if fav_up else ctx.down_ask
-        book_live = ctx.book_ready and 0 < ask < 1
         mom_z_up = None
         if ctx.ret_30s is not None and ctx.sigma_ps:
             mom_z_up = ctx.ret_30s / (ctx.sigma_ps * math.sqrt(30.0))
-        mom_fav = None if mom_z_up is None else (mom_z_up if fav_up else -mom_z_up)
 
+        # evaluate BOTH sides, favorite first: fav/mom pockets (p_lo >= ~0.5)
+        # only ever match the favorite; tail pockets (p_hi <= ~0.1) only match
+        # the underdog when its ask lags the model's residual probability.
         pocket = None
-        edge = None
-        if book_live and abs(lead) * 1e4 >= MIN_LEAD_BPS:
-            edge = fav_true - ask - taker_fee_ps(ask)
-            self.best_seen[ctx.ws] = max(self.best_seen.get(ctx.ws, -1), edge)
-            pocket = pocket_match(ask, t_left, edge, fav_true, mom_fav)
+        fav_side, ask, edge, fav_true_out, mom_fav = "UP", 1.0, None, fav_true, None
+        sides = [("UP", true_up), ("DOWN", 1 - true_up)]
+        sides.sort(key=lambda s: -s[1])
+        for side, side_true in sides:
+            s_ask = ctx.up_ask if side == "UP" else ctx.down_ask
+            if not (ctx.book_ready and 0 < s_ask < 1):
+                continue
+            if MIN_LEAD_BPS and abs(lead) * 1e4 < MIN_LEAD_BPS:
+                continue
+            s_edge = side_true - s_ask - taker_fee_ps(s_ask)
+            s_mom = None if mom_z_up is None else (mom_z_up if side == "UP" else -mom_z_up)
+            if side_true >= 0.5:
+                self.best_seen[ctx.ws] = max(self.best_seen.get(ctx.ws, -1), s_edge)
+            pk = pocket_match(s_ask, t_left, s_edge, side_true, s_mom)
+            if pk is not None:
+                pocket, fav_side, ask, edge = pk, side, s_ask, s_edge
+                fav_true_out, mom_fav = side_true, s_mom
+                break
+            if side_true >= 0.5:      # keep favorite values for NOBET telemetry
+                fav_side, ask, edge, fav_true_out, mom_fav = side, s_ask, s_edge, side_true, s_mom
+        fav_true = fav_true_out
+        fav_up = fav_side == "UP"
 
         if pocket is not None:
             pk = POCKETS[pocket]

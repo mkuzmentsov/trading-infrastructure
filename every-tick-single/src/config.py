@@ -73,6 +73,10 @@ LOCK_MAX_UNMATCHED = float(os.getenv("LOCK_MAX_UNMATCHED", "10"))
 # rebate margin of the fill price (EV/share = q − p; see PLAN.md).
 # two_sided: quote both tokens with the pair-lock constraint (backlog: A/B test).
 QUOTE_MODE = os.getenv("QUOTE_MODE", "bracket").strip().lower()
+# fixed mode: rest bids on BOTH sides at exactly QUOTE_FIXED_PRICE all bar —
+# the 0.20 dip-catcher archetype (leaderboard 0xb29e5247, $12.6k/wk): no
+# model, no brake; fee-free maker catching panic dumps that recover, 5:1.
+QUOTE_FIXED_PRICE = float(os.getenv("QUOTE_FIXED_PRICE", "0.20"))
 ENTRY_PRICE_CAP = float(os.getenv("ENTRY_PRICE_CAP", "0.50"))       # bracket: never bid above (≤50c = max rebate weight)
 # fixed (default since 2026-07-03): rest the entry AT ENTRY_PRICE_CAP (clamped
 # to ask − tick if that would cross — always maker, never taker) and leave it
@@ -296,7 +300,7 @@ def _validate() -> None:
     if MAX_FILLS_PER_BAR < 1:
         _die(f"MAX_FILLS_PER_BAR={MAX_FILLS_PER_BAR} must be >= 1")
     for name, val, allowed in (
-        ("QUOTE_MODE", QUOTE_MODE, {"bracket", "one_sided", "two_sided", "model"}),
+        ("QUOTE_MODE", QUOTE_MODE, {"bracket", "one_sided", "two_sided", "model", "fixed"}),
         ("BRACKET_SIDES", BRACKET_SIDES, {"one", "both"}),
         ("BRACKET_SIDE_RULE", BRACKET_SIDE_RULE, {"alternate", "signal"}),
         ("ENTRY_STYLE", ENTRY_STYLE, {"fixed", "chase"}),
