@@ -274,6 +274,7 @@ class FavStrategy:
             # price improvement returns more shares at a lower avg than quoted)
             fill_px = avg_px if avg_px else ask
             self.open_bets[ctx.ws] = {"side": fav_side, "token": fav_token, "entry": ask,
+                                      "cap": pk["p_hi"],
                                       "fill_px": fill_px, "fill_qty": fill_qty,
                                       "fav_true": round(fav_true, 4), "shares": shares,
                                       "order_id": order_id}
@@ -314,7 +315,8 @@ class FavStrategy:
                     if oc is None:
                         continue
                     filled = bet.get("fill_qty") or bet["shares"]
-                    if _real and bet["order_id"] and not bet.get("fill_qty"):
+                    _gtc = os.getenv("FAV_ORDER_TYPE", "fak").lower() == "gtc"
+                    if _real and bet["order_id"] and (_gtc or not bet.get("fill_qty")):
                         try:
                             from engine.clob import fetch_order_status
                             st = await asyncio.to_thread(
@@ -324,7 +326,10 @@ class FavStrategy:
                             log.debug("settle status: %s", exc)
                     px = bet.get("fill_px", bet["entry"])
                     won = (oc and bet["side"] == "UP") or ((not oc) and bet["side"] == "DOWN")
-                    pnl = filled * ((1.0 if won else 0.0) - px - taker_fee_ps(px))
+                    crossed = min(filled, bet.get("fill_qty") or filled)
+                    resting = max(0.0, filled - crossed)   # late GTC maker fills: cap price, NO fee
+                    pnl = (crossed * ((1.0 if won else 0.0) - px - taker_fee_ps(px))
+                           + resting * ((1.0 if won else 0.0) - bet.get("cap", px)))
                     self.day_pnl[today] = self.day_pnl.get(today, 0.0) + pnl
                     _event("FAV_BET_SETTLE", bar=t, side=bet["side"], entry=bet["entry"],
                            fill_px=round(px, 4), fav_true=bet["fav_true"],

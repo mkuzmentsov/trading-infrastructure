@@ -17,6 +17,7 @@ events (EXEC_*) are emitted in both modes so paper/live compare directly.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Callable, Optional
 
@@ -30,6 +31,9 @@ class FastExec:
         self._presigned: dict[str, object] = {}    # key -> signed order
         self._prewarmed: set[str] = set()          # token_ids with warm caches
         self._log_event = event_logger or (lambda ev, **kw: None)
+        # fak = immediate-or-kill; gtc = marketable GTC (remainder RESTS as
+        # fee-free maker until resolution — never cancelled by design)
+        self.order_type = os.getenv("FAV_ORDER_TYPE", "fak").lower()
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -121,11 +125,11 @@ class FastExec:
             return None, False, 0.0, None, None
         if not self.live:
             return f"paper-{key}", True, 0.0, None, None
-        from engine.clob import post_signed_buy_fak
+        from engine.clob import post_signed_buy
         loop = asyncio.get_running_loop()
         t0 = time.time()
         order_id, matched, avg_px, filled = await loop.run_in_executor(
-            None, lambda: post_signed_buy_fak(self._clob, signed))
+            None, lambda: post_signed_buy(self._clob, signed, self.order_type))
         return order_id, matched, (time.time() - t0) * 1000.0, avg_px, filled
 
     async def fire_direct(self, token_id: str, price: float, size: float,
@@ -134,12 +138,12 @@ class FastExec:
         Returns (order_id, matched, sign_ms, post_ms, avg_fill_px, filled_shares)."""
         if not self.live:
             return f"paper-direct-{int(time.time())}", True, 0.0, 0.0, None, None
-        from engine.clob import post_signed_buy_fak, sign_buy_order
+        from engine.clob import post_signed_buy, sign_buy_order
         loop = asyncio.get_running_loop()
         t0 = time.time()
         signed = await loop.run_in_executor(
             None, lambda: sign_buy_order(self._clob, token_id, size, price))
         t1 = time.time()
         order_id, matched, avg_px, filled = await loop.run_in_executor(
-            None, lambda: post_signed_buy_fak(self._clob, signed))
+            None, lambda: post_signed_buy(self._clob, signed, self.order_type))
         return order_id, matched, (t1 - t0) * 1000.0, (time.time() - t1) * 1000.0, avg_px, filled

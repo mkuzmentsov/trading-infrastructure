@@ -25,3 +25,5 @@ bot:
   favPockets: '[{"p_lo": 0.01, "p_hi": 0.10, "tl_lo": 5, "tl_hi": 30, "edge": 0.05, "true": 0.0, "mom": 0}]'
   favMinLeadBps: "0"
   favTakerFeeRate: "0.10"
+  # GTC experiment: marketable GTC — remainder rests as fee-free maker (overnight test)
+  favOrderType: "gtc"

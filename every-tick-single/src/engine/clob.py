@@ -170,7 +170,7 @@ def sign_buy_order(
     return signed
 
 
-def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool, Optional[float], Optional[float]]:
+def post_signed_buy(clob, signed, order_type: str = "FAK") -> tuple[Optional[str], bool, Optional[float], Optional[float]]:
     """Returns (order_id, matched, avg_fill_price, filled_shares).
 
     FAK fills are DOLLAR-capped (makerAmount fixed at sign time): with price
@@ -181,8 +181,9 @@ def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool, Optional[flo
     from py_clob_client_v2 import OrderType
 
     try:
-        resp = clob.post_order(signed, OrderType.FAK)
-        log.info("CLOB post_order BUY FAK RESPONSE  %s", resp)
+        ot = OrderType.GTC if str(order_type).upper() == "GTC" else OrderType.FAK
+        resp = clob.post_order(signed, ot)
+        log.info("CLOB post_order BUY %s RESPONSE  %s", ot, resp)
         order_id = resp.get("orderID") or resp.get("order_id") or None
         is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
         try:
@@ -197,6 +198,10 @@ def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool, Optional[flo
             raise
         log.error("Market buy failed: %s", exc)
         return None, False, None, None
+
+
+def post_signed_buy_fak(clob, signed):
+    return post_signed_buy(clob, signed, "FAK")
 
 
 def place_market_buy(
