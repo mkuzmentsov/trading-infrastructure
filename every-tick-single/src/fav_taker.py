@@ -251,21 +251,28 @@ class FavStrategy:
             presigned = self.runner.exec.has_presigned(key)
             err = ""
             if presigned:
-                order_id, matched, post_ms = await self.runner.exec.fire_presigned(key)
+                order_id, matched, post_ms, avg_px, fill_qty = \
+                    await self.runner.exec.fire_presigned(key)
                 sign_ms = 0.0
             else:
                 try:
-                    order_id, matched, sign_ms, post_ms = await self.runner.exec.fire_direct(
-                        fav_token, pk["p_hi"], shares)
+                    order_id, matched, sign_ms, post_ms, avg_px, fill_qty = \
+                        await self.runner.exec.fire_direct(fav_token, pk["p_hi"], shares)
                 except Exception as exc:
-                    order_id, matched, sign_ms, post_ms = None, False, 0.0, 0.0
+                    order_id, matched, sign_ms, post_ms, avg_px, fill_qty = \
+                        None, False, 0.0, 0.0, None, None
                     err = str(exc)[:200]
+            # live: settle on ACTUAL avg fill price/size (FAK is dollar-capped;
+            # price improvement returns more shares at a lower avg than quoted)
+            fill_px = avg_px if avg_px else ask
             self.open_bets[ctx.ws] = {"side": fav_side, "token": fav_token, "entry": ask,
+                                      "fill_px": fill_px, "fill_qty": fill_qty,
                                       "fav_true": round(fav_true, 4), "shares": shares,
                                       "order_id": order_id}
             self.acted.add(ctx.ws)
             signal_age_ms = (t_decide - ctx.signal_ts) * 1000.0 if ctx.signal_ts else -1
             _event("FAV_BET_PLACED", bar=ctx.ws, side=fav_side, entry=round(ask, 4),
+                   fill_px=round(fill_px, 4), fill_qty=None if fill_qty is None else round(fill_qty, 2),
                    fav_true=round(fav_true, 4), edge=round(edge, 4),
                    lead_bps=round(lead * 1e4, 1), t_left=int(t_left),
                    mom_z=None if mom_fav is None else round(mom_fav, 2), pocket=pocket,
@@ -298,8 +305,8 @@ class FavStrategy:
                     oc = await asyncio.to_thread(outcome_up, t)
                     if oc is None:
                         continue
-                    filled = bet["shares"]
-                    if _real and bet["order_id"]:
+                    filled = bet.get("fill_qty") or bet["shares"]
+                    if _real and bet["order_id"] and not bet.get("fill_qty"):
                         try:
                             from engine.clob import fetch_order_status
                             st = await asyncio.to_thread(
@@ -307,11 +314,13 @@ class FavStrategy:
                             filled = float(st.get("size_matched", st.get("matched", bet["shares"])) or 0)
                         except Exception as exc:
                             log.debug("settle status: %s", exc)
+                    px = bet.get("fill_px", bet["entry"])
                     won = (oc and bet["side"] == "UP") or ((not oc) and bet["side"] == "DOWN")
-                    pnl = filled * ((1.0 if won else 0.0) - bet["entry"] - taker_fee_ps(bet["entry"]))
+                    pnl = filled * ((1.0 if won else 0.0) - px - taker_fee_ps(px))
                     self.day_pnl[today] = self.day_pnl.get(today, 0.0) + pnl
                     _event("FAV_BET_SETTLE", bar=t, side=bet["side"], entry=bet["entry"],
-                           fav_true=bet["fav_true"], outcome="UP" if oc else "DOWN",
+                           fill_px=round(px, 4), fav_true=bet["fav_true"],
+                           outcome="UP" if oc else "DOWN",
                            filled=round(filled, 2), won=won, pnl=round(pnl, 4),
                            day_pnl=round(self.day_pnl[today], 4), live=_real)
                     self.settled.add(t)
@@ -486,7 +495,7 @@ def main_legacy():
                     if _real:
                         try:
                             from engine.clob import place_market_buy
-                            order_id, matched = place_market_buy(clob, fav_token, float(shares), pk["p_hi"], cond)
+                            order_id, matched, *_ = place_market_buy(clob, fav_token, float(shares), pk["p_hi"], cond)
                         except Exception as exc:
                             err = str(exc)[:200]
                     else:

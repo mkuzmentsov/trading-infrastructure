@@ -113,32 +113,33 @@ class FastExec:
         return key in self._presigned
 
     # ── the hot path ─────────────────────────────────────────────────────────
-    async def fire_presigned(self, key: str) -> tuple[Optional[str], bool, float]:
-        """POST the presigned order. Returns (order_id, matched, post_ms)."""
+    async def fire_presigned(self, key: str) -> tuple[Optional[str], bool, float, Optional[float], Optional[float]]:
+        """POST the presigned order.
+        Returns (order_id, matched, post_ms, avg_fill_px, filled_shares)."""
         signed = self._presigned.pop(key, None)
         if signed is None:
-            return None, False, 0.0
+            return None, False, 0.0, None, None
         if not self.live:
-            return f"paper-{key}", True, 0.0
+            return f"paper-{key}", True, 0.0, None, None
         from engine.clob import post_signed_buy_fak
         loop = asyncio.get_running_loop()
         t0 = time.time()
-        order_id, matched = await loop.run_in_executor(
+        order_id, matched, avg_px, filled = await loop.run_in_executor(
             None, lambda: post_signed_buy_fak(self._clob, signed))
-        return order_id, matched, (time.time() - t0) * 1000.0
+        return order_id, matched, (time.time() - t0) * 1000.0, avg_px, filled
 
     async def fire_direct(self, token_id: str, price: float, size: float,
-                          ) -> tuple[Optional[str], bool, float, float]:
+                          ) -> tuple[Optional[str], bool, float, float, Optional[float], Optional[float]]:
         """Sign+POST now (fallback when no presigned order matches).
-        Returns (order_id, matched, sign_ms, post_ms)."""
+        Returns (order_id, matched, sign_ms, post_ms, avg_fill_px, filled_shares)."""
         if not self.live:
-            return f"paper-direct-{int(time.time())}", True, 0.0, 0.0
+            return f"paper-direct-{int(time.time())}", True, 0.0, 0.0, None, None
         from engine.clob import post_signed_buy_fak, sign_buy_order
         loop = asyncio.get_running_loop()
         t0 = time.time()
         signed = await loop.run_in_executor(
             None, lambda: sign_buy_order(self._clob, token_id, size, price))
         t1 = time.time()
-        order_id, matched = await loop.run_in_executor(
+        order_id, matched, avg_px, filled = await loop.run_in_executor(
             None, lambda: post_signed_buy_fak(self._clob, signed))
-        return order_id, matched, (t1 - t0) * 1000.0, (time.time() - t1) * 1000.0
+        return order_id, matched, (t1 - t0) * 1000.0, (time.time() - t1) * 1000.0, avg_px, filled

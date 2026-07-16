@@ -1877,7 +1877,7 @@ async def _try_enter(clob, balance: float) -> None:
                     log.error("Order signing failed: %s", exc)
                 _entry_confirmation["count"] = 0
                 return
-            order_id, is_matched = await asyncio.to_thread(post_signed_buy_fak, clob, signed)
+            order_id, is_matched, *_ = await asyncio.to_thread(post_signed_buy_fak, clob, signed)
         else:
             order_id = await asyncio.to_thread(
                 place_bet, clob, token_id, entry_size, entry_price, pm_state.condition_id, pm_state.taker_fee

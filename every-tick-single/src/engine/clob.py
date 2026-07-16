@@ -170,7 +170,14 @@ def sign_buy_order(
     return signed
 
 
-def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool]:
+def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool, Optional[float], Optional[float]]:
+    """Returns (order_id, matched, avg_fill_price, filled_shares).
+
+    FAK fills are DOLLAR-capped (makerAmount fixed at sign time): with price
+    improvement the venue returns MORE shares than requested at a lower avg
+    price. takingAmount/makingAmount in the response are the fill truth —
+    settling on the quoted ask misprices every improved fill (measured live
+    2026-07-16: 230 shares @ ~2.1c avg on a 62-share 5c-quoted order)."""
     from py_clob_client_v2 import OrderType
 
     try:
@@ -178,12 +185,18 @@ def post_signed_buy_fak(clob, signed) -> tuple[Optional[str], bool]:
         log.info("CLOB post_order BUY FAK RESPONSE  %s", resp)
         order_id = resp.get("orderID") or resp.get("order_id") or None
         is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
-        return order_id, is_matched
+        try:
+            taking = float(resp.get("takingAmount") or 0)
+            making = float(resp.get("makingAmount") or 0)
+        except (TypeError, ValueError):
+            taking = making = 0.0
+        avg_px = (making / taking) if taking > 0 and making > 0 else None
+        return order_id, is_matched, avg_px, (taking if taking > 0 else None)
     except Exception as exc:
         if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
             raise
         log.error("Market buy failed: %s", exc)
-        return None, False
+        return None, False, None, None
 
 
 def place_market_buy(
@@ -193,14 +206,15 @@ def place_market_buy(
     price: float,
     condition_id: str = "",
     fee_rate_bps: int = 0,
-) -> tuple[Optional[str], bool]:
+) -> tuple[Optional[str], bool, Optional[float], Optional[float]]:
+    """Returns (order_id, matched, avg_fill_price, filled_shares)."""
     try:
         signed = sign_buy_order(clob, token_id, shares, price, fee_rate_bps)
     except Exception as exc:
         if "does not exist" in str(exc).lower() or "no orderbook" in str(exc).lower():
             raise
         log.error("Market buy failed: %s", exc)
-        return None, False
+        return None, False, None, None
     return post_signed_buy_fak(clob, signed)
 
 
