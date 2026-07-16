@@ -18,7 +18,7 @@ bot:
   dryRun: "false"
   # tighter caps than the overlay defaults — tiny measurement deployment
   liveMaxOrderUsd: "5"
-  liveMaxDailyLossUsd: "15"
+  liveMaxDailyLossUsd: "100"
   quoteNotionalUsd: "5"
   loopIntervalSecs: "300"
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
