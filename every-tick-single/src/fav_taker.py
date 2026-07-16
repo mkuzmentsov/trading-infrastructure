@@ -145,11 +145,19 @@ def norm_cdf(x):
 
 def pocket_match(ask: float, t_left: float, edge: float, fav_true: float,
                  mom_fav: float | None):
-    """Index of the first passing pocket, or None. Pure — shared by both paths."""
+    """Index of the first passing pocket, or None. Pure — shared by both paths.
+
+    "true"/"true_hi" bound the MODEL's probability for the fired side. The
+    upper bound matters for tail pockets: model≈0.50 means "no information"
+    (lead≈0 knife-edge — measured degenerate on xrp live 2026-07-16: 0/13 at
+    constant 0.50) and ≈1.0 is the quiet-tape sigma-collapse glitch. A tail
+    is only a trade when the model ACTIVELY asserts partial life."""
     for i, p in enumerate(POCKETS):
         if not (p["p_lo"] <= ask <= p["p_hi"] and p["tl_lo"] <= t_left <= p["tl_hi"]):
             continue
         if edge < p["edge"] or fav_true < p.get("true", 0.0):
+            continue
+        if fav_true > p.get("true_hi", 1.0):
             continue
         if p.get("mom"):
             if mom_fav is None or not (MOM_ALIGN_LO <= mom_fav <= MOM_ALIGN_HI):
