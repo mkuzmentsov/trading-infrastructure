@@ -273,6 +273,11 @@ class FavStrategy:
             # live: settle on ACTUAL avg fill price/size (FAK is dollar-capped;
             # price improvement returns more shares at a lower avg than quoted)
             fill_px = avg_px if avg_px else ask
+            # paper: cap the fill at the VISIBLE ask depth — assuming 62 shares
+            # on a 5-share level overstated paper vs live by ~$580 over 2 days
+            ask_size = ctx.up_ask_size if fav_up else ctx.down_ask_size
+            if not _real and ask_size and ask_size > 0:
+                fill_qty = min(shares, ask_size)
             self.open_bets[ctx.ws] = {"side": fav_side, "token": fav_token, "entry": ask,
                                       "cap": pk["p_hi"],
                                       "fill_px": fill_px, "fill_qty": fill_qty,
@@ -281,6 +286,7 @@ class FavStrategy:
             self.acted.add(ctx.ws)
             signal_age_ms = (t_decide - ctx.signal_ts) * 1000.0 if ctx.signal_ts else -1
             _event("FAV_BET_PLACED", bar=ctx.ws, side=fav_side, entry=round(ask, 4),
+                   ask_size=round(ask_size, 1) if ask_size else 0,
                    fill_px=round(fill_px, 4), fill_qty=None if fill_qty is None else round(fill_qty, 2),
                    fav_true=round(fav_true, 4), edge=round(edge, 4),
                    lead_bps=round(lead * 1e4, 1), t_left=int(t_left),
