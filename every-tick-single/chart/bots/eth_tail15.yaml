@@ -1,0 +1,20 @@
+# eth-tail15 — 15m-bar twin of eth-tail (PAPER): identical pockets on the
+# eth-updown-15m markets (96 bars/day). Scaling = more markets, same $5.
+botName: eth-tail15
+
+bot:
+  entrypoint: "fav_taker.py"
+  coin: "eth"
+  barSeconds: "900"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  liveMaxOrderUsd: "5"
+  liveMaxDailyLossUsd: "99999"
+  quoteNotionalUsd: "5"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  favPockets: '[{"p_lo": 0.01, "p_hi": 0.08, "tl_lo": 5, "tl_hi": 30, "edge": 0.05, "true": 0.0, "mom": 0}]'
+  favMinLeadBps: "0"
+  favTakerFeeRate: "0.10"
+
