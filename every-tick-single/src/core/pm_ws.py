@@ -278,6 +278,14 @@ def _apply_top_of_book(
     else:
         return
 
+    # keep the tail-zone ladder's TOP consistent with every top-of-book
+    # update (ladder otherwise only refreshes on full snapshots and goes
+    # stale — measured 2026-07-17: depth_at_cap < top_size contradictions)
+    if has_ask and best_ask <= 0.25:
+        d = pm_state.ask_depth.setdefault(asset_id, {})
+        d[best_ask] = best_ask_size
+        for px in [p_ for p_ in d if p_ < best_ask]:
+            d.pop(px, None)          # levels below the best ask no longer exist
     pm_state.book_events += 1
     pm_state.last_ws_message_kind = f"{event_type}:{asset_id[:12]}"
     tick_bus.fire("book", now)

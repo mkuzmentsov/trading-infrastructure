@@ -287,8 +287,13 @@ class FavStrategy:
                         got += take; cost += take * px_l
                         if got >= want: break
                     if got > 0:
-                        fill_qty = got
-                        fill_px = cost / got
+                        # ladder can still lag the freshest top print — never
+                        # fill LESS than the live top level offers
+                        top_fill = min(shares, ask_size) if ask_size else 0
+                        if top_fill > got:
+                            fill_qty, fill_px = top_fill, ask
+                        else:
+                            fill_qty, fill_px = got, cost / got
                 elif ask_size and ask_size > 0:
                     fill_qty = min(shares, ask_size)
             self.open_bets[ctx.ws] = {"side": fav_side, "token": fav_token, "entry": ask,
