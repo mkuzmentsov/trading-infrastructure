@@ -14,9 +14,22 @@ import requests
 from config import BAR_SECONDS, COIN, GAMMA_API, log
 
 
+_COIN_FULL = {"btc": "bitcoin", "eth": "ethereum", "sol": "solana",
+              "xrp": "xrp", "doge": "dogecoin", "bnb": "bnb"}
+
+
 def window_slug(window_start_ts: int) -> str:
     """Deterministic slug for the COIN UpDown market whose bar opens at
-    `window_start_ts` ({coin}-updown-{5|15}m-{ts}); shape set by BAR_SECONDS."""
+    `window_start_ts`. 5m/15m: {coin}-updown-{n}m-{ts}. Hourly (3600s):
+    name-based ET slug ({fullname}-up-or-down-{month}-{d}-{yyyy}-{h}{am/pm}-et)
+    — ET hour starts align with the 3600s grid (UTC offset is whole hours)."""
+    if BAR_SECONDS == 3600:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromtimestamp(int(window_start_ts), ZoneInfo("America/New_York"))
+        hour = dt.strftime("%I%p").lstrip("0").lower()
+        return (f"{_COIN_FULL.get(COIN, COIN)}-up-or-down-"
+                f"{dt.strftime('%B').lower()}-{dt.day}-{dt.year}-{hour}-et")
     return f"{COIN}-updown-{BAR_SECONDS // 60}m-{int(window_start_ts)}"
 
 

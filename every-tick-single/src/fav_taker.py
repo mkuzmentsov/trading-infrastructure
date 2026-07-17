@@ -111,7 +111,8 @@ def _gamma(params: dict):
 
 
 def _slug(ws: int) -> str:
-    return f"{COIN}-updown-{BAR_SECONDS // 60}m-{ws}"
+    from core.gamma import window_slug
+    return window_slug(ws)
 
 
 def market_tokens(ws: int):
