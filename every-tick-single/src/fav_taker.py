@@ -306,6 +306,8 @@ class FavStrategy:
             _event("FAV_BET_PLACED", bar=ctx.ws, side=fav_side, entry=round(ask, 4),
                    ask_size=round(ask_size, 1) if ask_size else 0,
                    depth_at_cap=round(depth_at_cap, 1),
+                   depth_rungs={str(r): round(sum(sz for px, sz in depth.items() if px <= r), 1)
+                                for r in (0.10, 0.12, 0.15, 0.20, 0.25)},
                    fill_px=round(fill_px, 4), fill_qty=None if fill_qty is None else round(fill_qty, 2),
                    fav_true=round(fav_true, 4), edge=round(edge, 4),
                    lead_bps=round(lead * 1e4, 1), t_left=int(t_left),
