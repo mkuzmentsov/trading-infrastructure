@@ -54,6 +54,9 @@ class PMState:
         self.ready: bool = False
         self.up_live: bool = False
         self.down_live: bool = False
+        # tail-zone ask depth ladder per token ({price: size}, prices <= 0.25)
+        # — cumulative fills below the FAK cap are what live actually sweeps
+        self.ask_depth: dict = {}
         self.last_up_book_ts: float = 0.0
         self.last_down_book_ts: float = 0.0
         self.book_events: int = 0
@@ -301,6 +304,12 @@ def _handle_book(msg: dict) -> None:
     asset_id = msg.get("asset_id", "")
     bids = msg.get("bids", [])
     asks = msg.get("asks", [])
+    try:
+        pm_state.ask_depth[asset_id] = {
+            float(a.get("price")): max(0.0, float(a.get("size") or 0))
+            for a in asks if a.get("price") and float(a.get("price")) <= 0.25}
+    except Exception:
+        pass
     best_bid, best_bid_size, best_ask, best_ask_size = _compute_book_top(bids, asks)
     _apply_top_of_book(asset_id, best_bid, best_bid_size, best_ask, best_ask_size, "book")
 
@@ -383,6 +392,13 @@ def _handle_price_change(msg: dict) -> None:
             bid_size = size
         elif side == "SELL" and 0 < best_ask <= 1:
             ask_size = size
+        lvl_px = _coerce_float(ch.get("price"), 0.0)
+        if side == "SELL" and 0 < lvl_px <= 0.25:
+            d = pm_state.ask_depth.setdefault(asset_id, {})
+            if size > 0:
+                d[lvl_px] = size
+            else:
+                d.pop(lvl_px, None)
         _apply_top_of_book(asset_id, best_bid, bid_size, best_ask, ask_size, "price_change")
 
 
