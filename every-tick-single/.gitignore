@@ -12,3 +12,4 @@ data/fleet-events-archive-*/
 backtest/fiftycent/*.csv
 backtest/fiftycent/*.txt
 backtest/fiftycent/*_report.json
+measurements/.last_breakdown.json
