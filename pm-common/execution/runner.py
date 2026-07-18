@@ -58,6 +58,8 @@ class TakerCtx:
     up_ask_size: float = 0.0
     down_ask: float = 1.0
     down_ask_size: float = 0.0
+    up_bid: float = 0.0            # best BID (what we could SELL into) — TP path
+    down_bid: float = 0.0
     up_depth: dict = field(default_factory=dict)     # {ask_price: size}, <=0.25
     down_depth: dict = field(default_factory=dict)
     book_ready: bool = False
@@ -120,6 +122,8 @@ class TakerRunner:
             up_ask_size=pm_state.up_ask_size,
             down_ask=pm_state.down_ask,
             down_ask_size=pm_state.down_ask_size,
+            up_bid=pm_state.up_bid,
+            down_bid=pm_state.down_bid,
             up_depth=pm_state.ask_depth.get(pm_state.token_id_up, {}),
             down_depth=pm_state.ask_depth.get(pm_state.token_id_down, {}),
             book_ready=pm_state.ready,

@@ -189,6 +189,7 @@ class FavStrategy:
         self.best_seen: dict[int, float] = {}
         self.day_pnl: dict[str, float] = {}
         self.halted = False
+        self._path_last_bid: dict[int, float] = {}   # bar -> last-logged bought-side bid
 
     def bind(self, runner) -> None:
         self.runner = runner
@@ -204,7 +205,24 @@ class FavStrategy:
                 reqs.append((f"p{i}-DOWN", ctx.down_token, p["p_hi"], size))
         return reqs
 
+    def _log_bid_path(self, ctx) -> None:
+        """For the bar we bet on, log every CHANGE in the bought token's best
+        bid (what we could SELL into) — the intra-bar exit path for TP/stop
+        backtests. Runs on every WS-driven tick; deduped on bid value so a
+        firehose of identical books writes nothing."""
+        bet = self.open_bets.get(ctx.ws)
+        if not bet:
+            return
+        bid = ctx.up_bid if bet["side"] == "UP" else ctx.down_bid
+        if bid == self._path_last_bid.get(ctx.ws):
+            return
+        self._path_last_bid[ctx.ws] = bid
+        _event("FAV_PATH", bar=ctx.ws, side=bet["side"], bid=round(bid, 4),
+               t_left=int(ctx.t_left), entry=bet["entry"])
+
     async def on_tick(self, ctx) -> None:
+        # record the exit-bid path of any bet already placed on THIS bar
+        self._log_bid_path(ctx)
         if self.halted or ctx.ws in self.acted or ctx.ws in self.settled:
             return
         if ctx.bar_open is None or not ctx.sigma_ps or ctx.spot <= 0:
@@ -365,6 +383,7 @@ class FavStrategy:
                            day_pnl=round(self.day_pnl[today], 4), live=_real)
                     self.settled.add(t)
                     self.open_bets.pop(t, None)
+                    self._path_last_bid.pop(t, None)
                 if not self.halted and -self.day_pnl.get(today, 0.0) >= MAX_DAILY_LOSS:
                     self.halted = True
                     _event("FAV_HALT", reason="daily_loss_cap",
