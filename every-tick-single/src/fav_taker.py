@@ -163,6 +163,13 @@ def pocket_match(ask: float, t_left: float, edge: float, fav_true: float,
         if p.get("mom"):
             if mom_fav is None or not (MOM_ALIGN_LO <= mom_fav <= MOM_ALIGN_HI):
                 continue
+        # mom_skip_lo/hi: skip the momentum DEAD ZONE (v2 tails — 2251-bet
+        # analysis: fav-signed mom 0.0-1.0 loses -$772; ≤0 or >1.0 wins,
+        # >1.0 is the >1.3σ snap-back edge). Only skips when mom is known.
+        msl, msh = p.get("mom_skip_lo"), p.get("mom_skip_hi")
+        if msl is not None and msh is not None and mom_fav is not None:
+            if msl <= mom_fav <= msh:
+                continue
         return i
     return None
 
