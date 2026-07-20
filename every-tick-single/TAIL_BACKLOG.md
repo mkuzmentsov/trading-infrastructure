@@ -65,6 +65,25 @@ Only mechanism that could invert corpse-depth adverse selection: a resting bid
 fills on dumps sweeping THROUGH price (flow) not standing depth (stock).
 `FAV_ORDER_TYPE=gtc` built. Revisit for thin coins after v2/timeframe verdicts.
 
+### 6b. EARLY conditional resting-maker bid (user idea 2026-07-20) ⭐
+Instead of last-second FAK, rest a BUY limit at the cap (0.06) EARLIER — the
+moment the underlying moves in our favor (favorite weakening / snap-back
+starting) — and let the tail dump THROUGH it. Rationale: winning tails get
+swept clean (thin FAK fills exactly on winners); a bid already sitting there
+catches the FLOW. Bonus: maker fill = ZERO fee (~0.3c/sh saved at 6c) +
+auto price-improvement. Aligns with the proven maker-archetype edge.
+CORE TENSION: fights our best predictor — t_left (AUC 0.60, LATER=win). Early
+placement trades win-rate (later) for fill-rate (earlier); net depends on
+whether early fills are winners or corpses. The "price in our favor" trigger
+is really a NEW entry signal (detect genuine revival) — and our model was
+blind at exactly that (fav_true AUC 0.48); only momentum-extremity/snap-back
+worked, so that's the candidate trigger. Adverse-selection risk: a resting
+bid fills on ANY sell through 6c incl. dying tails; the conditional trigger
+mitigates but doesn't remove it. TEST: paper maker A/B — rest 0.06 bid when
+mom turns favorable at ~t_left 45s vs FAK bot; compare fill/win/EV. Machinery
+exists (FAV_ORDER_TYPE=gtc + maker print-fill engine + FAV_PATH bid logging
+shows if early-rested fills won). Run alongside v3/15m next session.
+
 ### 7. Live restart decision (btc-5m halted; wallet $297.93 topped up)
 btc live-fill advantage (86–90% vs paper 55%) means real btc EV > paper. But
 5m marginal & weekend-negative. Gate live restart on: v2 or 15m proving out +
