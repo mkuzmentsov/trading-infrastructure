@@ -1,17 +1,19 @@
 ---
 name: ett-pull-raw
-description: Pull the full-state 100ms WS recorder archives (raw book + trades + signals) from the every-tick-single rec pods to a local dir for strat backtests. Use whenever a backtest/analysis needs tick-level market state (maker-fill realism, exit paths, signal replay) — not just the decision events (that's ett-pull-events).
+description: Pull the full-state 100ms WS snapshot archives (raw book + trades + signals) recorded IN the every-tick-single tail 5m (v1) pods, to a local dir for strat backtests. Use whenever a backtest/analysis needs tick-level market state (maker-fill realism, exit paths, signal replay) — not just the decision events (that's ett-pull-events).
 ---
 
 # ett-pull-raw
 
-Pulls the `ws_recorder.py` output from the 6 recorder pods
-(`<coin>-rec-every-tick-single`, ns `every-tick-single`). Each records a
-full-state snapshot every 100ms while a bar is live:
+The full-state recorder (`ws_recorder.py`, `run_recorder`) runs **inside the v1
+tail 5m bots** (`<coin>-tail-every-tick-single`, ns `every-tick-single`), started
+by `execution.runner.TakerRunner` when `RECORD_SNAPSHOTS=true` — off the SAME
+feeds the bot trades on (no separate recorder fleet). Each writes a full-state
+snapshot every 100ms while a bar is live:
 `/app/logs/raw/<coin>-YYYYMMDD-HH.jsonl` (current hour, uncompressed) and
 `...-YYYYMMDD-HH.jsonl.gz` (rolled hours, 7-day rolling retention on the PVC).
 
-Coins: btc eth sol xrp bnb doge.
+Coins: btc eth sol xrp bnb doge. Deploy/pod name: `<coin>-tail-every-tick-single`.
 
 ## Row schema (NDJSON, UTC hour buckets)
 - `BAR`  (once per bar): `{t, coin, ws, ev:"BAR", cid, q, up, down, end}` — condition_id, token ids (up/down), question, bar end ts.
@@ -30,7 +32,7 @@ Coins: btc eth sol xrp bnb doge.
 2. See what each pod holds (hours available, sizes):
    ```
    for c in btc eth sol xrp bnb doge; do
-     echo "== $c =="; kubectl exec -n every-tick-single deploy/${c}-rec-every-tick-single -- \
+     echo "== $c =="; kubectl exec -n every-tick-single deploy/${c}-tail-every-tick-single -- \
        sh -c 'ls -la /app/logs/raw/'
    done
    ```
@@ -40,8 +42,8 @@ Coins: btc eth sol xrp bnb doge.
    ```
    DIR=<dir>; mkdir -p "$DIR"
    for c in btc eth sol xrp bnb doge; do
-     for f in $(kubectl exec -n every-tick-single deploy/${c}-rec-every-tick-single -- sh -c 'ls /app/logs/raw/*.jsonl 2>/dev/null'); do
-       kubectl exec -n every-tick-single deploy/${c}-rec-every-tick-single -- cat "$f" > "$DIR/$(basename $f)"
+     for f in $(kubectl exec -n every-tick-single deploy/${c}-tail-every-tick-single -- sh -c 'ls /app/logs/raw/*.jsonl 2>/dev/null'); do
+       kubectl exec -n every-tick-single deploy/${c}-tail-every-tick-single -- cat "$f" > "$DIR/$(basename $f)"
      done
    done
    ```
@@ -49,8 +51,8 @@ Coins: btc eth sol xrp bnb doge.
    is safe, but pipe to file; do NOT let the terminal mangle it):
    ```
    for c in btc eth sol xrp bnb doge; do
-     for f in $(kubectl exec -n every-tick-single deploy/${c}-rec-every-tick-single -- sh -c 'ls /app/logs/raw/*.jsonl.gz 2>/dev/null'); do
-       kubectl exec -n every-tick-single deploy/${c}-rec-every-tick-single -- cat "$f" > "$DIR/$(basename $f)"
+     for f in $(kubectl exec -n every-tick-single deploy/${c}-tail-every-tick-single -- sh -c 'ls /app/logs/raw/*.jsonl.gz 2>/dev/null'); do
+       kubectl exec -n every-tick-single deploy/${c}-tail-every-tick-single -- cat "$f" > "$DIR/$(basename $f)"
      done
    done
    # sanity: gzip -t "$DIR"/*.gz
@@ -71,10 +73,12 @@ Coins: btc eth sol xrp bnb doge.
    ```
 
 ## Gotchas
-- ALWAYS pull the current-hour `.jsonl` BEFORE any helm upgrade/restart of a rec
+- ALWAYS pull the current-hour `.jsonl` BEFORE any helm upgrade/restart of a tail
   pod — the live hour is on the PVC but an in-flight rotation could gzip it mid-pull.
-- Recorder is SEPARATE from the bots: raw goes to `/app/logs/raw/`, NOT
-  `logs-training-events.jsonl`. Do not confuse with `ett-pull-events` (decisions).
+- Same pod, DIFFERENT files: raw snapshots go to `/app/logs/raw/`, decisions to
+  `/app/logs/logs-training-events.jsonl` (that's `ett-pull-events`). Both on the
+  tail bot's PVC. Only the `-tail-` (v1 5m) bots record — enabled via
+  `RECORD_SNAPSHOTS=true`; tail15 and any experiment variants do not.
 - Volume is ~0.45 GB/day/coin raw (~45 MB/day gz). Pull only the coins/days you
   need; a full 7-day × 6-coin pull is ~2 GB gz.
 - Retention is 7 days (`RETENTION_DAYS` env). Pull anything you want to keep

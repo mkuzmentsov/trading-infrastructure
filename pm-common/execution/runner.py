@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -39,6 +40,10 @@ from execution.tickbus import tick_bus
 PREFETCH_LEAD_SECS = 30.0
 IDLE_WAKE_SECS = 0.5          # eval cadence when feeds are quiet
 SIGMA_CACHE_SECS = 20.0
+# RECORD_SNAPSHOTS: also run the ws_recorder snapshot task in-process, so the bot
+# writes its own full-state 100ms replay dataset off the SAME feeds it trades on
+# (no separate recorder fleet). Off by default; enabled per-bot via env.
+RECORD_SNAPSHOTS = os.getenv("RECORD_SNAPSHOTS", "false").strip().lower() in ("true", "1", "yes")
 
 
 @dataclass
@@ -254,4 +259,7 @@ class TakerRunner:
             asyncio.create_task(self._eval_loop(), name="eval"),
             asyncio.create_task(self.strategy.settle_loop(), name="settle"),
         ]
+        if RECORD_SNAPSHOTS:
+            from ws_recorder import run_recorder    # reuses this runner's feeds
+            tasks.append(asyncio.create_task(run_recorder(), name="recorder"))
         await asyncio.gather(*tasks)

@@ -275,6 +275,17 @@ async def _snapshot_loop(writer: RotatingWriter) -> None:
         await asyncio.sleep(SNAPSHOT_SECS)
 
 
+async def run_recorder() -> None:
+    """Snapshot task for EMBEDDING in a bot runner (e.g. TakerRunner) whose feeds
+    (binance_ws + pm_ws) are already running. Records the same 100ms full-state
+    rows to RAW_LOG_DIR without starting its own feeds — so the trading bot writes
+    its own replay dataset. Gated by the runner on RECORD_SNAPSHOTS."""
+    log.info("recorder embedded  coin=%s snap=%dms dir=%s retain=%.0fd",
+             COIN, SNAPSHOT_MS, RAW_LOG_DIR, RETENTION_DAYS)
+    writer = RotatingWriter(RAW_LOG_DIR, COIN)
+    await _snapshot_loop(writer)
+
+
 async def run() -> None:
     log.info("ws_recorder start  coin=%s bar=%ds snap=%dms dir=%s retain=%.0fd",
              COIN, BAR_SECONDS, SNAPSHOT_MS, RAW_LOG_DIR, RETENTION_DAYS)
