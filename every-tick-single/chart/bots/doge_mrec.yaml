@@ -1,0 +1,20 @@
+# doge-mrec — recorders fleet: 100ms multi-market recorder (cur-until-RESOLVED +
+# next 3 pre-open bars, slug-tagged rows). Sole event source; bots log minimal.
+botName: doge-mrec
+bot:
+  entrypoint: "multi_recorder.py"
+  coin: "doge"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  snapshotMs: "100"
+  mrecAhead: "3"
+  rawLogDir: "/app/logs/raw"
+  retentionDays: "7"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/dogeusdt@aggTrade"
+  polymarketRtdsSymbol: "doge/usd"
+
+persistence:
+  enabled: true
+  size: 10Gi
