@@ -25,6 +25,7 @@ from .exchanges import (
     kraken_futures,
     mexc,
     okx,
+    polymarket,
     whitebit,
 )
 
@@ -38,7 +39,7 @@ def _register_all() -> None:
     summary: list[str] = []
     for module in (
         binance, kraken, kraken_futures, hyperliquid, whitebit,
-        bybit, mexc, bitget, okx, aggregator,
+        bybit, mexc, bitget, okx, polymarket, aggregator,
     ):
         short = module.__name__.rsplit(".", 1)[-1]
         try:
@@ -118,17 +119,40 @@ def main() -> None:
 
     app = mcp.streamable_http_app()
 
+    # OAuth 2.1 (browser/mobile clients that can't send a custom header). Enabled
+    # when MCP_OAUTH_SECRET + MCP_LOGIN_PASSWORD are set. The static MCP_AUTH_TOKEN
+    # keeps working alongside it (Claude Code).
+    oauth_secret = os.environ.get("MCP_OAUTH_SECRET", "").strip()
+    login_pw = os.environ.get("MCP_LOGIN_PASSWORD", "").strip()
+    issuer = os.environ.get("MCP_ISSUER", "").strip().rstrip("/")
+    oauth_on = bool(oauth_secret and login_pw and issuer)
+
     token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
     if token:
         from .auth import BearerAuthMiddleware
 
-        app.add_middleware(BearerAuthMiddleware, token=token)
-        log.info("Bearer-token auth ENABLED")
+        app.add_middleware(
+            BearerAuthMiddleware, token=token,
+            oauth_secret=oauth_secret if oauth_on else "",
+            issuer=issuer if oauth_on else "")
+        log.info("Bearer-token auth ENABLED%s",
+                 " (+ OAuth access tokens)" if oauth_on else "")
     else:
         log.warning(
             "MCP_AUTH_TOKEN not set — auth DISABLED. Only safe on loopback; "
             "never expose this server publicly without a token."
         )
+
+    if oauth_on:
+        # Added AFTER the bearer middleware so it wraps OUTERMOST: OAuth +
+        # discovery routes are reachable without a token; everything else falls
+        # through to the bearer gate -> MCP app.
+        from .oauth import OAuthMiddleware
+
+        app.add_middleware(
+            OAuthMiddleware, secret=oauth_secret, issuer=issuer,
+            login_password=login_pw)
+        log.info("OAuth 2.1 authorization server ENABLED (issuer=%s)", issuer)
 
     import uvicorn
 

@@ -29,9 +29,16 @@ class BearerAuthMiddleware:
     """Enforce ``Authorization: Bearer <token>`` on every HTTP request except
     the health endpoints. Comparison is constant-time."""
 
-    def __init__(self, app: ASGIApp, token: str) -> None:
+    def __init__(self, app: ASGIApp, token: str,
+                 oauth_secret: str = "", issuer: str = "") -> None:
         self.app = app
         self._token = token.encode()
+        # Optional: also accept OAuth-issued access JWTs (browser/mobile clients).
+        self._oauth_secret = oauth_secret
+        self._issuer = issuer.rstrip("/")
+        self._resource_meta = (
+            f'{self._issuer}/.well-known/oauth-protected-resource'
+            if issuer else "")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -43,11 +50,17 @@ class BearerAuthMiddleware:
             return
 
         if not self._authorized(scope):
+            # RFC 9728: point unauthenticated clients at the resource metadata so
+            # browser/mobile clients can discover the OAuth flow and log in.
+            challenge = b"Bearer"
+            if self._resource_meta:
+                challenge = (b'Bearer resource_metadata="'
+                             + self._resource_meta.encode() + b'"')
             await self._respond(
                 send,
                 401,
                 b'{"error":"unauthorized"}',
-                extra_headers=[(b"www-authenticate", b"Bearer")],
+                extra_headers=[(b"www-authenticate", challenge)],
             )
             return
 
@@ -58,7 +71,15 @@ class BearerAuthMiddleware:
             if name == b"authorization":
                 if not value.startswith(_BEARER):
                     return False
-                return hmac.compare_digest(value[len(_BEARER):], self._token)
+                presented = value[len(_BEARER):]
+                if hmac.compare_digest(presented, self._token):
+                    return True
+                # Fall back to an OAuth-issued access JWT.
+                if self._oauth_secret:
+                    from .oauth import validate_access_token
+                    return validate_access_token(
+                        presented.decode("latin-1"), self._oauth_secret, self._issuer)
+                return False
         return False
 
     @staticmethod

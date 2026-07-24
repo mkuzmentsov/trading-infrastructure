@@ -17,10 +17,16 @@ spec:
       labels:
         app: trading-mcp
     spec:
+      # Pin to the exchange-IP-whitelisted worker (Binance/Kraken/Bybit keys are
+      # bound to this node's egress IP). Do NOT let the pod drift on restarts.
+      nodeSelector:
+        kubernetes.io/hostname: hetzner-k3s-cluster-pool-workers-worker1
       containers:
         - name: trading-mcp
-          image: mkuzmentsov/trading-mcp:0.11
-          imagePullPolicy: Always
+          image: mkuzmentsov/trading-mcp:0.14
+          # IfNotPresent: 0.12 was imported directly into the node's containerd
+          # (docker-hub push stalled); a hub push later makes Always safe again.
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8765
