@@ -378,6 +378,20 @@ def fetch_order_status(clob, order_id: str) -> Optional[dict]:
         return None
 
 
+def get_order_filled(clob, order_id: str) -> Optional[float]:
+    """Read cumulative matched size for a resting order (GTC snipe fill readback).
+    Returns filled shares, or None if the lookup fails."""
+    try:
+        o = clob.get_order(order_id)
+        if not o:
+            return None
+        v = (o.get("size_matched") if isinstance(o, dict) else getattr(o, "size_matched", None))
+        return float(v) if v is not None else 0.0
+    except Exception as exc:
+        log.warning("get_order %s failed: %s", order_id, exc)
+        return None
+
+
 def cancel_order(clob, order_id: str) -> bool:
     # v2 renamed cancel(order_id) → cancel_order(OrderPayload(orderID=...)).
     from py_clob_client_v2 import OrderPayload

@@ -33,11 +33,17 @@ from core.pm_ws import (
     pm_state,
     prefetch_next_market,
     run_pm_ws,
+    set_post_close_grace,
 )
 from execution.fastclient import FastExec
 from execution.tickbus import tick_bus
 
 PREFETCH_LEAD_SECS = 30.0
+# POST_CLOSE_GRACE_SECS: keep acting on the CLOSING market for this many seconds
+# past bar-end (settlement-delay window). Default 0 = legacy (stop at close). The
+# settlement-sniper sets this >0 so on_tick still fires (t_left<0) on the LOCKED
+# winner while stale ≤5c sells linger. Delays the next bar's start by this much.
+POST_CLOSE_GRACE = max(0.0, float(os.getenv("POST_CLOSE_GRACE_SECS", "0")))
 IDLE_WAKE_SECS = 0.5          # eval cadence when feeds are quiet
 SIGMA_CACHE_SECS = 20.0
 # RECORD_SNAPSHOTS: also run the ws_recorder snapshot task in-process, so the bot
@@ -107,7 +113,7 @@ class TakerRunner:
     def build_ctx(self, now: float) -> TakerCtx | None:
         ws = pm_state.market_start_ts
         end = pm_state.market_end_ts
-        if ws <= 0 or end <= 0 or now >= end:
+        if ws <= 0 or end <= 0 or now >= end + POST_CLOSE_GRACE:
             return None
         if not binance_state.ready:
             return None
@@ -185,8 +191,15 @@ class TakerRunner:
                 if now < end_ts:
                     await asyncio.sleep(max(0.01, min(0.05, end_ts - now)))
                     continue
+                # POST-CLOSE GRACE: hold the closing market (tokens + presigns)
+                # so on_tick can snipe the locked winner past bar-end; roll only
+                # once the grace elapses.
+                roll_at = end_ts + POST_CLOSE_GRACE
+                if now < roll_at:
+                    await asyncio.sleep(max(0.02, min(0.1, roll_at - now)))
+                    continue
                 if apply_prefetched_market_now():
-                    log.info("Bar roll: next market applied instantly")
+                    log.info("Bar roll: next market applied (grace=%.0fs)", POST_CLOSE_GRACE)
                 else:
                     await asyncio.sleep(0.5)   # run_pm_ws rotation fallback
             except Exception as exc:
@@ -248,6 +261,7 @@ class TakerRunner:
                  COIN, BAR_SECONDS, self.exec.live)
         self._seed_history()
         enable_external_market_apply()
+        set_post_close_grace(POST_CLOSE_GRACE)   # hold closing book past bar-end
         self.exec.start()
         self.strategy.bind(self)
         tasks = [

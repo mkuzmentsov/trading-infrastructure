@@ -144,6 +144,16 @@ def _apply_market(market: dict) -> list[str] | None:
 # the cache and never enables external apply, so the paper path is unchanged.
 _prefetched_market: dict = {"start_ts": 0, "market": None}
 _external_apply_enabled: bool = False
+# POST-CLOSE grace (seconds): delay the in-WS market roll past market_end_ts so a
+# probe can keep the CLOSING market's book streaming through the settlement-delay
+# window (stale winner asks). Default 0 = roll exactly at end (unchanged for all
+# trading bots). Set by ws_recorder via set_post_close_grace().
+_post_close_grace: float = 0.0
+
+
+def set_post_close_grace(secs: float) -> None:
+    global _post_close_grace
+    _post_close_grace = max(0.0, float(secs))
 
 
 def enable_external_market_apply() -> None:
@@ -578,7 +588,7 @@ async def run_pm_ws() -> None:
                             except Exception as exc:
                                 log.warning("PM WS external-apply resubscribe error: %s", exc)
 
-                    if pm_state.market_end_ts > 0 and time.time() >= pm_state.market_end_ts:
+                    if pm_state.market_end_ts > 0 and time.time() >= pm_state.market_end_ts + _post_close_grace:
                         try:
                             # Prefetched cache first (live pre-discovery); the
                             # cache is never populated in paper mode, so paper

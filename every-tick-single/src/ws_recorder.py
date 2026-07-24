@@ -37,6 +37,7 @@ from core.pm_ws import (
     pm_state,
     prefetch_next_market,
     run_pm_ws,
+    set_post_close_grace,
 )
 
 SNAPSHOT_MS = max(20, int(float(os.getenv("SNAPSHOT_MS", "100"))))
@@ -44,6 +45,13 @@ SNAPSHOT_SECS = SNAPSHOT_MS / 1000.0
 RAW_LOG_DIR = os.getenv("RAW_LOG_DIR", "/app/logs/raw")
 RETENTION_DAYS = float(os.getenv("RETENTION_DAYS", "7"))
 PREFETCH_LEAD_SECS = 30.0
+# POST_CLOSE_GRACE_SECS: keep recording the CLOSING market's book for this many
+# seconds PAST bar-end before rolling to the next market. Default 0 = legacy
+# behavior (stop at close). Set >0 (e.g. 15) on a probe recorder to capture the
+# settlement-delay window (t_left<0) where stale winner sell-orders linger — the
+# window the consistent 5m earners snipe. Cost: the next bar's first
+# POST_CLOSE_GRACE_SECS are not recorded (roll is delayed).
+POST_CLOSE_GRACE = max(0.0, float(os.getenv("POST_CLOSE_GRACE_SECS", "0")))
 LADDER_LEVELS = 15                 # tail-zone ask levels to keep per token
 SIGMA_CACHE_SECS = 20.0
 
@@ -136,15 +144,27 @@ def _ladder(token_id: str) -> list:
     return [[round(px, 4), round(sz, 1)] for px, sz in sorted(d.items())[:LADDER_LEVELS]]
 
 
-def build_snap(now: float, trade_cursor: list) -> dict | None:
-    """One full-state snapshot row, or None if a bar/feed isn't live yet."""
+def build_snap(now: float, trade_cursor: list, vol_acc: dict) -> dict | None:
+    """One full-state snapshot row, or None if a bar/feed isn't live yet.
+    vol_acc accumulates CUMULATIVE per-bar traded volume (reset each bar in the
+    snapshot loop): notional (USDC) + shares, split UP/DOWN. It's derived from the
+    WS trade prints (the gamma `volume` field is REST-only, lags, and nulls after
+    archival — not usable at 100ms)."""
     ws = pm_state.market_start_ts
     end = pm_state.market_end_ts
-    if ws <= 0 or end <= 0 or now >= end:
+    if ws <= 0 or end <= 0 or now >= end + POST_CLOSE_GRACE:
         return None
-    if not (binance_state.ready and pm_state.ready):
-        return None
-    t_left = end - now
+    t_left = end - now                       # negative during the post-close grace
+    # Normal gate: both feeds "ready" (both book sides live). But POST-CLOSE the
+    # market resolves — winner ask→1.0, loser bid→0 — so pm_state.ready flips
+    # False within ~1s and we'd go blind exactly in the settlement window we're
+    # here to study. So once t_left<0 (grace), emit the RAW book regardless of
+    # pm_state.ready as long as we've EVER been ready this bar (up_live/down_live).
+    post_close = t_left < 0
+    feeds_ok = binance_state.ready and pm_state.ready
+    if not feeds_ok:
+        if not (post_close and pm_state.up_live and pm_state.down_live):
+            return None
     spot = binance_state.current_price
     bar_open = binance_state.bar_open_at(ws)
     sig = sigma_ps(now)
@@ -160,19 +180,28 @@ def build_snap(now: float, trade_cursor: list) -> dict | None:
     ret30 = binance_state.ret_windowed(30.0)
     momz = ret30 / (sig * math.sqrt(30.0)) if (ret30 is not None and sig) else None
 
-    # new trade prints since last row (cursor = last seq emitted)
+    # new trade prints since last row (cursor = last seq emitted) + accumulate
+    # CUMULATIVE per-bar volume (notional & shares, split UP/DOWN) and the Δ this snap
     trades = []
     last_seq = trade_cursor[0]
+    snap_notl = 0.0                              # notional traded in THIS 100ms snap
     for tr in pm_state.recent_trades:
         if tr["seq"] <= last_seq:
             continue
         tok = "U" if tr["token_id"] == pm_state.token_id_up else (
             "D" if tr["token_id"] == pm_state.token_id_down else "?")
-        trades.append([round(tr["ts"], 3), tok, tr["price"], round(tr["size"], 2), tr.get("side", "")])
+        sz = float(tr["size"]); notl = sz * float(tr["price"])
+        vol_acc["sh"] += sz; vol_acc["notl"] += notl; snap_notl += notl
+        if tok == "U":
+            vol_acc["ush"] += sz; vol_acc["unotl"] += notl
+        elif tok == "D":
+            vol_acc["dsh"] += sz; vol_acc["dnotl"] += notl
+        trades.append([round(tr["ts"], 3), tok, tr["price"], round(sz, 2), tr.get("side", "")])
         trade_cursor[0] = tr["seq"]
 
     return {
         "t": round(now, 3), "coin": COIN, "ws": ws, "tl": round(t_left, 2), "ev": "SNAP",
+        "rdy": pm_state.ready,               # False on post-close degraded rows
         "spot": spot, "spot_age": round(binance_state.age(), 3),
         "open": bar_open, "sig": None if sig is None else round(sig, 8),
         "lead_bps": None if lead is None else round(lead * 1e4, 2),
@@ -185,6 +214,12 @@ def build_snap(now: float, trade_cursor: list) -> dict | None:
         "db": pm_state.down_bid, "da": pm_state.down_ask,
         "dbs": round(pm_state.down_bid_size, 1), "das": round(pm_state.down_ask_size, 1),
         "uL": _ladder(pm_state.token_id_up), "dL": _ladder(pm_state.token_id_down),
+        # cumulative per-bar volume (from WS trades): notional & shares, split
+        # UP/DOWN; vinc = notional traded in THIS 100ms snap (order-flow rate)
+        "vol": round(vol_acc["notl"], 2), "volsh": round(vol_acc["sh"], 1),
+        "uvsh": round(vol_acc["ush"], 1), "dvsh": round(vol_acc["dsh"], 1),
+        "uvol": round(vol_acc["unotl"], 2), "dvol": round(vol_acc["dnotl"], 2),
+        "vinc": round(snap_notl, 2),
         "trd": trades or None,
     }
 
@@ -211,8 +246,15 @@ async def _roll_watcher() -> None:
             if now < end_ts:
                 await asyncio.sleep(max(0.01, min(0.05, end_ts - now)))
                 continue
+            # POST-CLOSE GRACE: hold the closing market subscribed past end_ts so
+            # its book (stale winner asks) keeps streaming into the recorder; only
+            # roll to the next market once the grace window elapses.
+            roll_at = end_ts + POST_CLOSE_GRACE
+            if now < roll_at:
+                await asyncio.sleep(max(0.02, min(0.1, roll_at - now)))
+                continue
             if apply_prefetched_market_now():
-                log.info("Bar roll: next market applied")
+                log.info("Bar roll: next market applied (grace=%.0fs)", POST_CLOSE_GRACE)
             else:
                 await asyncio.sleep(0.5)
         except Exception as exc:
@@ -243,8 +285,13 @@ def _seed_history() -> None:
             log.warning("kline seed via %s failed: %s", base, exc)
 
 
+def _fresh_vol_acc() -> dict:
+    return {"sh": 0.0, "notl": 0.0, "ush": 0.0, "dsh": 0.0, "unotl": 0.0, "dnotl": 0.0}
+
+
 async def _snapshot_loop(writer: RotatingWriter) -> None:
     trade_cursor = [0]          # last emitted trade seq
+    vol_acc = _fresh_vol_acc()  # cumulative per-bar volume; reset on bar roll
     cur_bar = 0
     rows = 0
     last_hb = 0.0
@@ -256,12 +303,13 @@ async def _snapshot_loop(writer: RotatingWriter) -> None:
             if ws and ws != cur_bar and pm_state.ready and pm_state.condition_id:
                 cur_bar = ws
                 trade_cursor[0] = pm_state.trade_seq   # don't backfill old trades onto a new bar
+                vol_acc = _fresh_vol_acc()             # reset cumulative volume for the new bar
                 await writer.write({
                     "t": round(now, 3), "coin": COIN, "ws": ws, "ev": "BAR",
                     "cid": pm_state.condition_id, "q": pm_state.question,
                     "up": pm_state.token_id_up, "down": pm_state.token_id_down,
                     "end": pm_state.market_end_ts})
-            row = build_snap(now, trade_cursor)
+            row = build_snap(now, trade_cursor, vol_acc)
             if row is not None:
                 await writer.write(row)
                 rows += 1
@@ -291,6 +339,7 @@ async def run() -> None:
              COIN, BAR_SECONDS, SNAPSHOT_MS, RAW_LOG_DIR, RETENTION_DAYS)
     _seed_history()
     enable_external_market_apply()
+    set_post_close_grace(POST_CLOSE_GRACE)   # keep closing book live past bar-end
     writer = RotatingWriter(RAW_LOG_DIR, COIN)
     tasks = [
         asyncio.create_task(run_binance_ws(), name="binance_ws"),

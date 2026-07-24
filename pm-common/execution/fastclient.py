@@ -147,3 +147,19 @@ class FastExec:
         order_id, matched, avg_px, filled = await loop.run_in_executor(
             None, lambda: post_signed_buy(self._clob, signed, self.order_type))
         return order_id, matched, (t1 - t0) * 1000.0, (time.time() - t1) * 1000.0, avg_px, filled
+
+    async def poll_filled(self, order_id: str) -> Optional[float]:
+        """Cumulative matched shares for a resting order (GTC snipe readback)."""
+        if not self.live or not order_id:
+            return None
+        from engine.clob import get_order_filled
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: get_order_filled(self._clob, order_id))
+
+    async def cancel(self, order_id: str) -> bool:
+        """Cancel a resting order (unfilled snipe bid at window end)."""
+        if not self.live or not order_id:
+            return False
+        from engine.clob import cancel_order
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: cancel_order(self._clob, order_id))
