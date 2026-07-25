@@ -1,0 +1,27 @@
+# doge-vacuum — POST-CLOSE 99c winner vacuum. Locks the winner at bar-close
+# (spot vs open, |lead|>=8bps) and rests ONE presigned GTC buy at 0.99 on the
+# winning token for the first ~20s of the resolution delay; sellers dumping
+# the winner at 0.955-0.999 to free capital fill us; redeem at $1.00.
+# Validated source: wallet 0xA7614974 (172 bars, 100% WR); tape supply ~$8.5/bar.
+# LIVE deploy (real money) via ./deploy.sh btc live — sizing confirmed by user.
+botName: doge-vacuum
+
+bot:
+  entrypoint: "vacuum.py"
+  coin: "doge"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  postCloseGraceSecs: "25"
+  snipeCap: "0.99"
+  snipeFireMaxSecs: "20"
+  snipeNotional: "20"
+  snipeMinLeadBps: "8"
+  snipeMaxDailyLoss: "30"
+  favOrderType: "gtc"
+  liveMaxOrderUsd: "25"
+  liveMaxDailyLossUsd: "30"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/dogeusdt@aggTrade"
+  polymarketRtdsSymbol: "doge/usd"
