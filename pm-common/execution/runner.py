@@ -270,6 +270,7 @@ class TakerRunner:
             asyncio.create_task(self._roll_watcher(), name="roll"),
             asyncio.create_task(self._prewarm_new_bar(), name="prewarm"),
             asyncio.create_task(self.exec.keepalive_loop(), name="keepalive"),
+            asyncio.create_task(self.exec.user_feed_loop(), name="user_ws"),
             asyncio.create_task(self._eval_loop(), name="eval"),
             asyncio.create_task(self.strategy.settle_loop(), name="settle"),
         ]

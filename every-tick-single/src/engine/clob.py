@@ -380,7 +380,13 @@ def fetch_order_status(clob, order_id: str) -> Optional[dict]:
 
 def get_order_filled(clob, order_id: str) -> Optional[float]:
     """Read cumulative matched size for a resting order (GTC snipe fill readback).
-    Returns filled shares, or None if the lookup fails."""
+    Returns filled shares, or None if the lookup fails.
+
+    ⚠️ UNRELIABLE ON EXPIRING MARKETS (2026-07-25 phantom-fill incident): for
+    orders the venue culls around 5m bar-close, get_order reports a bogus
+    size_matched equal to the full order size. Any PnL-bearing readback MUST
+    use get_order_filled_verified() instead; keep this only for mid-bar
+    reconciliation on live markets."""
     try:
         o = clob.get_order(order_id)
         if not o:
@@ -389,6 +395,32 @@ def get_order_filled(clob, order_id: str) -> Optional[float]:
         return float(v) if v is not None else 0.0
     except Exception as exc:
         log.warning("get_order %s failed: %s", order_id, exc)
+        return None
+
+
+def get_order_filled_verified(clob, order_id: str,
+                              condition_id: str = None) -> Optional[float]:
+    """AUTHORITATIVE fill readback from the CLOB trade record: sums matched
+    amounts for this order across our trades (maker or taker legs). Immune to
+    the culled-order size_matched fabrication. Returns shares (0.0 = genuinely
+    unfilled) or None if the lookup itself failed."""
+    from py_clob_client_v2 import TradeParams
+    try:
+        params = TradeParams(market=condition_id) if condition_id else None
+        trades = clob.get_trades(params, only_first_page=True) or []
+        tot = 0.0
+        for t in trades:
+            d = t if isinstance(t, dict) else getattr(t, "__dict__", {})
+            if d.get("taker_order_id") == order_id:
+                tot += float(d.get("size") or 0)
+                continue
+            for mo in (d.get("maker_orders") or []):
+                mid = mo.get("order_id") or mo.get("id") if isinstance(mo, dict) else None
+                if mid == order_id:
+                    tot += float(mo.get("matched_amount") or 0)
+        return tot
+    except Exception as exc:
+        log.warning("get_trades verify %s failed: %s", order_id, exc)
         return None
 
 

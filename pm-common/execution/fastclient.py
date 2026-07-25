@@ -37,6 +37,7 @@ class FastExec:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def start(self) -> None:
+        self.user_feed = None
         if not self.live:
             log.info("FastExec PAPER: no CLOB client, instant fills")
             return
@@ -44,6 +45,30 @@ class FastExec:
         self._clob = build_clob_client()
         ensure_approvals(self._clob)
         log.info("FastExec LIVE: CLOB client ready")
+        try:
+            from execution.userws import UserFeed
+            c = getattr(self._clob, "creds", None)
+            if c:
+                self.user_feed = UserFeed({"apiKey": c.api_key,
+                                           "secret": c.api_secret,
+                                           "passphrase": c.api_passphrase})
+                log.info("user_ws feed prepared (real-time fill truth)")
+        except Exception as exc:
+            log.warning("user_ws feed unavailable: %s", exc)
+
+    async def user_feed_loop(self) -> None:
+        """Run the authenticated user-channel WS (live only; no-op in paper)."""
+        if self.live and getattr(self, "user_feed", None):
+            await self.user_feed.run()
+
+    def ws_filled(self, order_id: str) -> Optional[float]:
+        """Real-time matched size for OUR order from the user WS.
+        None = feed absent/stale (caller must fall back); 0.0 = feed healthy
+        and order genuinely unfilled."""
+        f = getattr(self, "user_feed", None)
+        if not f or not f.healthy():
+            return None
+        return f.matched(order_id)
 
     @property
     def clob(self):
@@ -149,12 +174,25 @@ class FastExec:
         return order_id, matched, (t1 - t0) * 1000.0, (time.time() - t1) * 1000.0, avg_px, filled
 
     async def poll_filled(self, order_id: str) -> Optional[float]:
-        """Cumulative matched shares for a resting order (GTC snipe readback)."""
+        """Cumulative matched shares for a resting order (GTC snipe readback).
+        ⚠️ Fabricates full-size fills for orders culled at market close
+        (2026-07-25) — use verified_filled() for anything PnL-bearing."""
         if not self.live or not order_id:
             return None
         from engine.clob import get_order_filled
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: get_order_filled(self._clob, order_id))
+
+    async def verified_filled(self, order_id: str,
+                              condition_id: str = None) -> Optional[float]:
+        """AUTHORITATIVE fills from the CLOB trade record (maker+taker legs).
+        0.0 = genuinely unfilled; None = lookup failed (retry later)."""
+        if not self.live or not order_id:
+            return None
+        from engine.clob import get_order_filled_verified
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: get_order_filled_verified(self._clob, order_id, condition_id))
 
     async def cancel(self, order_id: str) -> bool:
         """Cancel a resting order (unfilled snipe bid at window end)."""
