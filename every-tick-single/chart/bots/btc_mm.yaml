@@ -1,0 +1,22 @@
+# btc-mm — neutral two-sided maker rebate farmer (PAPER first, flip live via
+# liveTrading+dryRun once paper confirms behavior; live risk = mmMaxDdUsd).
+# Mirrored post-only GTC BUY limits around the mid (UP mid−1c / DOWN mirrored,
+# pair cost ≤ 98c → both-fill locks ~2c/share + maker rebates). Re-quotes on
+# ≥2c drift until first fill, cancels at T−60s, holds fills to resolution.
+# Install: helm upgrade --install btc-mm-every-tick-single ./chart \
+#   -f chart/bots/btc_mm.yaml -n every-tick-single
+botName: btc-mm
+
+bot:
+  entrypoint: "mirror_maker.py"
+  coin: "btc"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  mmNotionalUsd: "5"
+  mmOffsetCents: "1"
+  mmRequoteCents: "2"
+  mmCutoffSecs: "60"
+  mmMaxDdUsd: "20"

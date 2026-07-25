@@ -71,3 +71,6 @@ pattern-bot/k8s/helm/pattern-bot/files/bot/*.py
 
 every-tick-single/backtest/fiftycent/models
 every-tick-single/.v4-wip/
+
+# every-tick-single recorder archive (large, local-only)
+every-tick-single/data/
