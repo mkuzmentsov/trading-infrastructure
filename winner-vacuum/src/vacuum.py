@@ -45,6 +45,12 @@ FIRE_MAX = float(os.getenv("SNIPE_FIRE_MAX_SECS", "20"))
 NOTIONAL = float(os.getenv("SNIPE_NOTIONAL", "100"))
 MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "8"))
 MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "100"))
+# v2 state-lock: below the lead gate, lock the winner from POST-CLOSE PRINTS —
+# the first token trading rich with real size is the winner being bought by
+# informed flow (mirrors the source wallet, which trades nearly every bar)
+CONFIRM_WAIT = float(os.getenv("VAC_CONFIRM_WAIT_SECS", "6"))
+CONFIRM_PX = float(os.getenv("VAC_CONFIRM_PX", "0.90"))
+CONFIRM_SH = float(os.getenv("VAC_CONFIRM_MIN_SH", "20"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -104,6 +110,25 @@ class VacuumStrategy:
             reqs.append(("vac-DOWN", ctx.down_token, CAP, sz))
         return reqs
 
+    def _print_confirm(self, ws: int):
+        """Post-close print signature: cumulative shares traded at >=CONFIRM_PX
+        per token since bar close. Returns 'UP'/'DOWN' when one side qualifies."""
+        from core.pm_ws import pm_state
+        end = ws + 300
+        up_sh = dn_sh = 0.0
+        for tr in pm_state.recent_trades:
+            if tr["ts"] < end or float(tr["price"]) < CONFIRM_PX:
+                continue
+            if tr["token_id"] == pm_state.token_id_up:
+                up_sh += float(tr["size"])
+            elif tr["token_id"] == pm_state.token_id_down:
+                dn_sh += float(tr["size"])
+        if up_sh >= CONFIRM_SH and up_sh > 4 * dn_sh:
+            return "UP"
+        if dn_sh >= CONFIRM_SH and dn_sh > 4 * up_sh:
+            return "DOWN"
+        return None
+
     def _prune(self, ws: int) -> None:
         for d in (self._last_lead, self._winner, self._order, self._imm_fill,
                   self._imm_px):
@@ -130,17 +155,29 @@ class VacuumStrategy:
             await self._finalize(ws)
             return
 
-        # lock the winner once; skip near-ties (mislock at 0.99 is the ONLY risk)
+        # lock the winner once: decisive spot lead first; else (near-tie) wait
+        # for POST-CLOSE PRINT confirmation — first token trading >=CONFIRM_PX
+        # with >=CONFIRM_SH cumulative shares is the winner
         if ws not in self._winner:
             lead = self._last_lead.get(ws)
-            if lead is None or abs(lead) * 1e4 < MIN_LEAD_BPS:
-                self._done.add(ws)
-                _event("VAC_SKIP", bar=ws, reason="no_lead_or_tie",
-                       lead_bps=None if lead is None else round(lead * 1e4, 1))
-                return
-            self._winner[ws] = "UP" if lead > 0 else "DOWN"
-            _event("VAC_LOCK", bar=ws, winner=self._winner[ws],
-                   lead_bps=round(lead * 1e4, 1), tl_after=round(tl_after, 2))
+            if lead is not None and abs(lead) * 1e4 >= MIN_LEAD_BPS:
+                self._winner[ws] = "UP" if lead > 0 else "DOWN"
+                _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="lead",
+                       lead_bps=round(lead * 1e4, 1), tl_after=round(tl_after, 2))
+            else:
+                side = self._print_confirm(ws)
+                if side is not None:
+                    self._winner[ws] = side
+                    _event("VAC_LOCK", bar=ws, winner=side, source="prints",
+                           lead_bps=None if lead is None else round(lead * 1e4, 1),
+                           tl_after=round(tl_after, 2))
+                elif tl_after > CONFIRM_WAIT:
+                    self._done.add(ws)
+                    _event("VAC_SKIP", bar=ws, reason="tie_unconfirmed",
+                           lead_bps=None if lead is None else round(lead * 1e4, 1))
+                    return
+                else:
+                    return                    # keep waiting for confirming prints
 
         # place the resting GTC bid ONCE
         if ws not in self._order:

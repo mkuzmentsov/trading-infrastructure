@@ -18,7 +18,7 @@ bot:
   snipeCap: "0.99"
   snipeFireMaxSecs: "20"
   snipeNotional: "20"
-  snipeMinLeadBps: "8"
+  snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "30"
   favOrderType: "gtc"
   liveMaxOrderUsd: "25"
