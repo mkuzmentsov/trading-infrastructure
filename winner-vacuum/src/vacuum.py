@@ -50,7 +50,9 @@ MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "100"))
 # informed flow (mirrors the source wallet, which trades nearly every bar)
 CONFIRM_WAIT = float(os.getenv("VAC_CONFIRM_WAIT_SECS", "6"))
 CONFIRM_PX = float(os.getenv("VAC_CONFIRM_PX", "0.90"))
-CONFIRM_SH = float(os.getenv("VAC_CONFIRM_MIN_SH", "20"))
+CONFIRM_SH = float(os.getenv("VAC_CONFIRM_MIN_SH", "100"))
+CONFIRM_MIN_ELAPSED = float(os.getenv("VAC_CONFIRM_MIN_ELAPSED", "2.0"))
+PRINT_CAP = float(os.getenv("VAC_PRINT_CAP", "0.93"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -90,6 +92,7 @@ class VacuumStrategy:
         self._last_lead: dict[int, float] = {}   # ws -> last pre-close lead
         self._winner: dict[int, str] = {}        # ws -> "UP"/"DOWN" (locked)
         self._order: dict[int, str] = {}         # ws -> resting order id
+        self._lock_src: dict[int, str] = {}      # ws -> "lead"|"prints"
         self._imm_fill: dict[int, float] = {}    # ws -> shares filled on placement
         self._imm_px: dict[int, float] = {}      # ws -> avg px of placement cross
         self._done: set[int] = set()
@@ -131,7 +134,7 @@ class VacuumStrategy:
 
     def _prune(self, ws: int) -> None:
         for d in (self._last_lead, self._winner, self._order, self._imm_fill,
-                  self._imm_px):
+                  self._imm_px, self._lock_src):
             for k in [k for k in d if k < ws - 3600]:
                 d.pop(k, None)
         self._done = {k for k in self._done if k >= ws - 3600}
@@ -162,12 +165,14 @@ class VacuumStrategy:
             lead = self._last_lead.get(ws)
             if lead is not None and abs(lead) * 1e4 >= MIN_LEAD_BPS:
                 self._winner[ws] = "UP" if lead > 0 else "DOWN"
+                self._lock_src[ws] = "lead"
                 _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="lead",
                        lead_bps=round(lead * 1e4, 1), tl_after=round(tl_after, 2))
             else:
-                side = self._print_confirm(ws)
+                side = self._print_confirm(ws) if tl_after >= CONFIRM_MIN_ELAPSED else None
                 if side is not None:
                     self._winner[ws] = side
+                    self._lock_src[ws] = "prints"
                     _event("VAC_LOCK", bar=ws, winner=side, source="prints",
                            lead_bps=None if lead is None else round(lead * 1e4, 1),
                            tl_after=round(tl_after, 2))
@@ -185,8 +190,15 @@ class VacuumStrategy:
             win = self._winner[ws]
             token = ctx.up_token if win == "UP" else ctx.down_token
             key = f"vac-{win}"
+            printlock = self._lock_src.get(ws) == "prints"
             try:
-                if self.runner.exec.has_presigned(key):
+                if printlock:
+                    # near-tie: NEVER sweep an uncertain ladder at 0.99 —
+                    # capped bid only takes sellers who believe it's settled
+                    oid, matched, _s, post_ms, avg_px, filled = \
+                        await self.runner.exec.fire_direct(
+                            token, PRINT_CAP, _shares(NOTIONAL))
+                elif self.runner.exec.has_presigned(key):
                     oid, matched, post_ms, avg_px, filled = \
                         await self.runner.exec.fire_presigned(key)
                 else:
