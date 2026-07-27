@@ -372,12 +372,17 @@ class VacuumStrategy:
                     side_now = self._winner.get(ws)
                     bid = (pm_state.up_bid if side_now == "UP"
                            else pm_state.down_bid)
-                    collapsed = (bid is not None and 0 < bid < 0.90
-                                 and bid != 0.5)
+                    # debounce: a single-tick bid flicker <0.90 aborted a
+                    # healthy -8.8bps winner (eth 23:09) — require the
+                    # collapse to persist 2 consecutive ticks
+                    if bid is not None and 0 < bid < 0.90 and bid != 0.5:
+                        self._collapse_ct[ws] = self._collapse_ct.get(ws, 0) + 1
+                    else:
+                        self._collapse_ct[ws] = 0
                     bad = (known is None or ctx.spot_age > 20.0
                            or abs(known) * 1e4 < PRE_CANCEL_BPS
                            or (known > 0) != (side_now == "UP")
-                           or collapsed)
+                           or self._collapse_ct[ws] >= 2)
                     if bad:
                         await self._maker_abort(ctx, ws, known, tl)
                 return
