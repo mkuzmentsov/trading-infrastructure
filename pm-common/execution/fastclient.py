@@ -158,6 +158,7 @@ class FastExec:
         return order_id, matched, (time.time() - t0) * 1000.0, avg_px, filled
 
     async def fire_direct(self, token_id: str, price: float, size: float,
+                          tick_size: str = None,
                           ) -> tuple[Optional[str], bool, float, float, Optional[float], Optional[float]]:
         """Sign+POST now (fallback when no presigned order matches).
         Returns (order_id, matched, sign_ms, post_ms, avg_fill_px, filled_shares)."""
@@ -167,7 +168,8 @@ class FastExec:
         loop = asyncio.get_running_loop()
         t0 = time.time()
         signed = await loop.run_in_executor(
-            None, lambda: sign_buy_order(self._clob, token_id, size, price))
+            None, lambda: sign_buy_order(self._clob, token_id, size, price,
+                                         tick_size=tick_size))
         t1 = time.time()
         order_id, matched, avg_px, filled = await loop.run_in_executor(
             None, lambda: post_signed_buy(self._clob, signed, self.order_type))

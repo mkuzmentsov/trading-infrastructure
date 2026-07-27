@@ -216,7 +216,7 @@ class VacuumStrategy:
             try:
                 oid, matched, _s, post_ms, avg_px, filled = \
                     await self.runner.exec.fire_direct(
-                        token, FINE_PX, _shares(NOTIONAL))
+                        token, FINE_PX, _shares(NOTIONAL), tick_size="0.001")
                 self._order[ws] = oid
                 self._px[ws] = FINE_PX
                 self._imm_fill[ws] = filled or 0.0

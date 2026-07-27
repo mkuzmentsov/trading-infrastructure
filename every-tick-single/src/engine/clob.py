@@ -145,6 +145,7 @@ def sign_buy_order(
     shares: float,
     price: float,
     fee_rate_bps: int = 0,
+    tick_size: str = None,
 ):
     """Build + sign a buy order without posting it. CPU-bound (~100-300ms EIP-712).
 
@@ -165,7 +166,15 @@ def sign_buy_order(
         "CLOB create_order BUY REQUEST  token=%s  price=%s  shares=%s",
         token_id, price, shares,
     )
-    signed = clob.create_order(order_args)
+    if tick_size:
+        # the client's cached tick (fetched at bar start, 0.01) rejects fine
+        # prices even after the venue's tick_size_change — override from the
+        # WS-tracked live tick instead of the stale cache
+        from py_clob_client_v2.clob_types import PartialCreateOrderOptions
+        signed = clob.create_order(
+            order_args, PartialCreateOrderOptions(tick_size=tick_size))
+    else:
+        signed = clob.create_order(order_args)
     log.info("CLOB create_order BUY RESPONSE  %s", signed)
     return signed
 
