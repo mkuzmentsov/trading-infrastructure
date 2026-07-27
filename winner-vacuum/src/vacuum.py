@@ -365,9 +365,19 @@ class VacuumStrategy:
                     # Judge on the LAST KNOWN lead; staleness alone only kills
                     # the bid if the feed is properly dead.
                     known = lead if lead is not None else self._last_lead.get(ws)
+                    # book collapse = the market repricing a flip FASTER than
+                    # the lead decays (btc 2026-07-27: abort at -2.0bps found
+                    # the bid already at 0.62; exit cost -0.36/sh). 0.5 is the
+                    # pm_state default before the book loads — not a signal.
+                    side_now = self._winner.get(ws)
+                    bid = (pm_state.up_bid if side_now == "UP"
+                           else pm_state.down_bid)
+                    collapsed = (bid is not None and 0 < bid < 0.90
+                                 and bid != 0.5)
                     bad = (known is None or ctx.spot_age > 20.0
                            or abs(known) * 1e4 < PRE_CANCEL_BPS
-                           or (known > 0) != (self._winner.get(ws) == "UP"))
+                           or (known > 0) != (side_now == "UP")
+                           or collapsed)
                     if bad:
                         await self._maker_abort(ctx, ws, known, tl)
                 return
