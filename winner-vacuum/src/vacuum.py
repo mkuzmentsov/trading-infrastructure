@@ -80,6 +80,17 @@ FINE_PX = float(os.getenv("VAC_FINE_PX", "0"))
 # abort-salvage: after a watchdog cancel, FAK-sell already-filled shares if
 # the book still bids >= this floor (0 disables; exits ~fair on a coin-flip)
 SALVAGE_FLOOR = float(os.getenv("VAC_SALVAGE_FLOOR", "0.50"))
+# v3.5 MAKER mode (separate deployment): rest a bid at MAKER_PX on the leading
+# side once the book itself prices it above us (ask > MAKER_PX) inside the
+# last MAKER_SECS of the bar, and hold through the post-close window. Sellers
+# de-risking a near-decided bar cross into us; margin is (1-MAKER_PX)/share.
+# Validated live by wallet 0x5f02d66c… ("moneymaker748": 482 btc bars/48h at
+# 0.98, 98.8% WR, +$1.2k) and on mrec (btc 900 bars: 463W/1 flip/26 salvaged,
+# +$0.42/bar/100sh, positive each day; watchdog+salvage beats hold by $426).
+# The book condition IS the gate — no lead threshold needed beyond sign.
+MODE = os.getenv("VAC_MODE", "snipe").lower()
+MAKER_PX = float(os.getenv("VAC_MAKER_PX", "0.98"))
+MAKER_SECS = float(os.getenv("VAC_MAKER_SECS", "120"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -135,13 +146,14 @@ class VacuumStrategy:
                notional=NOTIONAL, min_lead_bps=MIN_LEAD_BPS, max_dd=MAX_DAILY_LOSS)
 
     def presign_requests(self, ctx):
-        # presign BOTH sides at the cap; at close we POST the winner's as GTC
+        # presign BOTH sides; at trigger we POST the leader's as GTC
+        px = MAKER_PX if MODE == "maker" else CAP
         sz = _shares(NOTIONAL)
         reqs = []
         if ctx.up_token:
-            reqs.append(("vac-UP", ctx.up_token, CAP, sz))
+            reqs.append(("vac-UP", ctx.up_token, px, sz))
         if ctx.down_token:
-            reqs.append(("vac-DOWN", ctx.down_token, CAP, sz))
+            reqs.append(("vac-DOWN", ctx.down_token, px, sz))
         return reqs
 
     def _print_confirm(self, ws: int):
@@ -302,7 +314,82 @@ class VacuumStrategy:
                tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
                matched=matched, live=_real)
 
+    async def _maker_abort(self, ctx, ws: int, lead, tl: float) -> None:
+        self._pre_aborted.add(ws)
+        oid = self._order.get(ws)
+        if oid:
+            try:
+                await self.runner.exec.cancel(oid)
+            except Exception:
+                pass
+        _event("VAC_PRE_ABORT", bar=ws, side=self._winner.get(ws),
+               lead_bps=None if lead is None else round(lead * 1e4, 1),
+               spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
+        await self._salvage(ctx, ws)
+
+    async def _maker_tick(self, ctx) -> None:
+        """v3.5 book-maker: rest MAKER_PX on the leader while the book prices
+        it above us; watchdog-cancel+salvage on decay; hold winners through
+        the post-close window for the capital-freeing flow."""
+        ws = ctx.ws
+        tl = ctx.t_left
+        from core.pm_ws import pm_state
+        if tl >= 0:
+            lead = None
+            if ctx.bar_open and ctx.spot > 0 and ctx.spot_age <= 5.0:
+                lead = (ctx.spot - ctx.bar_open) / ctx.bar_open
+                self._last_lead[ws] = lead
+            if self.halted or ws in self._done:
+                return
+            if ws in self._pre_placed:
+                if self._order.get(ws) and ws not in self._pre_aborted:
+                    bad = (lead is None or ctx.spot_age > 5.0
+                           or abs(lead) * 1e4 < PRE_CANCEL_BPS
+                           or (lead > 0) != (self._winner.get(ws) == "UP"))
+                    if bad:
+                        await self._maker_abort(ctx, ws, lead, tl)
+                return
+            if (tl > MAKER_SECS or lead is None or lead == 0
+                    or ctx.spot_age > 2.0):
+                return
+            side = "UP" if lead > 0 else "DOWN"
+            ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
+            if ask is None or ask <= MAKER_PX + 1e-9:
+                return          # book not above us yet — a bid at MAKER_PX
+                                # would cross; wait until we would rest
+            self._winner[ws] = side
+            self._lock_src[ws] = "maker"
+            self._pre_placed.add(ws)
+            _event("VAC_LOCK", bar=ws, winner=side, source="maker",
+                   lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2))
+            await self._place(ctx, ws, MAKER_PX, True, -tl)
+            return
+        # post-close: ride the resting bid (winner-side sellers keep crossing)
+        if ws in self._done:
+            return
+        if ws not in self._pre_placed or not self._order.get(ws):
+            await self._finalize(ws)
+            return
+        tl_after = -tl
+        if ws not in self._pre_aborted:
+            lead = self._last_lead.get(ws)
+            side = self._winner.get(ws)
+            ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
+            bad = (lead is None or abs(lead) * 1e4 < PRE_CANCEL_BPS
+                   or (lead > 0) != (side == "UP")
+                   # book says our side LOST — its ask collapsed to loser
+                   # prices and our 0.98 bid is a target; get out now
+                   or (ask is not None and ask < 0.90))
+            if bad:
+                await self._maker_abort(ctx, ws, lead, tl)
+                await self._finalize(ws)
+                return
+        if tl_after > FIRE_MAX:
+            await self._finalize(ws)
+
     async def on_tick(self, ctx) -> None:
+        if MODE == "maker":
+            return await self._maker_tick(ctx)
         ws = ctx.ws
         tl = ctx.t_left
 

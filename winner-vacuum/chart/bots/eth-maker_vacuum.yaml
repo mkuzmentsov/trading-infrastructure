@@ -1,0 +1,32 @@
+# eth-maker — v3.5 PRE-CLOSE 98c book-maker (separate pod from eth-vacuum).
+# Rests a GTC bid at 0.98 on the leading side once the book prices it above
+# us (ask > 0.98) inside the last 120s; watchdog cancels + salvages on lead
+# decay/flip; winners held through the post-close window and redeemed at $1.
+# Validated: wallet 0x5f02d66c ("moneymaker748") live 482 eth bars/48h 98.8%
+# WR +$1.2k; our mrec backtest 900 bars: 463W/1F/26 salv, +$0.42/bar/100sh,
+# positive every day. LIVE deploy via ./deploy.sh eth-maker live.
+botName: eth-maker-vacuum
+
+bot:
+  entrypoint: "vacuum.py"
+  coin: "eth"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  postCloseGraceSecs: "50"
+  vacMode: "maker"
+  vacMakerPx: "0.98"
+  vacMakerSecs: "120"
+  snipeCap: "0.99"
+  snipeFireMaxSecs: "45"
+  snipeNotional: "50"
+  snipeMinLeadBps: "3"
+  snipeMaxDailyLoss: "40"
+  vacPreCancelBps: "2.0"
+  favOrderType: "gtc"
+  liveMaxOrderUsd: "25"
+  liveMaxDailyLossUsd: "40"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
+  polymarketRtdsSymbol: "eth/usd"
