@@ -167,12 +167,17 @@ def sign_buy_order(
         token_id, price, shares,
     )
     if tick_size:
-        # the client's cached tick (fetched at bar start, 0.01) rejects fine
-        # prices even after the venue's tick_size_change — override from the
-        # WS-tracked live tick instead of the stale cache
+        # the client caches each token's tick at first lookup (bar-start
+        # prewarm = 0.01) and validates BOTH the price and any explicit
+        # options.tick_size against that stale cache after the venue's
+        # tick_size_change — update the cache itself from the WS-tracked tick
+        try:
+            clob._ClobClient__tick_sizes[token_id] = str(tick_size)
+        except Exception:
+            pass
         from py_clob_client_v2.clob_types import PartialCreateOrderOptions
         signed = clob.create_order(
-            order_args, PartialCreateOrderOptions(tick_size=tick_size))
+            order_args, PartialCreateOrderOptions(tick_size=str(tick_size)))
     else:
         signed = clob.create_order(order_args)
     log.info("CLOB create_order BUY RESPONSE  %s", signed)

@@ -351,6 +351,18 @@ class VacuumStrategy:
         # place the resting GTC bid ONCE
         if ws not in self._order:
             printlock = self._lock_src.get(ws) == "prints"
+            if printlock:
+                # book-sanity: if the "winner's" own ask sits at loser prices
+                # the prints were wrong/stale (bnb 2026-07-27: confirm said UP
+                # while UP's ask was 0.01 — bid crossed at 1c and lost)
+                from core.pm_ws import pm_state
+                win = self._winner[ws]
+                ask = pm_state.up_ask if win == "UP" else pm_state.down_ask
+                if ask is not None and ask < CONFIRM_PX:
+                    self._done.add(ws)
+                    _event("VAC_SKIP", bar=ws, reason="prints_book_conflict",
+                           side=win, ask=ask)
+                    return
             # near-tie print-lock: NEVER sweep an uncertain ladder at 0.99 —
             # capped bid only takes sellers who believe it's settled
             await self._place(ctx, ws, PRINT_CAP if printlock else CAP,
