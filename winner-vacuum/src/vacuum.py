@@ -53,6 +53,15 @@ CONFIRM_PX = float(os.getenv("VAC_CONFIRM_PX", "0.90"))
 CONFIRM_SH = float(os.getenv("VAC_CONFIRM_MIN_SH", "100"))
 CONFIRM_MIN_ELAPSED = float(os.getenv("VAC_CONFIRM_MIN_ELAPSED", "2.0"))
 PRINT_CAP = float(os.getenv("VAC_PRINT_CAP", "0.93"))
+# v3 pre-close queue entry: the 0.99 bid queue is FIFO per price level and the
+# post-close absorber (0xA7614974) only places AFTER close — resting our GTC a
+# couple seconds BEFORE close on decided bars puts us ahead of it for the
+# entire post-close capital-freeing flow. Gate per coin at the 0-flip lead
+# threshold measured on mrec (btc/eth/sol 5bps, doge 8, bnb 10, xrp 15); a
+# watchdog cancels if the lead decays before close. 0 disables.
+PRE_LEAD_BPS = float(os.getenv("VAC_PRE_LEAD_BPS", "0"))
+PRE_PLACE_SECS = float(os.getenv("VAC_PRE_PLACE_SECS", "2.0"))
+PRE_CANCEL_BPS = float(os.getenv("VAC_PRE_CANCEL_BPS", "2.0"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -92,7 +101,9 @@ class VacuumStrategy:
         self._last_lead: dict[int, float] = {}   # ws -> last pre-close lead
         self._winner: dict[int, str] = {}        # ws -> "UP"/"DOWN" (locked)
         self._order: dict[int, str] = {}         # ws -> resting order id
-        self._lock_src: dict[int, str] = {}      # ws -> "lead"|"prints"
+        self._lock_src: dict[int, str] = {}      # ws -> "pre"|"lead"|"prints"
+        self._pre_placed: set[int] = set()       # bars entered pre-close
+        self._pre_aborted: set[int] = set()      # pre-close watchdog cancels
         self._imm_fill: dict[int, float] = {}    # ws -> shares filled on placement
         self._imm_px: dict[int, float] = {}      # ws -> avg px of placement cross
         self._done: set[int] = set()
@@ -138,15 +149,84 @@ class VacuumStrategy:
             for k in [k for k in d if k < ws - 3600]:
                 d.pop(k, None)
         self._done = {k for k in self._done if k >= ws - 3600}
+        self._pre_placed = {k for k in self._pre_placed if k >= ws - 3600}
+        self._pre_aborted = {k for k in self._pre_aborted if k >= ws - 3600}
+
+    async def _place(self, ctx, ws: int, price_cap: float, use_presigned: bool,
+                     tl_after: float) -> None:
+        """Post the GTC bid on the locked winner ONCE (pre- or post-close)."""
+        self._order[ws] = None
+        win = self._winner[ws]
+        token = ctx.up_token if win == "UP" else ctx.down_token
+        key = f"vac-{win}"
+        try:
+            if use_presigned and self.runner.exec.has_presigned(key):
+                oid, matched, post_ms, avg_px, filled = \
+                    await self.runner.exec.fire_presigned(key)
+            else:
+                oid, matched, _s, post_ms, avg_px, filled = \
+                    await self.runner.exec.fire_direct(
+                        token, price_cap, _shares(NOTIONAL))
+        except Exception as exc:
+            _event("VAC_ERR", bar=ws, side=win, err=str(exc)[:160])
+            if self._lock_src.get(ws) == "pre":
+                # forget the pre-lock so the post-close path gets a clean try
+                self._order.pop(ws, None)
+                self._winner.pop(ws, None)
+                self._lock_src.pop(ws, None)
+                self._pre_placed.discard(ws)
+            return
+        self._order[ws] = oid
+        self._imm_fill[ws] = filled or 0.0
+        self._imm_px[ws] = avg_px if avg_px else None
+        _event("VAC_REST", bar=ws, side=win, order=oid or "FAILED",
+               source=self._lock_src.get(ws),
+               imm_fill=round(filled or 0.0, 1),
+               imm_px=None if avg_px is None else round(avg_px, 4),
+               tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
+               matched=matched, live=_real)
 
     async def on_tick(self, ctx) -> None:
         ws = ctx.ws
         tl = ctx.t_left
 
-        # ── PRE-CLOSE: cache the lead for the winner-lock at close ───────────
+        # ── PRE-CLOSE: cache the lead; v3 queue entry near close ─────────────
         if tl >= 0:
+            lead = None
             if ctx.bar_open and ctx.spot > 0 and ctx.spot_age <= 5.0:
-                self._last_lead[ws] = (ctx.spot - ctx.bar_open) / ctx.bar_open
+                lead = (ctx.spot - ctx.bar_open) / ctx.bar_open
+                self._last_lead[ws] = lead
+            if PRE_LEAD_BPS <= 0 or self.halted or ws in self._done:
+                return
+            if ws in self._pre_placed:
+                # watchdog: kill the resting bid if the lead decays/flips or
+                # the spot feed goes stale before close
+                oid = self._order.get(ws)
+                if oid and ws not in self._pre_aborted:
+                    bad = (lead is None or ctx.spot_age > 3.0
+                           or abs(lead) * 1e4 < PRE_CANCEL_BPS
+                           or (lead > 0) != (self._winner.get(ws) == "UP"))
+                    if bad:
+                        self._pre_aborted.add(ws)
+                        try:
+                            await self.runner.exec.cancel(oid)
+                        except Exception:
+                            pass
+                        _event("VAC_PRE_ABORT", bar=ws,
+                               side=self._winner.get(ws),
+                               lead_bps=None if lead is None else round(lead * 1e4, 1),
+                               spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
+                return
+            if (tl <= PRE_PLACE_SECS and lead is not None
+                    and ctx.spot_age <= 2.0
+                    and abs(lead) * 1e4 >= PRE_LEAD_BPS
+                    and ws not in self._winner):
+                self._winner[ws] = "UP" if lead > 0 else "DOWN"
+                self._lock_src[ws] = "pre"
+                self._pre_placed.add(ws)
+                _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="pre",
+                       lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2))
+                await self._place(ctx, ws, CAP, True, -tl)
             return
 
         # ── POST-CLOSE window ────────────────────────────────────────────────
@@ -186,35 +266,11 @@ class VacuumStrategy:
 
         # place the resting GTC bid ONCE
         if ws not in self._order:
-            self._order[ws] = None
-            win = self._winner[ws]
-            token = ctx.up_token if win == "UP" else ctx.down_token
-            key = f"vac-{win}"
             printlock = self._lock_src.get(ws) == "prints"
-            try:
-                if printlock:
-                    # near-tie: NEVER sweep an uncertain ladder at 0.99 —
-                    # capped bid only takes sellers who believe it's settled
-                    oid, matched, _s, post_ms, avg_px, filled = \
-                        await self.runner.exec.fire_direct(
-                            token, PRINT_CAP, _shares(NOTIONAL))
-                elif self.runner.exec.has_presigned(key):
-                    oid, matched, post_ms, avg_px, filled = \
-                        await self.runner.exec.fire_presigned(key)
-                else:
-                    oid, matched, _s, post_ms, avg_px, filled = \
-                        await self.runner.exec.fire_direct(token, CAP, _shares(NOTIONAL))
-            except Exception as exc:
-                _event("VAC_ERR", bar=ws, side=win, err=str(exc)[:160])
-                return
-            self._order[ws] = oid
-            self._imm_fill[ws] = filled or 0.0
-            self._imm_px[ws] = avg_px if avg_px else None
-            _event("VAC_REST", bar=ws, side=win, order=oid or "FAILED",
-                   imm_fill=round(filled or 0.0, 1),
-                   imm_px=None if avg_px is None else round(avg_px, 4),
-                   tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
-                   matched=matched, live=_real)
+            # near-tie print-lock: NEVER sweep an uncertain ladder at 0.99 —
+            # capped bid only takes sellers who believe it's settled
+            await self._place(ctx, ws, PRINT_CAP if printlock else CAP,
+                              not printlock, tl_after)
 
     async def _finalize(self, ws: int) -> None:
         if ws in self._done:
