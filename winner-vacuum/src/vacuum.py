@@ -177,7 +177,7 @@ class VacuumStrategy:
 
     def _prune(self, ws: int) -> None:
         for d in (self._last_lead, self._winner, self._order, self._imm_fill,
-                  self._imm_px, self._lock_src, self._px):
+                  self._imm_px, self._lock_src, self._px, self._collapse_ct):
             for k in [k for k in d if k < ws - 3600]:
                 d.pop(k, None)
         self._done = {k for k in self._done if k >= ws - 3600}
