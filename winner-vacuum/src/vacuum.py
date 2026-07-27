@@ -173,10 +173,17 @@ class VacuumStrategy:
     async def _upgrade_to_fine(self, ctx, ws: int, tl: float) -> None:
         """Near close: swap an (unfilled) 0.99 rest for the FINE_PX bid —
         price priority beats the size wall; a filled/partial order is kept."""
-        self._upgraded.add(ws)
         oid = self._order.get(ws)
         if not oid:
+            self._upgraded.add(ws)
             return
+        win = self._winner.get(ws)
+        token = ctx.up_token if win == "UP" else ctx.down_token
+        from core.pm_ws import pm_state
+        if pm_state.tick_size.get(token, 0.01) >= 0.01:
+            return           # tick still coarse — keep the 0.99 queue spot,
+                             # retry on a later tick until close
+        self._upgraded.add(ws)
         filled = self.runner.exec.ws_filled(oid) if _real else None
         if filled is None:
             filled = await self.runner.exec.poll_filled(oid) or 0.0
@@ -197,6 +204,12 @@ class VacuumStrategy:
         token = ctx.up_token if win == "UP" else ctx.down_token
         key = f"vac-{win}"
         placed_px = price_cap
+        if try_fine and FINE_PX > 0:
+            # fine prices are only valid once THIS token's tick flipped to
+            # 0.001 (venue flips it when the token trades past 0.96) — check
+            # the WS-tracked tick instead of eating a rejection round-trip
+            from core.pm_ws import pm_state
+            try_fine = pm_state.tick_size.get(token, 0.01) < 0.01
         if try_fine and FINE_PX > 0:
             # price-priority jump over the 0.99 size wall; the venue rejects
             # it while the tick is still 0.01 -> fall through to the cap path

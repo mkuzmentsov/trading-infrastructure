@@ -67,6 +67,9 @@ class PMState:
         self.last_ws_message_at: float = 0.0
         self.last_ws_message_kind: str = "never"
         self.last_tick_size_change_at: float = 0.0
+        # token_id -> current tick size (from tick_size_change events; a token
+        # absent from the dict is at the default 0.01)
+        self.tick_size: dict = {}
         # Trade prints (last_trade_price events). Each entry:
         # {"seq", "ts", "token_id", "price", "size", "side"}. seq is a
         # session-monotonic counter so consumers (paper fill engine) can keep
@@ -546,6 +549,13 @@ async def run_pm_ws() -> None:
                                         _handle_last_trade_price(msg)
                                     elif event_type == "tick_size_change":
                                         pm_state.last_tick_size_change_at = time.time()
+                                        try:
+                                            if len(pm_state.tick_size) > 64:
+                                                pm_state.tick_size.clear()
+                                            pm_state.tick_size[msg.get("asset_id", "")] = \
+                                                float(msg.get("new_tick_size") or 0.01)
+                                        except Exception:
+                                            pass
                                         log.info(
                                             "PM WS tick_size_change  asset=%s old=%s new=%s",
                                             msg.get("asset_id", "")[:16],
