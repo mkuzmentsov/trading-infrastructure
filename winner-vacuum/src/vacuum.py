@@ -69,6 +69,14 @@ PRE_CANCEL_BPS = float(os.getenv("VAC_PRE_CANCEL_BPS", "2.0"))
 # same trade at a better price per the flip table. 0 disables.
 EARLY_LEAD_BPS = float(os.getenv("VAC_EARLY_LEAD_BPS", "0"))
 EARLY_PLACE_SECS = float(os.getenv("VAC_EARLY_PLACE_SECS", "45"))
+# fine-tick price jump: matching inside a price level is effectively
+# size-weighted (0.04-0.9M-share bluff walls at 0.99; our $40 captured 0 of
+# $6.8k printed flow on 2026-07-27 quiet hours) — but PRICE priority beats
+# size, and tick flips 0.01->0.001 once the book crosses 0.96 (~40s
+# pre-close). Bidding FINE_PX (0.995) tops the whole 0.99 wall at 0.5%/share
+# margin. Try fine first near/after close, fall back to CAP when the tick is
+# still coarse. 0 disables.
+FINE_PX = float(os.getenv("VAC_FINE_PX", "0"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -111,6 +119,8 @@ class VacuumStrategy:
         self._lock_src: dict[int, str] = {}      # ws -> "pre"|"lead"|"prints"
         self._pre_placed: set[int] = set()       # bars entered pre-close
         self._pre_aborted: set[int] = set()      # pre-close watchdog cancels
+        self._px: dict[int, float] = {}          # ws -> resting price
+        self._upgraded: set[int] = set()         # bars re-placed at FINE_PX
         self._imm_fill: dict[int, float] = {}    # ws -> shares filled on placement
         self._imm_px: dict[int, float] = {}      # ws -> avg px of placement cross
         self._done: set[int] = set()
@@ -152,20 +162,62 @@ class VacuumStrategy:
 
     def _prune(self, ws: int) -> None:
         for d in (self._last_lead, self._winner, self._order, self._imm_fill,
-                  self._imm_px, self._lock_src):
+                  self._imm_px, self._lock_src, self._px):
             for k in [k for k in d if k < ws - 3600]:
                 d.pop(k, None)
         self._done = {k for k in self._done if k >= ws - 3600}
         self._pre_placed = {k for k in self._pre_placed if k >= ws - 3600}
         self._pre_aborted = {k for k in self._pre_aborted if k >= ws - 3600}
+        self._upgraded = {k for k in self._upgraded if k >= ws - 3600}
+
+    async def _upgrade_to_fine(self, ctx, ws: int, tl: float) -> None:
+        """Near close: swap an (unfilled) 0.99 rest for the FINE_PX bid —
+        price priority beats the size wall; a filled/partial order is kept."""
+        self._upgraded.add(ws)
+        oid = self._order.get(ws)
+        if not oid:
+            return
+        filled = self.runner.exec.ws_filled(oid) if _real else None
+        if filled is None:
+            filled = await self.runner.exec.poll_filled(oid) or 0.0
+        if filled and filled > 0:
+            return                       # working order — keep the position
+        try:
+            await self.runner.exec.cancel(oid)
+        except Exception:
+            pass
+        self._order.pop(ws, None)
+        await self._place(ctx, ws, CAP, False, -tl, try_fine=True)
 
     async def _place(self, ctx, ws: int, price_cap: float, use_presigned: bool,
-                     tl_after: float) -> None:
+                     tl_after: float, try_fine: bool = False) -> None:
         """Post the GTC bid on the locked winner ONCE (pre- or post-close)."""
         self._order[ws] = None
         win = self._winner[ws]
         token = ctx.up_token if win == "UP" else ctx.down_token
         key = f"vac-{win}"
+        placed_px = price_cap
+        if try_fine and FINE_PX > 0:
+            # price-priority jump over the 0.99 size wall; the venue rejects
+            # it while the tick is still 0.01 -> fall through to the cap path
+            try:
+                oid, matched, _s, post_ms, avg_px, filled = \
+                    await self.runner.exec.fire_direct(
+                        token, FINE_PX, _shares(NOTIONAL))
+                self._order[ws] = oid
+                self._px[ws] = FINE_PX
+                self._imm_fill[ws] = filled or 0.0
+                self._imm_px[ws] = avg_px if avg_px else None
+                _event("VAC_REST", bar=ws, side=win, order=oid or "FAILED",
+                       source=self._lock_src.get(ws), px=FINE_PX,
+                       imm_fill=round(filled or 0.0, 1),
+                       imm_px=None if avg_px is None else round(avg_px, 4),
+                       tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
+                       matched=matched, live=_real)
+                return
+            except Exception as exc:
+                _event("VAC_FINE_REJ", bar=ws, side=win, px=FINE_PX,
+                       err=str(exc)[:120])
         try:
             if use_presigned and self.runner.exec.has_presigned(key):
                 oid, matched, post_ms, avg_px, filled = \
@@ -184,10 +236,11 @@ class VacuumStrategy:
                 self._pre_placed.discard(ws)
             return
         self._order[ws] = oid
+        self._px[ws] = placed_px
         self._imm_fill[ws] = filled or 0.0
         self._imm_px[ws] = avg_px if avg_px else None
         _event("VAC_REST", bar=ws, side=win, order=oid or "FAILED",
-               source=self._lock_src.get(ws),
+               source=self._lock_src.get(ws), px=placed_px,
                imm_fill=round(filled or 0.0, 1),
                imm_px=None if avg_px is None else round(avg_px, 4),
                tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
@@ -226,6 +279,9 @@ class VacuumStrategy:
                                side=self._winner.get(ws),
                                lead_bps=None if lead is None else round(lead * 1e4, 1),
                                spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
+                    elif (FINE_PX > 0 and tl <= PRE_PLACE_SECS
+                          and ws not in self._upgraded):
+                        await self._upgrade_to_fine(ctx, ws, tl)
                 return
             qualifies = (lead is not None and ctx.spot_age <= 2.0 and (
                 (tl <= PRE_PLACE_SECS and abs(lead) * 1e4 >= PRE_LEAD_BPS)
@@ -237,7 +293,11 @@ class VacuumStrategy:
                 self._pre_placed.add(ws)
                 _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="pre",
                        lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2))
-                await self._place(ctx, ws, CAP, True, -tl)
+                fine_now = tl <= PRE_PLACE_SECS      # tick is fine only near close
+                if fine_now:
+                    self._upgraded.add(ws)
+                await self._place(ctx, ws, CAP, not fine_now, -tl,
+                                  try_fine=fine_now)
             return
 
         # ── POST-CLOSE window ────────────────────────────────────────────────
@@ -281,7 +341,7 @@ class VacuumStrategy:
             # near-tie print-lock: NEVER sweep an uncertain ladder at 0.99 —
             # capped bid only takes sellers who believe it's settled
             await self._place(ctx, ws, PRINT_CAP if printlock else CAP,
-                              not printlock, tl_after)
+                              not printlock, tl_after, try_fine=not printlock)
 
     async def _finalize(self, ws: int) -> None:
         if ws in self._done:
@@ -306,8 +366,9 @@ class VacuumStrategy:
             await self.runner.exec.cancel(oid)
         win = self._winner[ws]
         if filled and filled > 0:
+            rest_px = self._px.get(ws, CAP)
             rested = max(0.0, filled - imm)
-            cost = imm * (imm_px if imm_px else CAP) + rested * CAP
+            cost = imm * (imm_px if imm_px else rest_px) + rested * rest_px
             fill_px = cost / filled
             # PROVISIONAL until settle_loop verifies vs the CLOB trade record
             # (poll_filled fabricates fills for culled orders — 2026-07-25)
