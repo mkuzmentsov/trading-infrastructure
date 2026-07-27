@@ -17,7 +17,7 @@ bot:
   postCloseGraceSecs: "50"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
-  snipeNotional: "40"
+  snipeNotional: "60"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "30"
   vacPreLeadBps: "5"
