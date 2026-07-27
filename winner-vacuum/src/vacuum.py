@@ -62,6 +62,13 @@ PRINT_CAP = float(os.getenv("VAC_PRINT_CAP", "0.93"))
 PRE_LEAD_BPS = float(os.getenv("VAC_PRE_LEAD_BPS", "0"))
 PRE_PLACE_SECS = float(os.getenv("VAC_PRE_PLACE_SECS", "2.0"))
 PRE_CANCEL_BPS = float(os.getenv("VAC_PRE_CANCEL_BPS", "2.0"))
+# early tier: join the 0.99 FIFO well before close on STRONG leads — the 0.99
+# level queue forms minutes early (BoneOhio-style ladders) and t-2s joins sit
+# behind it. btc mrec backtest (t<=45s arm, watchdog sim): >=8bps -> 93 armed,
+# 3 canceled, 0 flips held. May cross the book mid-bar at <=0.99 — that's the
+# same trade at a better price per the flip table. 0 disables.
+EARLY_LEAD_BPS = float(os.getenv("VAC_EARLY_LEAD_BPS", "0"))
+EARLY_PLACE_SECS = float(os.getenv("VAC_EARLY_PLACE_SECS", "45"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -220,10 +227,11 @@ class VacuumStrategy:
                                lead_bps=None if lead is None else round(lead * 1e4, 1),
                                spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
                 return
-            if (tl <= PRE_PLACE_SECS and lead is not None
-                    and ctx.spot_age <= 2.0
-                    and abs(lead) * 1e4 >= PRE_LEAD_BPS
-                    and ws not in self._winner):
+            qualifies = (lead is not None and ctx.spot_age <= 2.0 and (
+                (tl <= PRE_PLACE_SECS and abs(lead) * 1e4 >= PRE_LEAD_BPS)
+                or (EARLY_LEAD_BPS > 0 and tl <= EARLY_PLACE_SECS
+                    and abs(lead) * 1e4 >= EARLY_LEAD_BPS)))
+            if qualifies and ws not in self._winner:
                 self._winner[ws] = "UP" if lead > 0 else "DOWN"
                 self._lock_src[ws] = "pre"
                 self._pre_placed.add(ws)
