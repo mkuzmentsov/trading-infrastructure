@@ -21,7 +21,7 @@ bot:
   vacMakerSecs: "120"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
-  snipeNotional: "50"
+  snipeNotional: "80"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "40"
   vacPreCancelBps: "2.0"
