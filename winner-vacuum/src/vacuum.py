@@ -207,12 +207,21 @@ class VacuumStrategy:
         from core.pm_ws import pm_state
         bid = pm_state.up_bid if win == "UP" else pm_state.down_bid
         est_px = max(SALVAGE_FLOOR, bid) if bid is not None else SALVAGE_FLOOR
-        try:
-            sell_oid, matched = await self.runner.exec.sell_fak(
-                token, SALVAGE_FLOOR, filled)
-        except Exception as exc:
-            _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
-            return
+        sell_oid = matched = None
+        for attempt in (1, 2, 3):
+            try:
+                sell_oid, matched = await self.runner.exec.sell_fak(
+                    token, SALVAGE_FLOOR, filled)
+                break
+            except Exception as exc:
+                # a just-matched buy takes a few seconds to credit the
+                # conditional tokens on-chain — "not enough balance" right
+                # after the fill only means "not credited yet"; wait and retry
+                if "not enough balance" in str(exc) and attempt < 3:
+                    await asyncio.sleep(4.0)
+                    continue
+                _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
+                return
         _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
                floor=SALVAGE_FLOOR, est_px=round(est_px, 3), matched=matched,
                order=sell_oid, live=_real)
