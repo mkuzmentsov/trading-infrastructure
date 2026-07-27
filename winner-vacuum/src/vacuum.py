@@ -203,7 +203,10 @@ class VacuumStrategy:
                 # the spot feed goes stale before close
                 oid = self._order.get(ws)
                 if oid and ws not in self._pre_aborted:
-                    bad = (lead is None or ctx.spot_age > 3.0
+                    # staleness alone only matters if the feed dies outright:
+                    # at a >=gate lead a few blind seconds is inside the
+                    # measured 0-flip regime (alt aggTrade gaps 3s+ when quiet)
+                    bad = (lead is None or ctx.spot_age > 5.0
                            or abs(lead) * 1e4 < PRE_CANCEL_BPS
                            or (lead > 0) != (self._winner.get(ws) == "UP"))
                     if bad:
