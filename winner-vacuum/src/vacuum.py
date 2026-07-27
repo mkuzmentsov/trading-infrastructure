@@ -77,6 +77,9 @@ EARLY_PLACE_SECS = float(os.getenv("VAC_EARLY_PLACE_SECS", "45"))
 # margin. Try fine first near/after close, fall back to CAP when the tick is
 # still coarse. 0 disables.
 FINE_PX = float(os.getenv("VAC_FINE_PX", "0"))
+# abort-salvage: after a watchdog cancel, FAK-sell already-filled shares if
+# the book still bids >= this floor (0 disables; exits ~fair on a coin-flip)
+SALVAGE_FLOOR = float(os.getenv("VAC_SALVAGE_FLOOR", "0.50"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -169,6 +172,46 @@ class VacuumStrategy:
         self._pre_placed = {k for k in self._pre_placed if k >= ws - 3600}
         self._pre_aborted = {k for k in self._pre_aborted if k >= ws - 3600}
         self._upgraded = {k for k in self._upgraded if k >= ws - 3600}
+
+    async def _salvage(self, ctx, ws: int) -> None:
+        """After a watchdog abort, any shares already bought sit on a bar that
+        decayed to a near-coin-flip. If the book still prices our side at
+        >= SALVAGE_FLOOR, FAK-sell at ~fair instead of riding −0.99/share tail
+        (mrec: cancel-path fills are the single biggest EV drag on the early
+        tier). Below the floor we hold — no worse than the old behavior."""
+        oid = self._order.get(ws)
+        if not oid:
+            return
+        filled = self.runner.exec.ws_filled(oid) if _real else None
+        if filled is None:
+            filled = await self.runner.exec.poll_filled(oid) or 0.0
+        if not filled or filled <= 0:
+            return
+        win = self._winner.get(ws)
+        token = ctx.up_token if win == "UP" else ctx.down_token
+        try:
+            sell_oid, matched = await self.runner.exec.sell_fak(
+                token, SALVAGE_FLOOR, filled)
+        except Exception as exc:
+            _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
+            return
+        _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
+               floor=SALVAGE_FLOOR, matched=matched, order=sell_oid, live=_real)
+        if matched:
+            # position exited: conservative PnL at the floor; keep it out of
+            # the hold-to-resolution settle path
+            px = self._px.get(ws, CAP)
+            pnl = filled * (SALVAGE_FLOOR - px)
+            day = time.strftime("%Y-%m-%d", time.gmtime(ws))
+            self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
+            self.settled.add(ws)
+            self.open_bets[ws] = {"side": win, "fill_px": px,
+                                  "fill_qty": filled, "order_id": oid,
+                                  "verified": True, "salvaged": True}
+            _event("VAC_SETTLE", bar=ws, side=win, outcome="SALVAGED",
+                   won=False, fill_px=round(px, 4), qty=round(filled, 1),
+                   pnl=round(pnl, 3), day_pnl=round(self.day_pnl[day], 2),
+                   live=_real)
 
     async def _upgrade_to_fine(self, ctx, ws: int, tl: float) -> None:
         """Near close: swap an (unfilled) 0.99 rest for the FINE_PX bid —
@@ -292,6 +335,7 @@ class VacuumStrategy:
                                side=self._winner.get(ws),
                                lead_bps=None if lead is None else round(lead * 1e4, 1),
                                spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
+                        await self._salvage(ctx, ws)
                     elif (FINE_PX > 0 and tl <= PRE_PLACE_SECS
                           and ws not in self._upgraded):
                         await self._upgrade_to_fine(ctx, ws, tl)

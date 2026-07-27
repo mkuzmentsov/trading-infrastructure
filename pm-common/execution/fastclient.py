@@ -196,6 +196,18 @@ class FastExec:
         return await loop.run_in_executor(
             None, lambda: get_order_filled_verified(self._clob, order_id, condition_id))
 
+    async def sell_fak(self, token_id: str, min_price: float, size: float,
+                       ) -> tuple[Optional[str], bool]:
+        """FAK sell walking the bid book down to min_price (abort salvage)."""
+        if not self.live:
+            return f"paper-sell-{int(time.time())}", True
+        from engine.clob import post_signed_sell_fak, sign_sell_order
+        loop = asyncio.get_running_loop()
+        signed = await loop.run_in_executor(
+            None, lambda: sign_sell_order(self._clob, token_id, size, min_price))
+        return await loop.run_in_executor(
+            None, lambda: post_signed_sell_fak(self._clob, signed))
+
     async def cancel(self, order_id: str) -> bool:
         """Cancel a resting order (unfilled snipe bid at window end)."""
         if not self.live or not order_id:
