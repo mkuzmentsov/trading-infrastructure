@@ -201,6 +201,12 @@ class VacuumStrategy:
             return
         win = self._winner.get(ws)
         token = ctx.up_token if win == "UP" else ctx.down_token
+        # the FAK sells into the BEST bids first and only walks down to the
+        # floor — estimate the exit at the current book bid, not the floor
+        # (sol 2026-07-27: booked -14.4 at floor 0.50 for a ~0.97 exit)
+        from core.pm_ws import pm_state
+        bid = pm_state.up_bid if win == "UP" else pm_state.down_bid
+        est_px = max(SALVAGE_FLOOR, bid) if bid is not None else SALVAGE_FLOOR
         try:
             sell_oid, matched = await self.runner.exec.sell_fak(
                 token, SALVAGE_FLOOR, filled)
@@ -208,12 +214,13 @@ class VacuumStrategy:
             _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
             return
         _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
-               floor=SALVAGE_FLOOR, matched=matched, order=sell_oid, live=_real)
+               floor=SALVAGE_FLOOR, est_px=round(est_px, 3), matched=matched,
+               order=sell_oid, live=_real)
         if matched:
-            # position exited: conservative PnL at the floor; keep it out of
+            # position exited: PnL at the book-bid estimate; keep it out of
             # the hold-to-resolution settle path
             px = self._px.get(ws, CAP)
-            pnl = filled * (SALVAGE_FLOOR - px)
+            pnl = filled * (est_px - px)
             day = time.strftime("%Y-%m-%d", time.gmtime(ws))
             self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
             self.settled.add(ws)
@@ -343,13 +350,20 @@ class VacuumStrategy:
                 return
             if ws in self._pre_placed:
                 if self._order.get(ws) and ws not in self._pre_aborted:
-                    bad = (lead is None or ctx.spot_age > 5.0
-                           or abs(lead) * 1e4 < PRE_CANCEL_BPS
-                           or (lead > 0) != (self._winner.get(ws) == "UP"))
+                    # unlike the t-2s snipe window, the maker rests for up to
+                    # ~3min — alt aggTrade gaps of 5-10s are routine there
+                    # (sol 2026-07-27: a 5.1s gap salvaged a -11.8bps winner).
+                    # Judge on the LAST KNOWN lead; staleness alone only kills
+                    # the bid if the feed is properly dead.
+                    known = lead if lead is not None else self._last_lead.get(ws)
+                    bad = (known is None or ctx.spot_age > 20.0
+                           or abs(known) * 1e4 < PRE_CANCEL_BPS
+                           or (known > 0) != (self._winner.get(ws) == "UP"))
                     if bad:
-                        await self._maker_abort(ctx, ws, lead, tl)
+                        await self._maker_abort(ctx, ws, known, tl)
                 return
-            if (tl > MAKER_SECS or lead is None or lead == 0
+            if (tl > MAKER_SECS or lead is None
+                    or abs(lead) * 1e4 < PRE_CANCEL_BPS
                     or ctx.spot_age > 2.0):
                 return
             side = "UP" if lead > 0 else "DOWN"
