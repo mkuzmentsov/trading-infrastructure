@@ -80,21 +80,6 @@ FINE_PX = float(os.getenv("VAC_FINE_PX", "0"))
 # abort-salvage: after a watchdog cancel, FAK-sell already-filled shares if
 # the book still bids >= this floor (0 disables; exits ~fair on a coin-flip)
 SALVAGE_FLOOR = float(os.getenv("VAC_SALVAGE_FLOOR", "0.50"))
-# v3.5 MAKER mode (separate deployment): rest a bid at MAKER_PX on the leading
-# side once the book itself prices it above us (ask > MAKER_PX) inside the
-# last MAKER_SECS of the bar, and hold through the post-close window. Sellers
-# de-risking a near-decided bar cross into us; margin is (1-MAKER_PX)/share.
-# Validated live by wallet 0x5f02d66c… ("moneymaker748": 482 btc bars/48h at
-# 0.98, 98.8% WR, +$1.2k) and on mrec (btc 900 bars: 463W/1 flip/26 salvaged,
-# +$0.42/bar/100sh, positive each day; watchdog+salvage beats hold by $426).
-# The book condition IS the gate — no lead threshold needed beyond sign.
-MODE = os.getenv("VAC_MODE", "snipe").lower()
-MAKER_PX = float(os.getenv("VAC_MAKER_PX", "0.98"))
-MAKER_SECS = float(os.getenv("VAC_MAKER_SECS", "120"))
-# placement lead gate: live salvage exits fill ~2x worse than the sim's
-# bid-at-abort estimate, so the fill-count-optimal gate 0 loses to gate 5
-# once realistic slippage is priced (26 vs 10 salvages/900 bars)
-MAKER_MIN_LEAD = float(os.getenv("VAC_MAKER_MIN_LEAD", "0"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -141,7 +126,6 @@ class VacuumStrategy:
         self._upgraded: set[int] = set()         # bars re-placed at FINE_PX
         self._imm_fill: dict[int, float] = {}    # ws -> shares filled on placement
         self._imm_px: dict[int, float] = {}      # ws -> avg px of placement cross
-        self._collapse_ct: dict[int, int] = {}   # ws -> consecutive bid<0.90 ticks
         self._done: set[int] = set()
         self.settled: set[int] = set()
 
@@ -151,14 +135,13 @@ class VacuumStrategy:
                notional=NOTIONAL, min_lead_bps=MIN_LEAD_BPS, max_dd=MAX_DAILY_LOSS)
 
     def presign_requests(self, ctx):
-        # presign BOTH sides; at trigger we POST the leader's as GTC
-        px = MAKER_PX if MODE == "maker" else CAP
+        # presign BOTH sides at the cap; at close we POST the winner's as GTC
         sz = _shares(NOTIONAL)
         reqs = []
         if ctx.up_token:
-            reqs.append(("vac-UP", ctx.up_token, px, sz))
+            reqs.append(("vac-UP", ctx.up_token, CAP, sz))
         if ctx.down_token:
-            reqs.append(("vac-DOWN", ctx.down_token, px, sz))
+            reqs.append(("vac-DOWN", ctx.down_token, CAP, sz))
         return reqs
 
     def _print_confirm(self, ws: int):
@@ -182,7 +165,7 @@ class VacuumStrategy:
 
     def _prune(self, ws: int) -> None:
         for d in (self._last_lead, self._winner, self._order, self._imm_fill,
-                  self._imm_px, self._lock_src, self._px, self._collapse_ct):
+                  self._imm_px, self._lock_src, self._px):
             for k in [k for k in d if k < ws - 3600]:
                 d.pop(k, None)
         self._done = {k for k in self._done if k >= ws - 3600}
@@ -206,35 +189,19 @@ class VacuumStrategy:
             return
         win = self._winner.get(ws)
         token = ctx.up_token if win == "UP" else ctx.down_token
-        # the FAK sells into the BEST bids first and only walks down to the
-        # floor — estimate the exit at the current book bid, not the floor
-        # (sol 2026-07-27: booked -14.4 at floor 0.50 for a ~0.97 exit)
-        from core.pm_ws import pm_state
-        bid = pm_state.up_bid if win == "UP" else pm_state.down_bid
-        est_px = max(SALVAGE_FLOOR, bid) if bid is not None else SALVAGE_FLOOR
-        sell_oid = matched = None
-        for attempt in (1, 2, 3):
-            try:
-                sell_oid, matched = await self.runner.exec.sell_fak(
-                    token, SALVAGE_FLOOR, filled)
-                break
-            except Exception as exc:
-                # a just-matched buy takes a few seconds to credit the
-                # conditional tokens on-chain — "not enough balance" right
-                # after the fill only means "not credited yet"; wait and retry
-                if "not enough balance" in str(exc) and attempt < 3:
-                    await asyncio.sleep(4.0)
-                    continue
-                _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
-                return
+        try:
+            sell_oid, matched = await self.runner.exec.sell_fak(
+                token, SALVAGE_FLOOR, filled)
+        except Exception as exc:
+            _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
+            return
         _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
-               floor=SALVAGE_FLOOR, est_px=round(est_px, 3), matched=matched,
-               order=sell_oid, live=_real)
+               floor=SALVAGE_FLOOR, matched=matched, order=sell_oid, live=_real)
         if matched:
-            # position exited: PnL at the book-bid estimate; keep it out of
+            # position exited: conservative PnL at the floor; keep it out of
             # the hold-to-resolution settle path
             px = self._px.get(ws, CAP)
-            pnl = filled * (est_px - px)
+            pnl = filled * (SALVAGE_FLOOR - px)
             day = time.strftime("%Y-%m-%d", time.gmtime(ws))
             self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
             self.settled.add(ws)
@@ -335,108 +302,7 @@ class VacuumStrategy:
                tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
                matched=matched, live=_real)
 
-    async def _maker_abort(self, ctx, ws: int, lead, tl: float) -> None:
-        self._pre_aborted.add(ws)
-        oid = self._order.get(ws)
-        if oid:
-            try:
-                await self.runner.exec.cancel(oid)
-            except Exception:
-                pass
-        _event("VAC_PRE_ABORT", bar=ws, side=self._winner.get(ws),
-               lead_bps=None if lead is None else round(lead * 1e4, 1),
-               spot_age=round(ctx.spot_age, 1), tl=round(tl, 2))
-        await self._salvage(ctx, ws)
-
-    async def _maker_tick(self, ctx) -> None:
-        """v3.5 book-maker: rest MAKER_PX on the leader while the book prices
-        it above us; watchdog-cancel+salvage on decay; hold winners through
-        the post-close window for the capital-freeing flow."""
-        ws = ctx.ws
-        tl = ctx.t_left
-        from core.pm_ws import pm_state
-        if tl >= 0:
-            lead = None
-            if ctx.bar_open and ctx.spot > 0 and ctx.spot_age <= 5.0:
-                lead = (ctx.spot - ctx.bar_open) / ctx.bar_open
-                self._last_lead[ws] = lead
-            if self.halted or ws in self._done:
-                return
-            if ws in self._pre_placed:
-                if self._order.get(ws) and ws not in self._pre_aborted:
-                    # unlike the t-2s snipe window, the maker rests for up to
-                    # ~3min — alt aggTrade gaps of 5-10s are routine there
-                    # (sol 2026-07-27: a 5.1s gap salvaged a -11.8bps winner).
-                    # Judge on the LAST KNOWN lead; staleness alone only kills
-                    # the bid if the feed is properly dead.
-                    known = lead if lead is not None else self._last_lead.get(ws)
-                    # book collapse = the market repricing a flip FASTER than
-                    # the lead decays (btc 2026-07-27: abort at -2.0bps found
-                    # the bid already at 0.62; exit cost -0.36/sh). 0.5 is the
-                    # pm_state default before the book loads — not a signal.
-                    side_now = self._winner.get(ws)
-                    bid = (pm_state.up_bid if side_now == "UP"
-                           else pm_state.down_bid)
-                    # debounce: a single-tick bid flicker <0.90 aborted a
-                    # healthy -8.8bps winner (eth 23:09) — require the
-                    # collapse to persist 2 consecutive ticks. NEAR-CLOSE
-                    # ONLY (tl<=20): mid-bar a shrinking-but-healthy lead
-                    # legitimately reprices to 0.85-0.92 (btc t-41s: bid
-                    # 0.89 at -4.6bps aborted a winner for -$13.6); the
-                    # collapse signal means "flip" only where 0.98s trade
-                    if tl <= 20.0 and bid is not None and 0 < bid < 0.90 and bid != 0.5:
-                        self._collapse_ct[ws] = self._collapse_ct.get(ws, 0) + 1
-                    else:
-                        self._collapse_ct[ws] = 0
-                    bad = (known is None or ctx.spot_age > 20.0
-                           or abs(known) * 1e4 < PRE_CANCEL_BPS
-                           or (known > 0) != (side_now == "UP")
-                           or self._collapse_ct[ws] >= 2)
-                    if bad:
-                        await self._maker_abort(ctx, ws, known, tl)
-                return
-            if (tl > MAKER_SECS or lead is None
-                    or abs(lead) * 1e4 < max(PRE_CANCEL_BPS, MAKER_MIN_LEAD)
-                    or ctx.spot_age > 2.0):
-                return
-            side = "UP" if lead > 0 else "DOWN"
-            ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
-            if ask is None or ask <= MAKER_PX + 1e-9:
-                return          # book not above us yet — a bid at MAKER_PX
-                                # would cross; wait until we would rest
-            self._winner[ws] = side
-            self._lock_src[ws] = "maker"
-            self._pre_placed.add(ws)
-            _event("VAC_LOCK", bar=ws, winner=side, source="maker",
-                   lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2))
-            await self._place(ctx, ws, MAKER_PX, True, -tl)
-            return
-        # post-close: ride the resting bid (winner-side sellers keep crossing)
-        if ws in self._done:
-            return
-        if ws not in self._pre_placed or not self._order.get(ws):
-            await self._finalize(ws)
-            return
-        tl_after = -tl
-        if ws not in self._pre_aborted:
-            lead = self._last_lead.get(ws)
-            side = self._winner.get(ws)
-            ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
-            bad = (lead is None or abs(lead) * 1e4 < PRE_CANCEL_BPS
-                   or (lead > 0) != (side == "UP")
-                   # book says our side LOST — its ask collapsed to loser
-                   # prices and our 0.98 bid is a target; get out now
-                   or (ask is not None and ask < 0.90))
-            if bad:
-                await self._maker_abort(ctx, ws, lead, tl)
-                await self._finalize(ws)
-                return
-        if tl_after > FIRE_MAX:
-            await self._finalize(ws)
-
     async def on_tick(self, ctx) -> None:
-        if MODE == "maker":
-            return await self._maker_tick(ctx)
         ws = ctx.ws
         tl = ctx.t_left
 
