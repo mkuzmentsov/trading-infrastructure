@@ -137,6 +137,7 @@ class VacuumStrategy:
         self._upgraded: set[int] = set()         # bars re-placed at FINE_PX
         self._imm_fill: dict[int, float] = {}    # ws -> shares filled on placement
         self._imm_px: dict[int, float] = {}      # ws -> avg px of placement cross
+        self._collapse_ct: dict[int, int] = {}   # ws -> consecutive bid<0.90 ticks
         self._done: set[int] = set()
         self.settled: set[int] = set()
 
