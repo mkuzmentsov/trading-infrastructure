@@ -375,8 +375,12 @@ class VacuumStrategy:
                            else pm_state.down_bid)
                     # debounce: a single-tick bid flicker <0.90 aborted a
                     # healthy -8.8bps winner (eth 23:09) — require the
-                    # collapse to persist 2 consecutive ticks
-                    if bid is not None and 0 < bid < 0.90 and bid != 0.5:
+                    # collapse to persist 2 consecutive ticks. NEAR-CLOSE
+                    # ONLY (tl<=20): mid-bar a shrinking-but-healthy lead
+                    # legitimately reprices to 0.85-0.92 (btc t-41s: bid
+                    # 0.89 at -4.6bps aborted a winner for -$13.6); the
+                    # collapse signal means "flip" only where 0.98s trade
+                    if tl <= 20.0 and bid is not None and 0 < bid < 0.90 and bid != 0.5:
                         self._collapse_ct[ws] = self._collapse_ct.get(ws, 0) + 1
                     else:
                         self._collapse_ct[ws] = 0
