@@ -6,7 +6,7 @@ description: Scan ALL Polymarket markets, review the wallet's positions/redempti
 # pm-scout — Polymarket scan → analyze → review → execute
 
 Module: `pm-scout/` (tools + `KNOWLEDGE.md`). Wallet = the tail-bot Safe
-(creds overlay `every-tick-single/chart/bots/sol.secret.yaml`). The `<amount>`
+(creds overlay `every-tick-single/chart/bots/pm.secret.yaml`). The `<amount>`
 argument is the bankroll to allocate THIS run (independent of wallet total).
 
 ## Hard rules
