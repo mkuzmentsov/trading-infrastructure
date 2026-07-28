@@ -185,6 +185,13 @@ class VacuumStrategy:
         filled = self.runner.exec.ws_filled(oid) if _real else None
         if filled is None:
             filled = await self.runner.exec.poll_filled(oid) or 0.0
+        # A bid that matched INSTANTLY at placement leaves no order to look up
+        # (venue: "order can't be found - already canceled or matched"), so
+        # both lookups return 0 and the abort silently sells nothing. The only
+        # record of those shares is _imm_fill — take the max, or the watchdog
+        # is blind to exactly the fills we mostly get (2026-07-28: rode a fully
+        # crossed 151sh position into a flip for -$147.98).
+        filled = max(filled or 0.0, self._imm_fill.get(ws, 0.0) or 0.0)
         if not filled or filled <= 0:
             return
         win = self._winner.get(ws)
@@ -345,12 +352,29 @@ class VacuumStrategy:
                 or (EARLY_LEAD_BPS > 0 and tl <= EARLY_PLACE_SECS
                     and abs(lead) * 1e4 >= EARLY_LEAD_BPS)))
             if qualifies and ws not in self._winner:
-                self._winner[ws] = "UP" if lead > 0 else "DOWN"
+                side = "UP" if lead > 0 else "DOWN"
+                fine_now = tl <= PRE_PLACE_SECS      # tick is fine only near close
+                px = FINE_PX if (FINE_PX > 0 and fine_now) else CAP
+                # NEVER cross the book before close. The outcome is not known
+                # yet, so a marketable bid stops being a vacuum trade and
+                # becomes a directional bet risking ~0.98 to win 0.02.
+                # Measured 2026-07-28 (btc): positions taken by crossing
+                # pre-close went 12W/1L for -$96.34 (one flip erased twelve
+                # wins), while orders that only RESTED pre-close and were
+                # filled after close went 6W/0L for +$7.56. Pre-close we are a
+                # resting buyer only; post-close crossing stays allowed and is
+                # exactly the edge (a cheap ask on a decided winner).
+                from core.pm_ws import pm_state
+                ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
+                if ask is None or ask <= px:
+                    return              # would cross (or book unknown) — wait
+                                        # for close; the post-close path bids
+                self._winner[ws] = side
                 self._lock_src[ws] = "pre"
                 self._pre_placed.add(ws)
-                _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="pre",
-                       lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2))
-                fine_now = tl <= PRE_PLACE_SECS      # tick is fine only near close
+                _event("VAC_LOCK", bar=ws, winner=side, source="pre",
+                       lead_bps=round(lead * 1e4, 1), tl_after=round(-tl, 2),
+                       ask=ask, px=px)
                 if fine_now:
                     self._upgraded.add(ws)
                 await self._place(ctx, ws, CAP, not fine_now, -tl,
