@@ -31,14 +31,15 @@ bot:
   postCloseGraceSecs: "50"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
-  snipeNotional: "25"
+  snipeNotional: "10"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "30"
   vacPreLeadBps: "0"          # NO pre-close entry — post-close only
   vacEarlyLeadBps: "0"        # no early tier
   vacFinePx: "0.995"          # price priority over the 0.99 wall
+  vacFinePostclose: "true"    # actually place it post-close (see vacuum.py)
   favOrderType: "gtc"
-  liveMaxOrderUsd: "25"
+  liveMaxOrderUsd: "10"
   liveMaxDailyLossUsd: "30"
   binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
   polymarketRtdsSymbol: "btc/usd"

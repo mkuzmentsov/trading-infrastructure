@@ -80,6 +80,14 @@ FINE_PX = float(os.getenv("VAC_FINE_PX", "0"))
 # abort-salvage: after a watchdog cancel, FAK-sell already-filled shares if
 # the book still bids >= this floor (0 disables; exits ~fair on a coin-flip)
 SALVAGE_FLOOR = float(os.getenv("VAC_SALVAGE_FLOOR", "0.50"))
+# post-close fine-tick: the 0.995 jump only ever fires PRE-close because the
+# guard reads pm_state.tick_size for the bar's token, and by the time the bar
+# closes the WS has rolled to the next market so that entry is gone (measured
+# 2026-07-28: 28 pre-close 0.995 placements, 0 of 88 post-close). Post-close
+# the winner trades ~0.99 so its tick IS 0.001; this flag skips the stale-cache
+# check there. A wrong guess is harmless — _place already catches the venue
+# rejection and falls back to CAP. Default off so existing pods are unchanged.
+FINE_POSTCLOSE = os.getenv("VAC_FINE_POSTCLOSE", "false").lower() in ("true", "1", "yes")
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -257,9 +265,12 @@ class VacuumStrategy:
         if try_fine and FINE_PX > 0:
             # fine prices are only valid once THIS token's tick flipped to
             # 0.001 (venue flips it when the token trades past 0.96) — check
-            # the WS-tracked tick instead of eating a rejection round-trip
+            # the WS-tracked tick instead of eating a rejection round-trip.
+            # Post-close that cache no longer holds this token (the feed has
+            # rolled to the next bar), so FINE_POSTCLOSE trusts the tick there.
             from core.pm_ws import pm_state
-            try_fine = pm_state.tick_size.get(token, 0.01) < 0.01
+            if not (FINE_POSTCLOSE and tl_after >= 0):
+                try_fine = pm_state.tick_size.get(token, 0.01) < 0.01
         if try_fine and FINE_PX > 0:
             # price-priority jump over the 0.99 size wall; the venue rejects
             # it while the tick is still 0.01 -> fall through to the cap path
