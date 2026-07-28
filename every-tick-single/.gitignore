@@ -1,5 +1,10 @@
 chart/files/scripts/
+# ANY credentials overlay, whatever the extension — a name that misses this
+# pattern would commit a private key (2026-07-29: nearly happened).
 *.secret.yaml
+*.secret
+*.secret.*
+!*.secret.yaml.example
 # Per-date test data: commit the tiny expected_metrics.json baselines for every
 # date (the regression ledger), but NOT the bulk *.gz event dumps (~20MB/day) —
 # except the 2026-07-03 reference fixture, which stays committed so the test

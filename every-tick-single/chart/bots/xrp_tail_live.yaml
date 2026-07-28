@@ -4,7 +4,7 @@
 # Paper record at go-live (2026-07-16): 56 bets, 12.5% win vs 6.1% breakeven.
 # Requires the credentials overlay (NEVER commit it):
 #   helm upgrade --install xrp-tail-live-every-tick-single ./chart \
-#     -f chart/bots/pm.secret.yaml -f chart/bots/xrp_tail_live.yaml \
+#     -f chart/bots/scout.secret.yaml -f chart/bots/xrp_tail_live.yaml \
 #     -n every-tick-single
 botName: xrp-tail-live
 

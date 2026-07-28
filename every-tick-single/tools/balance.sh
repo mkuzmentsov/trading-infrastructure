@@ -2,18 +2,19 @@
 # REAL wallet balance = on-chain pUSD (Polymarket USD wrapper token).
 # The CLOB get_balance_allowance view lags by tens of $ — read the token direct.
 #
-# The wallet is NOT hardcoded: it comes from the credentials overlay
-# (chart/bots/pm.secret.yaml, gitignored) so that pointing the bots at a
-# different Polymarket account repoints this script automatically.
+# The wallet is NOT hardcoded: it comes from a credentials overlay, so
+# repointing the bots at another Polymarket account repoints this too.
 # Resolution order:
 #   1. $PM_WALLET          explicit override
 #   2. $PM_SECRET_YAML     path to a credentials overlay
-#   3. chart/bots/pm.secret.yaml
+#   3. chart/bots/crypto.secret.yaml   (this is the BOT fleet's tool)
+# The pm-scout account lives in scout.secret.yaml — check it with:
+#   PM_SECRET_YAML=chart/bots/scout.secret.yaml bash tools/balance.sh
 # Inside the overlay: credentials.polymarketFunder (the Safe holding the
 # money) wins over polymarketAddress (the signer).
 # Alchemy key comes from the skarbfolio project's .env (Polygon mainnet).
 HERE="$(cd "$(dirname "$0")" && pwd)"
-export PM_SECRET_YAML="${PM_SECRET_YAML:-$HERE/../chart/bots/pm.secret.yaml}"
+export PM_SECRET_YAML="${PM_SECRET_YAML:-$HERE/../chart/bots/crypto.secret.yaml}"
 python3 - <<'PY'
 import json, os, re, sys, urllib.request
 

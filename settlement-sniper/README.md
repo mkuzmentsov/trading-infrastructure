@@ -42,7 +42,7 @@ Always `source ../.dev-env-source` first (Hetzner k3s, ns `every-tick-single`).
 ./deploy.sh btc paper     # paper (no creds)
 ./deploy.sh btc live      # LIVE — real orders, $5/deal, $20/day cap (layers creds overlay)
 ```
-Live wallet is the shared `every-tick-single/chart/bots/pm.secret.yaml` (0xD632…).
+Live wallet is the shared `every-tick-single/chart/bots/scout.secret.yaml` (0xD632…).
 
 ## Key params (chart/bots/*.yaml → SNIPE_* env)
 - `snipeCap` 0.05 — bid/limit price (buy winner at ≤5¢)

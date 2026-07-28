@@ -4,7 +4,7 @@
 # Paper record at go-live (2026-07-16): 43 bets, 11.6% win vs 5.7% breakeven, lowest tail DD ($46).
 # Requires the credentials overlay (NEVER commit it):
 #   helm upgrade --install sol-tail-live-every-tick-single ./chart \
-#     -f chart/bots/pm.secret.yaml -f chart/bots/sol_tail_live.yaml \
+#     -f chart/bots/scout.secret.yaml -f chart/bots/sol_tail_live.yaml \
 #     -n every-tick-single
 botName: sol-tail-live
 

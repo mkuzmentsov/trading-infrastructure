@@ -1,9 +1,9 @@
 # eth-fav — near-locked-favorite TAKER experiment (entrypoint fav_taker.py).
 # Buys the favorite side of the live 5m bar when the CLOB ask lags the true
 # (near-1) probability estimated from the intra-bar move vs volatility.
-# Committed defaults are PAPER/DRY. Go live with the pm.secret.yaml overlay:
+# Committed defaults are PAPER/DRY. Go live with the scout.secret.yaml overlay:
 #   helm upgrade --install eth-fav-every-tick-single ./chart \
-#     -f chart/bots/eth_fav.yaml -f chart/bots/pm.secret.yaml -n every-tick-single
+#     -f chart/bots/eth_fav.yaml -f chart/bots/scout.secret.yaml -n every-tick-single
 botName: eth-fav
 
 bot:
