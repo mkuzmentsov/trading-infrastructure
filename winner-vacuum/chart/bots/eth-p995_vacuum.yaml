@@ -1,0 +1,44 @@
+# eth-p995 — POST-CLOSE ONLY vacuum bidding 0.995 (price priority).
+#
+# Why a separate pod: the running <coin>-vacuum fleet must not change.
+#
+# The thesis, measured on our own mrec recordings (879 eth bars, 07-24..27,
+# labelled with the recorder's RES events):
+#   - winner-side supply at <=0.995 exists post-close on 88.9% of bars and
+#     fully fills 151sh on 50.9%; ~$142/day gross at 0.5c/share on eth alone.
+#   - 330,754 shares printed at exactly 0.990 in those windows — that flow is
+#     hitting the ~900k-share wall we queue behind. A 0.995 bid steps OVER
+#     that wall on price instead of waiting behind it on time. Live evidence
+#     for the problem: 958 placements at 0.99, one fill, in 3.5h.
+#
+# Risk profile: pre-close entry is DISABLED (vacPreLeadBps/vacEarlyLeadBps 0),
+# so we only ever bid after the outcome is decided — the near-riskless half of
+# the strategy. Margin is 0.5c/share instead of 1c; the trade is half the
+# margin on fills we actually get versus full margin on fills we do not.
+#
+# Sizing: deliberately small ($25) until fill-rate at 0.995 is demonstrated
+# live. One mislock costs ~$25 and the $30 daily-loss halt stops the day.
+botName: eth-p995-vacuum
+
+bot:
+  entrypoint: "vacuum.py"
+  coin: "eth"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  postCloseGraceSecs: "50"
+  snipeCap: "0.99"
+  snipeFireMaxSecs: "45"
+  snipeNotional: "25"
+  snipeMinLeadBps: "3"
+  snipeMaxDailyLoss: "30"
+  vacPreLeadBps: "0"          # NO pre-close entry — post-close only
+  vacEarlyLeadBps: "0"        # no early tier
+  vacFinePx: "0.995"          # price priority over the 0.99 wall
+  favOrderType: "gtc"
+  liveMaxOrderUsd: "25"
+  liveMaxDailyLossUsd: "30"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
+  polymarketRtdsSymbol: "eth/usd"
