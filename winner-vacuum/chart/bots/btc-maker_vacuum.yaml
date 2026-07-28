@@ -19,6 +19,7 @@ bot:
   vacMode: "maker"
   vacMakerPx: "0.98"
   vacMakerSecs: "120"
+  vacMakerMinLead: "5"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
   snipeNotional: "100"

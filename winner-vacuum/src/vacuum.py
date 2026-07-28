@@ -91,6 +91,10 @@ SALVAGE_FLOOR = float(os.getenv("VAC_SALVAGE_FLOOR", "0.50"))
 MODE = os.getenv("VAC_MODE", "snipe").lower()
 MAKER_PX = float(os.getenv("VAC_MAKER_PX", "0.98"))
 MAKER_SECS = float(os.getenv("VAC_MAKER_SECS", "120"))
+# placement lead gate: live salvage exits fill ~2x worse than the sim's
+# bid-at-abort estimate, so the fill-count-optimal gate 0 loses to gate 5
+# once realistic slippage is priced (26 vs 10 salvages/900 bars)
+MAKER_MIN_LEAD = float(os.getenv("VAC_MAKER_MIN_LEAD", "0"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -392,7 +396,7 @@ class VacuumStrategy:
                         await self._maker_abort(ctx, ws, known, tl)
                 return
             if (tl > MAKER_SECS or lead is None
-                    or abs(lead) * 1e4 < PRE_CANCEL_BPS
+                    or abs(lead) * 1e4 < max(PRE_CANCEL_BPS, MAKER_MIN_LEAD)
                     or ctx.spot_age > 2.0):
                 return
             side = "UP" if lead > 0 else "DOWN"
