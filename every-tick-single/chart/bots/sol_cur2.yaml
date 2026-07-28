@@ -1,8 +1,8 @@
 # sol-cur2 — cur+2 50c bettor experiment (entrypoint cur2_bettor.py, NOT the maker
 # engine). Predicts the cur+2 SOL bar and rests a 0.50 BUY on the predicted side.
-# Committed defaults are DRY (no real orders). Go live with the sol.secret.yaml overlay:
+# Committed defaults are DRY (no real orders). Go live with the pm.secret.yaml overlay:
 #   helm upgrade --install sol-cur2-every-tick-single ./chart \
-#     -f chart/bots/sol_cur2.yaml -f chart/bots/sol.secret.yaml -n every-tick-single
+#     -f chart/bots/sol_cur2.yaml -f chart/bots/pm.secret.yaml -n every-tick-single
 botName: sol-cur2
 
 bot:

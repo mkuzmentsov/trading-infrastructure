@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """pm-scout wallet — bankroll + portfolio truth.
-Reads creds from every-tick-single/chart/bots/sol.secret.yaml (gitignored live
+Reads creds from every-tick-single/chart/bots/pm.secret.yaml (gitignored live
 overlay; the tail-bot config). Prints:
   1. wallet USDC balance (on-chain via CLOB client — needs PK; skipped if unavailable)
   2. OPEN positions (data-api, needs address only): entry vs mark, uPnL, end date
@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-SECRET_YAML = os.path.join(ROOT, "every-tick-single", "chart", "bots", "sol.secret.yaml")
+SECRET_YAML = os.path.join(ROOT, "every-tick-single", "chart", "bots", "pm.secret.yaml")
 DATA_API = "https://data-api.polymarket.com"
 
 

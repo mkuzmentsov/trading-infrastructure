@@ -3,7 +3,7 @@
 # the first ~7s of the resolution delay, holding to settle. $5/deal, $20/day cap.
 # LIVE deploy (real money): layer the creds overlay LAST so it flips live:
 #   helm upgrade --install btc-snipe-every-tick-single ./chart \
-#     -f chart/bots/btc_snipe.yaml -f chart/bots/sol.secret.yaml \
+#     -f chart/bots/btc_snipe.yaml -f chart/bots/pm.secret.yaml \
 #     --set bot.liveMaxOrderUsd=5 --set bot.liveMaxDailyLossUsd=20 \
 #     -n every-tick-single
 botName: btc-snipe

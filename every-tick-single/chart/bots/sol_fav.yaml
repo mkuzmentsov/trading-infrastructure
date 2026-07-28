@@ -1,9 +1,9 @@
 # sol-fav — near-locked-favorite TAKER experiment (entrypoint fav_taker.py).
 # Buys the favorite side of the live 5m bar when the CLOB ask lags the true
 # (near-1) probability estimated from the intra-bar move vs volatility.
-# Committed defaults are PAPER/DRY. Go live with the sol.secret.yaml overlay:
+# Committed defaults are PAPER/DRY. Go live with the pm.secret.yaml overlay:
 #   helm upgrade --install sol-fav-every-tick-single ./chart \
-#     -f chart/bots/sol_fav.yaml -f chart/bots/sol.secret.yaml -n every-tick-single
+#     -f chart/bots/sol_fav.yaml -f chart/bots/pm.secret.yaml -n every-tick-single
 botName: sol-fav
 
 bot:

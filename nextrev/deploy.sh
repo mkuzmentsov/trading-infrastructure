@@ -3,7 +3,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
 COIN="${1:?coin}"; MODE="${2:-paper}"
-CREDS="$ROOT/every-tick-single/chart/bots/sol.secret.yaml"
+CREDS="$ROOT/every-tick-single/chart/bots/pm.secret.yaml"
 cd "$HERE"
 rsync -aL --delete src/ chart/files/scripts/ >/dev/null
 find chart/files/scripts -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true

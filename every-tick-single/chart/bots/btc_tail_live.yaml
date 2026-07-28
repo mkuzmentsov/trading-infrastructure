@@ -4,7 +4,7 @@
 # Paper record at go-live (2026-07-16): 61 bets, 13.1% win vs 7.0% breakeven.
 # Requires the credentials overlay (NEVER commit it):
 #   helm upgrade --install btc-tail-live-every-tick-single ./chart \
-#     -f chart/bots/sol.secret.yaml -f chart/bots/btc_tail_live.yaml \
+#     -f chart/bots/pm.secret.yaml -f chart/bots/btc_tail_live.yaml \
 #     -n every-tick-single
 botName: btc-tail-live
 
