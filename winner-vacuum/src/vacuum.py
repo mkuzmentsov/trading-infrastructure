@@ -366,9 +366,15 @@ class VacuumStrategy:
                 # exactly the edge (a cheap ask on a decided winner).
                 from core.pm_ws import pm_state
                 ask = pm_state.up_ask if side == "UP" else pm_state.down_ask
-                if ask is None or ask <= px:
-                    return              # would cross (or book unknown) — wait
-                                        # for close; the post-close path bids
+                asz = (pm_state.up_ask_size if side == "UP"
+                       else pm_state.down_ask_size)
+                # pm_ws reports an EMPTY ask side as ask=1.0/size=0 (never
+                # None) — that is the safest state to rest in: nothing to
+                # cross. Only an ask with real size at/below our price is a
+                # cross. (mrec backtest: treating "no ask" as a skip cuts
+                # entries 213 -> 12 and kills the strategy.)
+                if asz > 0 and ask is not None and ask <= px:
+                    return              # would cross — wait for close
                 self._winner[ws] = side
                 self._lock_src[ws] = "pre"
                 self._pre_placed.add(ws)
