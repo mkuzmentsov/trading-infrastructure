@@ -74,3 +74,6 @@ every-tick-single/.v4-wip/
 
 # every-tick-single recorder archive (large, local-only)
 every-tick-single/data/
+
+# mrec recorder archives pulled from the cluster (660MB of .gz, regenerable)
+data/
