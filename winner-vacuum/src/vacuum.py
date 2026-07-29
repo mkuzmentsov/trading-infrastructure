@@ -213,12 +213,27 @@ class VacuumStrategy:
             return
         win = self._winner.get(ws)
         token = ctx.up_token if win == "UP" else ctx.down_token
-        try:
-            sell_oid, matched = await self.runner.exec.sell_fak(
-                token, SALVAGE_FLOOR, filled)
-        except Exception as exc:
-            _event("VAC_SALVAGE_ERR", bar=ws, side=win, err=str(exc)[:120])
-            return
+        # Conditional tokens from a just-matched fill take a few seconds to
+        # credit on-chain, so the first FAK sell can 400 with "not enough
+        # balance" even though the shares are ours. Retry rather than abandon:
+        # 2026-07-29 16:39 a correct watchdog abort (lead decayed -19.9 ->
+        # -1.9bps) could not sell, rode into a flip, and cost -$149.49 — the
+        # single worst loss of the day, from the SAFETY NET failing rather than
+        # the strategy. (This guard existed as v3.5.2 and was lost in the
+        # 2026-07-29 revert to the pre-maker code; restored deliberately.)
+        sell_oid = matched = None
+        for attempt in (1, 2, 3, 4):
+            try:
+                sell_oid, matched = await self.runner.exec.sell_fak(
+                    token, SALVAGE_FLOOR, filled)
+                break
+            except Exception as exc:
+                if "not enough balance" in str(exc).lower() and attempt < 4:
+                    await asyncio.sleep(3.0)
+                    continue
+                _event("VAC_SALVAGE_ERR", bar=ws, side=win, attempt=attempt,
+                       err=str(exc)[:120])
+                return
         _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
                floor=SALVAGE_FLOOR, matched=matched, order=sell_oid, live=_real)
         if matched:
