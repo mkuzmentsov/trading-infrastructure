@@ -20,7 +20,7 @@ bot:
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   postCloseGraceSecs: "20"
   paMinEdge: "0.005"
-  paNotional: "25"
+  paNotional: "5"
   paCooldown: "30"
   paMaxDailyLoss: "20"
   favOrderType: "fak"
