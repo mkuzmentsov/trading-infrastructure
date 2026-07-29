@@ -53,6 +53,15 @@ CONFIRM_PX = float(os.getenv("VAC_CONFIRM_PX", "0.90"))
 CONFIRM_SH = float(os.getenv("VAC_CONFIRM_MIN_SH", "100"))
 CONFIRM_MIN_ELAPSED = float(os.getenv("VAC_CONFIRM_MIN_ELAPSED", "2.0"))
 PRINT_CAP = float(os.getenv("VAC_PRINT_CAP", "0.93"))
+PRINT_LOCK = os.getenv("VAC_PRINT_LOCK", "false").lower() in ("true", "1", "yes")
+# print-lock DISABLED BY DEFAULT (2026-07-29). It only fires when |lead| is too
+# small to name a winner — i.e. genuine coin-flip bars — yet it buys at
+# PRINT_CAP 0.93, so it needs to be right 93% of the time merely to break even
+# on precisely the bars carrying the least information. Live record: pre
+# 5W/0L +$6.24, lead 1W/0L +$1.51, prints 0W/1L -$18.60 (sol 12:35, lead_bps
+# exactly 0.0, 20sh at 0.93, resolved the other way). That single trade cost
+# more than both working paths have earned. Set VAC_PRINT_LOCK=true to opt back
+# in; on a near-tie bar we now simply skip.
 # v3 pre-close queue entry: the 0.99 bid queue is FIFO per price level and the
 # post-close absorber (0xA7614974) only places AFTER close — resting our GTC a
 # couple seconds BEFORE close on decided bars puts us ahead of it for the
@@ -416,6 +425,11 @@ class VacuumStrategy:
                 self._lock_src[ws] = "lead"
                 _event("VAC_LOCK", bar=ws, winner=self._winner[ws], source="lead",
                        lead_bps=round(lead * 1e4, 1), tl_after=round(tl_after, 2))
+            elif not PRINT_LOCK:
+                self._done.add(ws)
+                _event("VAC_SKIP", bar=ws, reason="tie_print_lock_off",
+                       lead_bps=None if lead is None else round(lead * 1e4, 1))
+                return
             else:
                 side = self._print_confirm(ws) if tl_after >= CONFIRM_MIN_ELAPSED else None
                 if side is not None:
