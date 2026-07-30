@@ -49,6 +49,13 @@ COOLDOWN = float(os.getenv("PA_COOLDOWN", "30"))
 MAX_DAILY_LOSS = float(os.getenv("PA_MAX_DAILY_LOSS", "20"))
 FEE_RATE = 0.07
 
+# A leg that comes back short has to be sold immediately, but the shares are
+# not credited to the proxy the instant the CLOB matches — the first sell comes
+# back "not enough balance / allowance: balance: 0" (live, 2026-07-30 19:07).
+# One attempt is therefore not an unwind: retry until the credit lands.
+UNWIND_TRIES = int(os.getenv("PA_UNWIND_TRIES", "8"))
+UNWIND_BACKOFF = float(os.getenv("PA_UNWIND_BACKOFF", "2.0"))
+
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
 
@@ -60,6 +67,24 @@ def fee(p: float) -> float:
     return FEE_RATE * p * (1.0 - p)
 
 
+def outcome_up(ws: int):
+    """Gamma resolution: True=UP won, False=DOWN, None=unresolved."""
+    import json, urllib.request
+    from core.gamma import window_slug
+    try:
+        url = ("https://gamma-api.polymarket.com/markets?slug=" + window_slug(ws)
+               + "&closed=true")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        d = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        if not d or not d[0].get("closed"):
+            return None
+        op = d[0]["outcomePrices"]
+        op = json.loads(op) if isinstance(op, str) else op
+        return str(op[0]) in ("1", "1.0")
+    except Exception:
+        return None
+
+
 class PairArbStrategy:
     def __init__(self) -> None:
         self.runner = None
@@ -67,6 +92,7 @@ class PairArbStrategy:
         self.day_pnl: dict[str, float] = {}
         self._last_fire: dict[int, float] = {}
         self._done: set[int] = set()
+        self._naked: dict[int, dict] = {}        # ws -> unhedged leg carried
 
     def bind(self, runner) -> None:
         self.runner = runner
@@ -80,6 +106,8 @@ class PairArbStrategy:
         if self.halted:
             return
         ws = ctx.ws
+        if ws in self._naked:
+            return             # never stack a second pair on an unhedged bar
         from core.pm_ws import pm_state
         ua, da = pm_state.up_ask, pm_state.down_ask
         uas, das = pm_state.up_ask_size, pm_state.down_ask_size
@@ -125,32 +153,97 @@ class PairArbStrategy:
                edge=round(edge, 4), live=True)
 
         paired = min(fu, fd)
-        excess_tok, excess = (up_tok, fu - fd) if fu > fd else (dn_tok, fd - fu)
+        if fu > fd:
+            excess_tok, excess, side, px = up_tok, fu - fd, "UP", ua
+        else:
+            excess_tok, excess, side, px = dn_tok, fd - fu, "DOWN", da
         if excess > 0.5:
-            # a naked leg: unwind NOW rather than carry a coin flip
+            # A naked leg. Book the WORST CASE (the whole cost) against the day
+            # immediately: until it is unwound or resolves, that is what we can
+            # lose, and the daily-loss halt has to be able to see it. Booking
+            # only edge*paired left the halt blind to the one loss mode that has
+            # actually happened live (2026-07-30: naked 7.9sh, halt saw $0).
+            avg = (ru if fu > fd else rd)
+            avg_px = None if isinstance(avg, Exception) else avg[4]
+            cost = excess * (avg_px if avg_px else px)
+            self._naked[ws] = dict(tok=excess_tok, side=side, qty=excess,
+                                   cost=cost, provisional=-cost)
+            self._book(ws, -cost, kind="naked_provisional")
+            asyncio.create_task(self._unwind(ws))
+        if paired > 0:
+            self._book(ws, edge * paired, kind="paired")
+
+    async def _unwind(self, ws: int) -> None:
+        """Sell the naked leg, retrying while the CLOB credit settles."""
+        n = self._naked.get(ws)
+        if not n:
+            return
+        from core.pm_ws import pm_state
+        for attempt in range(1, UNWIND_TRIES + 1):
+            bid = pm_state.up_bid if n["side"] == "UP" else pm_state.down_bid
             try:
                 oid, matched = await self.runner.exec.sell_fak(
-                    excess_tok, 0.02, excess)
-                _event("PA_UNWIND", bar=ws, qty=round(excess, 1),
-                       matched=matched, order=oid)
+                    n["tok"], 0.02, n["qty"])
             except Exception as exc:
-                _event("PA_UNWIND_ERR", bar=ws, qty=round(excess, 1),
-                       err=str(exc)[:140])
-        if paired > 0:
-            self._book(ws, edge * paired)
+                _event("PA_UNWIND_ERR", bar=ws, qty=round(n["qty"], 1),
+                       attempt=attempt, err=str(exc)[:140])
+                await asyncio.sleep(UNWIND_BACKOFF * attempt)
+                continue
+            if not oid or not matched:
+                # post_signed_sell_fak SWALLOWS everything except the balance
+                # error and returns (None, False) — e.g. "no orders found to
+                # match with FAK order" when the bid side is empty. A missing
+                # order id or an unmatched FAK is a FAILED unwind, never a
+                # silent success (same trap as the buy path, f8ad3f2).
+                _event("PA_UNWIND_ERR", bar=ws, qty=round(n["qty"], 1),
+                       attempt=attempt, err="no order id / FAK unmatched")
+                await asyncio.sleep(UNWIND_BACKOFF * attempt)
+                continue
+            proceeds = n["qty"] * (bid or 0.0)
+            _event("PA_UNWIND", bar=ws, qty=round(n["qty"], 1), order=oid,
+                   matched=matched, attempt=attempt,
+                   proceeds_est=round(proceeds, 3))
+            # correct the provisional worst case by the (estimated) proceeds
+            self._book(ws, proceeds, kind="unwind_recovery")
+            self._naked.pop(ws, None)
+            return
+        # exhausted: the leg rides to resolution and settle_loop books the truth
+        _event("PA_UNWIND_GIVEUP", bar=ws, qty=round(n["qty"], 1),
+               cost=round(n["cost"], 3))
 
-    def _book(self, ws: int, pnl: float) -> None:
+    def _book(self, ws: int, pnl: float, kind: str = "paired") -> None:
         day = time.strftime("%Y-%m-%d", time.gmtime())
         self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
-        _event("PA_LOCKED", bar=ws, pnl=round(pnl, 4),
+        _event("PA_LOCKED", bar=ws, pnl=round(pnl, 4), kind=kind,
                day_pnl=round(self.day_pnl[day], 4))
         if self.day_pnl[day] <= -MAX_DAILY_LOSS and not self.halted:
             self.halted = True
             _event("PA_HALT", day=day, day_pnl=round(self.day_pnl[day], 2))
 
     async def settle_loop(self) -> None:
+        """Resolve carried naked legs and replace the provisional worst case
+        with the real payout, so day_pnl converges to the truth."""
         while True:
             await asyncio.sleep(60.0)
+            for ws in list(self._naked):
+                n = self._naked[ws]
+                if time.time() < ws + 300 + 30:
+                    continue           # bar has not closed long enough
+                oc = await asyncio.to_thread(outcome_up, ws)
+                if oc is None:
+                    if time.time() - (ws + 300) > 900:
+                        self._naked.pop(ws, None)
+                        _event("PA_SETTLE_TIMEOUT", bar=ws)
+                    continue
+                won = (n["side"] == "UP") == oc
+                payout = n["qty"] if won else 0.0
+                _event("PA_SETTLE", bar=ws, side=n["side"], won=won,
+                       qty=round(n["qty"], 1), cost=round(n["cost"], 3),
+                       payout=round(payout, 3),
+                       realised=round(payout - n["cost"], 3))
+                # provisional booked -cost already; add the payout back
+                self._book(ws, payout, kind="naked_settle")
+                self._naked.pop(ws, None)
 
 
 def main():
