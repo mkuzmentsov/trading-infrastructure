@@ -44,7 +44,7 @@ def _queue_at(mkt, tl_hi, idx_px, idx_sz, price):
 
 
 def simulate(coins, p_buy, exit_off=0.01, size=100.0, entry_hi=1200.0,
-             entry_stop=300.0, exit_deadline=0.0, force_flat=False):
+             entry_stop=300.0, exit_deadline=0.0, force_flat=False, hidden=0.0):
     """Rest bids at p_buy on both tokens over (entry_stop, entry_hi];
     on each fill rest a maker ask at p_buy+exit_off until exit_deadline.
     force_flat: taker-dump whatever is still open at the deadline."""
@@ -57,6 +57,7 @@ def simulate(coins, p_buy, exit_off=0.01, size=100.0, entry_hi=1200.0,
                 q = _queue_at(m, entry_hi, bi, bs, p_buy)
                 if q is None:
                     continue
+                q += hidden      # unobservable size resting at our level
                 filled = 0.0
                 fill_tl = None
                 # ---- entry: our BID is filled by taker SELL prints <= p_buy
@@ -90,6 +91,7 @@ def simulate(coins, p_buy, exit_off=0.01, size=100.0, entry_hi=1200.0,
                     break
                 if qa is None:
                     qa = 0.0
+                qa += hidden
                 for t in m["sells"]:
                     tl, tk, px, sz, tside = t
                     if tl > fill_tl:

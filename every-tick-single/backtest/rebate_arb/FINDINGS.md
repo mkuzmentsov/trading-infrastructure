@@ -92,6 +92,47 @@ Per-**share** economics (rebate 0.665c, net −3.482c) are what decide viability
 and they are not fixed by a fill-count correction; the sign of every result
 above is unchanged, and the true volume is ~10× lower than modelled.
 
+### 4b. Sensitivity — the conclusion survives the whole uncertainty range
+
+Calibrating the unobservable queue against the live 0.99 result gives ~3,000
+shares hidden at that level. Rather than transplant that number to 0.50, sweep
+it (round trip buy 0.50 → sell 0.51):
+
+| hidden queue | entries | exit% | deterministic$ | residual$ | TOTAL$ |
+|---|---|---|---|---|---|
+| 0 sh | 632 | 90% | +216.28 | −697.88 | **−481.60** |
+| 100 sh | 53 | 91% | +55.56 | −149.38 | **−93.82** |
+| 300 sh | 13 | 99% | +16.74 | −2.83 | +13.92 |
+| 1,000 sh | 2 | 100% | +3.40 | 0.00 | +3.40 |
+| 3,000 sh | 0 | — | — | — | no entries |
+
+**Both branches fail, for different reasons.** If the queue is small we trade
+often and lose to the inventory tail. If the queue is large the tail disappears
+but so does the business — 13 entries in 4 days across 6 coins is 3 fills/day,
+and the "+$13.92" is one unstuck entry away from noise. There is no queue
+assumption under which this is both profitable and worth running.
+
+## 4c. TAKER pair arb (what the stopped `bnb-pa` bot does)
+
+Same data, different question: how often is `ask_UP + ask_DOWN + fees < $1`?
+
+```
+1Hz two-sided observations : 5,664,337
+  ua+da < 1.00 (gross)     :   669  (0.012%)
+  edge >= 0.5c after fees  :   316  (0.0056%)  ~79/day across 6 coins
+  depth at those moments   :  median 6sh, p90 11sh, max 50sh
+```
+
+Theoretical **maximum** capture — perfect execution, zero latency, catching
+every single crossing — is **$21.65/day**, mean $0.274 per opportunity. btc
+never qualifies once; doge is 166 of the 316 and its crossings are the shortest
+lived (median 0.71s per the earlier latency study).
+
+Against that, the measured cost of one legged fill on 30 Jul was **−$2.55**, so
+the break-even both-leg fill rate is **90.3%**. The one live attempt legged
+(0/1). An opportunity worth 27c cannot fund a 255c failure at anything less
+than near-perfect execution.
+
 ## 5. Conclusion
 
 The rebate is real, deterministic and far too small: **0.665c/share round trip
