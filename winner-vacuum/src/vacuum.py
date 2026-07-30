@@ -298,24 +298,33 @@ class VacuumStrategy:
         if try_fine and FINE_PX > 0:
             # price-priority jump over the 0.99 size wall; the venue rejects
             # it while the tick is still 0.01 -> fall through to the cap path
+            oid = None
             try:
                 oid, matched, _s, post_ms, avg_px, filled = \
                     await self.runner.exec.fire_direct(
                         token, FINE_PX, _shares(NOTIONAL), tick_size="0.001")
+            except Exception as exc:
+                _event("VAC_FINE_REJ", bar=ws, side=win, px=FINE_PX,
+                       err=str(exc)[:120])
+            if oid is not None:
                 self._order[ws] = oid
                 self._px[ws] = FINE_PX
                 self._imm_fill[ws] = filled or 0.0
                 self._imm_px[ws] = avg_px if avg_px else None
-                _event("VAC_REST", bar=ws, side=win, order=oid or "FAILED",
+                _event("VAC_REST", bar=ws, side=win, order=oid,
                        source=self._lock_src.get(ws), px=FINE_PX,
                        imm_fill=round(filled or 0.0, 1),
                        imm_px=None if avg_px is None else round(avg_px, 4),
                        tl_after=round(tl_after, 2), post_ms=round(post_ms, 1),
                        matched=matched, live=_real)
                 return
-            except Exception as exc:
-                _event("VAC_FINE_REJ", bar=ws, side=win, px=FINE_PX,
-                       err=str(exc)[:120])
+            # post_signed_buy SWALLOWS the venue's 400 ("price 0.995 breaks
+            # minimum tick size rule 0.01") and returns order_id=None instead
+            # of raising, so the except above never fired and we used to rest
+            # NOTHING on 81% of bars (btc-p995, 77/95 over 13h, 2026-07-30).
+            # A missing order id is a rejection -> take the CAP path.
+            _event("VAC_FINE_REJ", bar=ws, side=win, px=FINE_PX,
+                   err="no order id returned (venue rejected the fine tick)")
         try:
             if use_presigned and self.runner.exec.has_presigned(key):
                 oid, matched, post_ms, avg_px, filled = \
