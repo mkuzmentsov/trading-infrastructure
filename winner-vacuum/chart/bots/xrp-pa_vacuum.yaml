@@ -1,4 +1,4 @@
-# doge-pa — complementary-pair arbitrage (PAPER first).
+# xrp-pa — complementary-pair arbitrage (PAPER first).
 #
 # Buys UP+DOWN together whenever their asks sum below $1.00 net of fees: one
 # of them always settles at $1.00, so the pair locks the difference with NO
@@ -7,12 +7,12 @@
 #
 # Backtest (mrec 4d, 200ms latency, 0.5c min edge, fees on both legs):
 # ~$13.55/day across 6 coins with ZERO legged positions. Latency is decisive —
-# doge was chosen because its crossings persist long enough to reach.
-botName: doge-pa-vacuum
+# xrp was chosen because its crossings persist long enough to reach.
+botName: xrp-pa-vacuum
 
 bot:
   entrypoint: "pairarb.py"
-  coin: "doge"
+  coin: "xrp"
   paperMode: "true"
   dryRun: "true"
   liveTrading: "false"
@@ -26,5 +26,5 @@ bot:
   favOrderType: "fak"
   liveMaxOrderUsd: "25"
   liveMaxDailyLossUsd: "20"
-  binanceWsUrl: "wss://stream.binance.com:9443/ws/dogeusdt@aggTrade"
-  polymarketRtdsSymbol: "doge/usd"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/xrpusdt@aggTrade"
+  polymarketRtdsSymbol: "xrp/usd"
