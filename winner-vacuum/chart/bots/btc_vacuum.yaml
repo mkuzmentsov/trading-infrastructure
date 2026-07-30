@@ -17,7 +17,14 @@ bot:
   postCloseGraceSecs: "50"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
-  snipeNotional: "30"
+  # 2026-07-31: user set size to $550/deal (555sh at 0.99), up from $30.
+  # Note the arithmetic this commits to: +1c/share on a win, -99c/share on a
+  # loss, so ONE mislock is -$544 and breakeven needs a 99% win rate. The live
+  # record 25-30 Jul is 118W/4L = 96.7% and -$192.35 cumulative at $30 sizing.
+  # snipeMaxDailyLoss stays 35 deliberately: at this size any single loss blows
+  # through it, which halts the bot for the rest of the UTC day -- one bad
+  # trade per day is the cap, and that is the only real protection left.
+  snipeNotional: "550"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "35"
   vacPreLeadBps: "5"
