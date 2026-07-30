@@ -17,10 +17,22 @@ spec:
       labels:
         app: trading-mcp
     spec:
-      # Pin to the exchange-IP-whitelisted worker (Binance/Kraken/Bybit keys are
-      # bound to this node's egress IP). Do NOT let the pod drift on restarts.
+      # Pinned to a specific node because the egress IP is per-node and every
+      # IP-bound API key is tied to it. Do NOT let the pod drift on restarts.
+      #
+      # 2026-07-29: moved nbg1 (worker1, egress 168.119.167.215) -> hel1
+      # (finland-worker2, egress 62.238.0.110). Polymarket geoblocks German and
+      # US IPs on POST /order, so from nbg1 every order returned
+      #   403 "Trading restricted in your region"
+      # while the bot pods, already on hel1, placed fine. Reads were unaffected,
+      # which is why this went unnoticed.
+      #
+      # TRADE-OFF, deliberate: the exchange keys (Binance/Kraken/Bybit/…) are
+      # still whitelisted to the OLD nbg1 IP, so those tools will fail auth
+      # until 62.238.0.110 is added to each venue's API-key whitelist. Accepted
+      # by the user 2026-07-29 — Polymarket ops first, whitelist on demand.
       nodeSelector:
-        kubernetes.io/hostname: hetzner-k3s-cluster-pool-workers-worker1
+        kubernetes.io/hostname: hetzner-k3s-cluster-pool-workers-finland-worker2
       containers:
         - name: trading-mcp
           image: mkuzmentsov/trading-mcp:0.14
