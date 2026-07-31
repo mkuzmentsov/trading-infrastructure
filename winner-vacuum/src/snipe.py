@@ -74,6 +74,14 @@ BOOK_WAIT = float(os.getenv("SNIPE_BOOK_WAIT_MS", "600")) / 1000.0
 # minimum bid separation for the book to count as decisive
 BOOK_MIN_EDGE = float(os.getenv("SNIPE_BOOK_MIN_EDGE", "0.20"))
 MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "20"))
+# THE SANITY GUARD (2026-07-31, bar 1785504000). The edge is buying a WINNER
+# whose stale asks nobody cancelled. If the locked token's own BID has
+# collapsed, the market has priced it as the loser and a 1c ask there is not
+# stale -- it is correct. Buying it is buying a zero. On that bar both signals
+# locked DOWN, the market agreed at +150ms (bid 0.92), then flipped by +2.5s
+# (bid 0.00 / ask 0.01) and the paper model "bought" 5,000 worthless shares.
+# Never transact while the locked token's bid is below this.
+MIN_LOCKED_BID = float(os.getenv("SNIPE_MIN_LOCKED_BID", "0.50"))
 FEE_RATE = 0.07
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
@@ -197,12 +205,9 @@ class SnipeStrategy:
             claim_ev = sum(sz * (1.0 - px - fee(px)) for px, sz in claim)
             b["claim_sh"] = claim_sh
             b["claim_ev"] = claim_ev
-            # Both sides' bids at fire time. LOG ONLY -- not a gate. If our
-            # lock is wrong the market usually already disagrees (the loser's
-            # bid collapses), so this is the raw material for a future
-            # "market disagrees" guard; but in a genuine late flip the book
-            # may not have repriced 150ms after close, so gating on it could
-            # block the very trades we want. Measure first, gate later.
+            # Both sides' bids at fire time. These now GATE the trade (see
+            # MIN_LOCKED_BID): one live bar was enough to show the model buying
+            # a token the market had already zeroed.
             mine = ctx.up_bid if b["side"] == "UP" else ctx.down_bid
             other = ctx.down_bid if b["side"] == "UP" else ctx.up_bid
             _event("SNIPE_FIRE", bar=ws, side=b["side"],
@@ -211,7 +216,12 @@ class SnipeStrategy:
                    book_claim_ev=round(claim_ev, 2),
                    bid_locked=mine, bid_other=other,
                    ladder=[[round(p, 3), round(s, 1)] for p, s in claim[:4]])
-            if _real and not self.halted:
+            if (mine or 0.0) < MIN_LOCKED_BID:
+                b["vetoed"] = True
+                _event("SNIPE_VETO", bar=ws, side=b["side"],
+                       bid_locked=mine, bid_other=other,
+                       reason="locked token bid below floor - market says it lost")
+            elif _real and not self.halted:
                 await self._fire_live(ws, b, now)
         # ── attribute prints (the honest fills) ──────────────────────────────
         from core.pm_ws import pm_state
@@ -230,6 +240,10 @@ class SnipeStrategy:
                 _event("SNIPE_MISS", bar=ws, px=px, sz=round(sz, 1),
                        ms_after_close=round((ts - b["end"]) * 1000, 0),
                        tok=str(b["token"])[-10:])
+            elif (_bid_now := (ctx.down_bid if b["side"] == "DOWN" else ctx.up_bid) or 0.0) < MIN_LOCKED_BID:
+                _event("SNIPE_PAPER_VETO", bar=ws, px=px, sz=round(sz, 1),
+                       book_bid=_bid_now,
+                       ms_after_close=round((ts - b["end"]) * 1000, 0))
             elif b["fills_sh"] < MAX_SHARES:
                 take = min(sz, MAX_SHARES - b["fills_sh"])
                 b["fills_sh"] += take
