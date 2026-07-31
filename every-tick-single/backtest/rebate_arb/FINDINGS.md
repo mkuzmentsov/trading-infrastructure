@@ -183,6 +183,41 @@ the large sweeps — the informed ones. Queue depth is *adverse-selection
 amplifying*, so a resting order deep in the book is reached only by the flow you
 least want to trade against.
 
+## 4e. MAKER-MAKER sequential + rescue + low-vol gate (user v2, 31 Jul)
+
+Refined mechanism: post ONE bid in anticipation of a dip; when it fills, post
+the complement as a SECOND maker order (both legs earn rebate — the farm);
+market-order rescue only if the second leg doesn't fill; hypothesis that this
+works in low-volatility bars. `seqmaker.py`, hidden=50sh everywhere.
+
+**Rescue-timing tension (measured, p1=0.48/p2=0.52):** rescue 5s after the fill
+→ 99% of bars pay the taker rescue and only 1% ever achieve the maker-maker
+pair (−$15.07/bar). Wait until tl=30 → mm-pair rate rises to 27% but trend
+bars' rescue ask has run away (−$10.08/bar). Every point between: −$14 to −$10.
+There is no good rescue time; both horns lose.
+
+**The low-vol hypothesis fails for a structural reason, not a tuning one.**
+First attempt at bucketing exposed it: EVERY bar that produced a first fill
+lands in the highest-vol bucket — a fill at 0.48 requires a ≥4c swing, so the
+entry itself selects the regime the strategy wants to avoid. The fill IS a
+high-vol event. And with the honest chop proxy (range of the first half of the
+active bar, before resolution convergence dominates):
+
+```
+median first-half range = 0.42;  p25 = 0.34    <- there IS no low-vol regime
+LOW  (≤0.10): 3 bars in 4,849   (fills ~never happen in quiet bars)
+MID  (≤0.25): 117 bars, −$11.84/bar (t=−6.5)
+HIGH (>0.25): 1,552 bars, −$9.98/bar (t=−21.3)
+```
+
+**Structural conclusion:** a 5m binary is forced to converge to 0 or 1 within
+minutes — the median bar moves the book 42c in the first 2.5 minutes of the
+active window. The oscillate-around-50c market this mechanism needs does not
+exist in these instruments. The strategy shape (maker-maker pair + rescue) is
+coherent; the instrument contradicts it. If it has a home, it is slower
+markets: hourly/daily up-downs or non-crypto markets that genuinely sit near
+50c with two-sided flow — none of which the current recorder covers.
+
 ## 5. Conclusion
 
 The rebate is real, deterministic and far too small: **0.665c/share round trip
