@@ -22,17 +22,20 @@ import websockets
 
 from config import BAR_SECONDS, COIN, POLYMARKET_WS, log
 from core.binance_ws import binance_state, run_binance_ws
-from core.gamma import fetch_market_for_window, get_up_down_tokens, window_slug
+from core.gamma import (fetch_market_for_window, get_up_down_tokens,
+                        grid_window_start, next_window_start, window_slug)
 from ws_recorder import RotatingWriter, _seed_history
 
 AHEAD = int(os.getenv("MREC_AHEAD", "3"))
 SNAP_SECS = max(20, int(float(os.getenv("SNAPSHOT_MS", "100")))) / 1000.0
+# distinguish archives by bar length: btc-mrec (5m), btc-mrec1h, btc-mrec1d
+_SUFFIX = {3600: "1h", 86400: "1d"}.get(BAR_SECONDS, "")
 
 
 class Mkt:
     def __init__(self, ws_ts: int, market: dict):
         up, down = get_up_down_tokens(market)
-        self.ws = ws_ts; self.end = ws_ts + BAR_SECONDS
+        self.ws = ws_ts; self.end = next_window_start(ws_ts)
         self.cid = market.get("conditionId", "")
         self.slug = market.get("slug") or ""
         self.q = market.get("question", "")
@@ -54,14 +57,20 @@ class Mkt:
             return "cur" if now < self.end else "post"
         if now >= self.end:
             return "post"
-        return f"next{max(1, (self.ws - cur_ws) // BAR_SECONDS)}"
+        # count grid steps via next_window_start (DST-safe for daily windows,
+        # where a step is 23h/25h twice a year)
+        w, k = cur_ws, 0
+        while w < self.ws and k < AHEAD + 2:
+            w = next_window_start(w); k += 1
+        return f"next{max(1, k)}"
 
 
 class MultiRecorder:
     def __init__(self):
         self.mkts: dict[int, Mkt] = {}          # ws -> Mkt
         self.tok2m: dict[str, tuple[Mkt, str]] = {}   # token -> (mkt, "U"/"D")
-        self.writer = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"), f"{COIN}-mrec")
+        self.writer = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
+                                     f"{COIN}-mrec{_SUFFIX}")
         self.resub = asyncio.Event()
 
     def _track(self, ws_ts: int, market: dict):
@@ -85,16 +94,18 @@ class MultiRecorder:
         while True:
             try:
                 now = time.time()
-                cur_ws = int(now // BAR_SECONDS * BAR_SECONDS)
-                for k in range(0, AHEAD + 1):
-                    w = cur_ws + k * BAR_SECONDS
+                w = grid_window_start(now)
+                for _ in range(0, AHEAD + 1):
                     if w not in self.mkts:
                         mk = await asyncio.to_thread(fetch_market_for_window, w)
                         if mk:
                             self._track(w, mk)
+                    w = next_window_start(w)
             except Exception as exc:
                 log.warning("discover: %s", exc)
-            await asyncio.sleep(2.0)
+            # long bars don't need a 2s discovery spin; nextN markets for the
+            # daily series are only created ~1.5 days ahead anyway
+            await asyncio.sleep(2.0 if BAR_SECONDS <= 3600 else 30.0)
 
     # ── resolution poll for post-close markets; drop once resolved ───────────
     async def resolve_loop(self):
@@ -189,7 +200,7 @@ class MultiRecorder:
         while True:
             try:
                 now = time.time()
-                cur_ws = int(now // BAR_SECONDS * BAR_SECONDS)
+                cur_ws = grid_window_start(now)
                 spot = binance_state.current_price
                 for w, m in sorted(self.mkts.items()):
                     role = m.role(now, cur_ws)

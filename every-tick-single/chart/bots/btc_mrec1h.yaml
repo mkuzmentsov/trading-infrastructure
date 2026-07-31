@@ -1,0 +1,24 @@
+# btc-mrec1h — 100ms multi-market recorder for the HOURLY btc up/down series
+# (bitcoin-up-or-down-{month}-{d}-{yyyy}-{h}{am/pm}-et). Same schema and roles
+# as the 5m mrec (cur-until-RESOLVED + next-3 pre-open, slug-tagged rows,
+# volume + prints); archives named btc-mrec1h-*. Hourly markets exist ~2 days
+# ahead, so next1-3 books are live. 2026-07-31.
+botName: btc-mrec1h
+bot:
+  entrypoint: "multi_recorder.py"
+  coin: "btc"
+  barSeconds: "3600"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  snapshotMs: "100"
+  mrecAhead: "3"
+  rawLogDir: "/app/logs/raw"
+  retentionDays: "7"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  polymarketRtdsSymbol: "btc/usd"
+
+persistence:
+  enabled: true
+  size: 10Gi

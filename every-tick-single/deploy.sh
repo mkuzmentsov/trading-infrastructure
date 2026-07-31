@@ -24,8 +24,11 @@ kubectl get ns every-tick-single >/dev/null 2>&1 || kubectl create ns every-tick
 # the chart ConfigMap must ship real files, not the link.
 rsync -a --copy-links --delete \
   --exclude '__pycache__' --exclude 'test_*.py' --exclude '_user_ws_listen.py' \
+  --exclude 'cur2_models.py' --exclude 'cur2_predictor.py' \
   --include '*/' --include '*.py' --exclude '*' \
   src/ chart/files/scripts/
+# cur2_* excluded 2026-07-31: the cur2 fleet is uninstalled and the 453K model
+# file pushed the helm release secret past the 1MB k8s limit.
 
 echo "Synced $(find chart/files/scripts -name '*.py' | wc -l | tr -d ' ') files into chart/files/scripts/"
 

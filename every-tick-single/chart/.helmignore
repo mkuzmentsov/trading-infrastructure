@@ -1,18 +1,3 @@
-# Keep deployment package small; logs/artifacts must not be shipped in chart.
-update-log/
-
-# Local artifacts
-__pycache__/
-files/scripts/__pycache__/
-*.pyc
-.DS_Store
-
-# Optional local notes
-ANALYSIS_WORKFLOW.md
-
-pm-btc-logs_*
-
-# Model files are managed by apply-model-configmap.sh, NOT shipped in the
-# chart — keeps the Helm release Secret under the 1 MiB Kubernetes cap.
-files/model/
-manifests/
+# keep the release secret under the 1MB k8s limit: values files are passed
+# with -f from the filesystem and never need to ship inside the package
+bots/

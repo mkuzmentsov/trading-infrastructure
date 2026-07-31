@@ -1,0 +1,25 @@
+# btc-mrec1d — 100ms multi-market recorder for the DAILY btc up/down series
+# (bitcoin-up-or-down-on-{month}-{d}-{yyyy}), noon-ET-to-noon-ET windows
+# (ends 16:00Z summer / 17:00Z winter; grid helpers in core/gamma.py are
+# DST-safe). Same schema/roles as the 5m mrec; archives named btc-mrec1d-*.
+# mrecAhead=2: the next-2 daily market is only created ~1.5 days ahead, so
+# next2 tracks late and next3 would never exist. 2026-07-31.
+botName: btc-mrec1d
+bot:
+  entrypoint: "multi_recorder.py"
+  coin: "btc"
+  barSeconds: "86400"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  snapshotMs: "100"
+  mrecAhead: "2"
+  rawLogDir: "/app/logs/raw"
+  retentionDays: "7"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  polymarketRtdsSymbol: "btc/usd"
+
+persistence:
+  enabled: true
+  size: 10Gi

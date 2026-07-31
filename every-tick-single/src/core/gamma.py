@@ -22,7 +22,9 @@ def window_slug(window_start_ts: int) -> str:
     """Deterministic slug for the COIN UpDown market whose bar opens at
     `window_start_ts`. 5m/15m: {coin}-updown-{n}m-{ts}. Hourly (3600s):
     name-based ET slug ({fullname}-up-or-down-{month}-{d}-{yyyy}-{h}{am/pm}-et)
-    — ET hour starts align with the 3600s grid (UTC offset is whole hours)."""
+    — ET hour starts align with the 3600s grid (UTC offset is whole hours).
+    Daily (86400s): noon-ET-to-noon-ET window, slug names the END date
+    ({fullname}-up-or-down-on-{month}-{d}-{yyyy}), verified live 2026-07-31."""
     if BAR_SECONDS == 3600:
         from datetime import datetime
         from zoneinfo import ZoneInfo
@@ -30,7 +32,43 @@ def window_slug(window_start_ts: int) -> str:
         hour = dt.strftime("%I%p").lstrip("0").lower()
         return (f"{_COIN_FULL.get(COIN, COIN)}-up-or-down-"
                 f"{dt.strftime('%B').lower()}-{dt.day}-{dt.year}-{hour}-et")
+    if BAR_SECONDS == 86400:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromtimestamp(next_window_start(int(window_start_ts)),
+                                    ZoneInfo("America/New_York"))
+        return (f"{_COIN_FULL.get(COIN, COIN)}-up-or-down-on-"
+                f"{dt.strftime('%B').lower()}-{dt.day}-{dt.year}")
     return f"{COIN}-updown-{BAR_SECONDS // 60}m-{int(window_start_ts)}"
+
+
+def grid_window_start(now_ts: float) -> int:
+    """Start of the window containing now_ts. Epoch-aligned for 5m/15m/1h (ET
+    offsets are whole hours, so the 3600 grid lines up). Daily markets are
+    anchored at NOON ET (they resolve 12:00 PM ET; end=16:00Z in summer,
+    17:00Z in winter), so the epoch-midnight grid is wrong for them — compute
+    the most recent noon ET via zoneinfo, which also handles DST days
+    (23h/25h windows) correctly."""
+    if BAR_SECONDS != 86400:
+        return int(now_ts // BAR_SECONDS * BAR_SECONDS)
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    dt = datetime.fromtimestamp(int(now_ts), et)
+    d = dt.date() if dt.hour >= 12 else dt.date() - timedelta(days=1)
+    return int(datetime(d.year, d.month, d.day, 12, 0, tzinfo=et).timestamp())
+
+
+def next_window_start(ws: int) -> int:
+    """Start of the window after the one starting at ws (== that window's
+    end). DST-safe for daily: next noon ET by date, not ws+86400."""
+    if BAR_SECONDS != 86400:
+        return int(ws) + BAR_SECONDS
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
+    d = datetime.fromtimestamp(int(ws), et).date() + timedelta(days=1)
+    return int(datetime(d.year, d.month, d.day, 12, 0, tzinfo=et).timestamp())
 
 
 def _gamma_get(params: dict):
