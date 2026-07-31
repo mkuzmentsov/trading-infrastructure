@@ -161,10 +161,19 @@ class SnipeStrategy:
             claim_ev = sum(sz * (1.0 - px - fee(px)) for px, sz in claim)
             b["claim_sh"] = claim_sh
             b["claim_ev"] = claim_ev
+            # Both sides' bids at fire time. LOG ONLY -- not a gate. If our
+            # lock is wrong the market usually already disagrees (the loser's
+            # bid collapses), so this is the raw material for a future
+            # "market disagrees" guard; but in a genuine late flip the book
+            # may not have repriced 150ms after close, so gating on it could
+            # block the very trades we want. Measure first, gate later.
+            mine = ctx.up_bid if b["side"] == "UP" else ctx.down_bid
+            other = ctx.down_bid if b["side"] == "UP" else ctx.up_bid
             _event("SNIPE_FIRE", bar=ws, side=b["side"],
                    delay_ms=round((now - b["end"]) * 1000, 0),
                    book_claim_sh=round(claim_sh, 1),
                    book_claim_ev=round(claim_ev, 2),
+                   bid_locked=mine, bid_other=other,
                    ladder=[[round(p, 3), round(s, 1)] for p, s in claim[:4]])
             if _real and not self.halted:
                 await self._fire_live(ws, b, now)

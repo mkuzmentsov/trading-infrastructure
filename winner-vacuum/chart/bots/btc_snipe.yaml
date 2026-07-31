@@ -21,7 +21,14 @@ bot:
   snipeCap: "0.05"
   snipeShares: "5"
   snipeFireDelayMs: "150"
-  snipeMinLeadBps: "3"
+  # 0 = TRADE TIES (user, 2026-07-31). Measured on 4,860 bars: 100% of the
+  # settlement-snipe pot ($6,952) is in |lead|<3bps bars; the 3,105 bars with
+  # |lead|>=3bps had a pot of exactly $0, so the old 3bps guard made winning
+  # impossible. Cost of trading ties: lock accuracy 88.1% there vs 100%
+  # elsewhere, and cheap asks sit on the LOSER 23.75% of ties vs on the winner
+  # 0.44% (54:1 fill asymmetry). Net still +$1.90/4d at 5sh -- on 5 winning
+  # events, so this is a measurement run, not an income stream.
+  snipeMinLeadBps: "0"
   snipeMaxSpotAge: "10"
   snipeMaxDailyLoss: "20"
   favOrderType: "fak"
