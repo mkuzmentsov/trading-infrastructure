@@ -1,0 +1,206 @@
+"""snipe.py — settlement sniper, PAPER build of exactly the logic measured in
+SNIPE_REVAL.md (2026-07-31).
+
+At bar close, lock the winner from Binance (close vs open, min-|lead| tie
+guard — the same determination the vacuum runs live at 24/24). "Fire" at
+close + SNIPE_FIRE_DELAY_MS. Then two parallel accountings:
+
+  BOOK CLAIM (phantom-suspect): the winner's ask ladder <= SNIPE_CAP at fire
+  time — what a live FAK would think it swept. Logged in SNIPE_FIRE only;
+  NEVER booked as PnL. The reval showed the venue culls resting orders at
+  close and the WS book keeps showing the corpses (4x overstatement).
+
+  PAPER FILLS (the truth): actual taker-BUY prints on the winner at <= cap
+  occurring AT/AFTER our fire time. Any ask another taker consumed after our
+  fire would have been consumed by our earlier FAK instead. Prints between
+  close and fire are SNIPE_MISS — the race tranche our latency loses. Asks
+  cancelled unprinted are not counted (conservative).
+
+SNIPE_SETTLE verifies the lock against gamma resolution and books PnL from
+print-attributed fills only; a wrong lock books the full loss of the fills.
+
+Env: SNIPE_CAP(0.05) SNIPE_FIRE_DELAY_MS(150) SNIPE_MAX_SHARES(5000)
+SNIPE_MIN_LEAD_BPS(3) SNIPE_MAX_DAILY_LOSS(20). PAPER ONLY — the live path is
+deliberately not wired; go-live is a separate, explicit decision.
+"""
+from __future__ import annotations
+
+import asyncio
+import math
+import os
+import time
+
+from config import BAR_SECONDS, DRY_RUN, TRAINING_EVENT_LOG_PATH, log
+from execution.events import EventLog
+
+COIN = os.getenv("COIN", "btc").lower()
+LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
+_real = LIVE_TRADING and not DRY_RUN     # kept for symmetry; paper build
+
+CAP = float(os.getenv("SNIPE_CAP", "0.05"))
+FIRE_DELAY = float(os.getenv("SNIPE_FIRE_DELAY_MS", "150")) / 1000.0
+MAX_SHARES = float(os.getenv("SNIPE_MAX_SHARES", "5000"))
+MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "3"))
+MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "20"))
+FEE_RATE = 0.07
+
+_event_log = EventLog(TRAINING_EVENT_LOG_PATH)
+
+
+def _event(ev: str, **kw):
+    _event_log.write(ev, coin=COIN, **kw)
+
+
+def fee(p: float) -> float:
+    return FEE_RATE * p * (1.0 - p)
+
+
+def outcome_up(ws: int):
+    """Gamma resolution: True=UP won, False=DOWN, None=unresolved."""
+    import json, urllib.request
+    from core.gamma import window_slug
+    try:
+        url = ("https://gamma-api.polymarket.com/markets?slug=" + window_slug(ws)
+               + "&closed=true")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        d = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        if not d or not d[0].get("closed"):
+            return None
+        op = d[0]["outcomePrices"]
+        op = json.loads(op) if isinstance(op, str) else op
+        return str(op[0]) in ("1", "1.0")
+    except Exception:
+        return None
+
+
+class SnipeStrategy:
+    def __init__(self) -> None:
+        self.runner = None
+        self.bars: dict[int, dict] = {}      # ws -> state
+        self.day_pnl: dict[str, float] = {}
+        self._last_seq = 0
+
+    def bind(self, runner) -> None:
+        self.runner = runner
+        _event("SNIPE_START", live=_real, cap=CAP,
+               fire_delay_ms=FIRE_DELAY * 1000, max_shares=MAX_SHARES,
+               min_lead_bps=MIN_LEAD_BPS)
+
+    def presign_requests(self, ctx):
+        return []                            # paper: nothing to presign
+
+    async def on_tick(self, ctx) -> None:
+        ws = ctx.ws
+        end = ws + BAR_SECONDS
+        now = ctx.now
+        if now < end:
+            return                           # nothing to do pre-close
+        b = self.bars.get(ws)
+        # ── lock the winner at first post-close tick ─────────────────────────
+        if b is None:
+            if ctx.bar_open is None or ctx.spot <= 0 or ctx.spot_age > 2.0:
+                self.bars[ws] = dict(skip="no_data")
+                _event("SNIPE_SKIP", bar=ws, reason="no_data",
+                       spot_age=round(ctx.spot_age, 2))
+                return
+            lead = (ctx.spot - ctx.bar_open) / ctx.bar_open * 1e4
+            if abs(lead) < MIN_LEAD_BPS:
+                self.bars[ws] = dict(skip="tie")
+                _event("SNIPE_SKIP", bar=ws, reason="tie", lead_bps=round(lead, 2))
+                return
+            side = "UP" if lead > 0 else "DOWN"
+            token = ctx.up_token if side == "UP" else ctx.down_token
+            b = dict(side=side, token=token, lead=lead, end=end,
+                     fire_at=end + FIRE_DELAY, fired=False,
+                     fills_sh=0.0, fills_ev=0.0, fills_cost=0.0, n_fills=0,
+                     miss_sh=0.0, miss_ev=0.0, settled=False)
+            self.bars[ws] = b
+            _event("SNIPE_LOCK", bar=ws, side=side, lead_bps=round(lead, 2))
+            return
+        if b.get("skip") or b.get("settled"):
+            return
+        # ── fire: record the book claim once (phantom-suspect, not booked) ───
+        if not b["fired"] and now >= b["fire_at"]:
+            b["fired"] = True
+            depth = ctx.up_depth if b["side"] == "UP" else ctx.down_depth
+            claim = [(px, sz) for px, sz in sorted(depth.items())
+                     if px <= CAP + 1e-9 and sz > 0]
+            claim_sh = sum(sz for _, sz in claim)
+            claim_ev = sum(sz * (1.0 - px - fee(px)) for px, sz in claim)
+            b["claim_sh"] = claim_sh
+            b["claim_ev"] = claim_ev
+            _event("SNIPE_FIRE", bar=ws, side=b["side"],
+                   delay_ms=round((now - b["end"]) * 1000, 0),
+                   book_claim_sh=round(claim_sh, 1),
+                   book_claim_ev=round(claim_ev, 2),
+                   ladder=[[round(p, 3), round(s, 1)] for p, s in claim[:4]])
+        # ── attribute prints (the honest fills) ──────────────────────────────
+        from core.pm_ws import pm_state
+        for t in pm_state.recent_trades:
+            if t["seq"] <= self._last_seq:
+                continue
+            self._last_seq = t["seq"]
+            if t["token_id"] != b["token"] or t.get("side") != "BUY":
+                continue
+            px, sz, ts = t["price"], t["size"], t["ts"]
+            if px > CAP + 1e-9 or ts < b["end"]:
+                continue
+            if ts < b["fire_at"]:
+                b["miss_sh"] += sz
+                b["miss_ev"] += sz * (1.0 - px - fee(px))
+                _event("SNIPE_MISS", bar=ws, px=px, sz=round(sz, 1),
+                       ms_after_close=round((ts - b["end"]) * 1000, 0))
+            elif b["fills_sh"] < MAX_SHARES:
+                take = min(sz, MAX_SHARES - b["fills_sh"])
+                b["fills_sh"] += take
+                b["fills_cost"] += take * (px + fee(px))
+                b["fills_ev"] += take * (1.0 - px - fee(px))
+                b["n_fills"] += 1
+                _event("SNIPE_PAPER_FILL", bar=ws, px=px, sz=round(take, 1),
+                       ms_after_close=round((ts - b["end"]) * 1000, 0),
+                       cum_sh=round(b["fills_sh"], 1))
+
+    async def settle_loop(self) -> None:
+        while True:
+            await asyncio.sleep(5.0)
+            now = time.time()
+            for ws, b in list(self.bars.items()):
+                if b.get("skip"):
+                    if now > ws + BAR_SECONDS + 900:
+                        self.bars.pop(ws, None)
+                    continue
+                if b.get("settled") or now < b["end"] + 8:
+                    continue
+                oc = await asyncio.to_thread(outcome_up, ws)
+                if oc is None:
+                    if now - b["end"] > 600:
+                        b["settled"] = True
+                        _event("SNIPE_SETTLE_TIMEOUT", bar=ws)
+                    continue
+                lock_ok = (b["side"] == "UP") == oc
+                pnl = b["fills_ev"] if lock_ok else -b["fills_cost"]
+                day = time.strftime("%Y-%m-%d", time.gmtime(ws))
+                self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
+                b["settled"] = True
+                _event("SNIPE_SETTLE", bar=ws, side=b["side"],
+                       outcome="UP" if oc else "DOWN", lock_ok=lock_ok,
+                       fills_sh=round(b["fills_sh"], 1),
+                       pnl=round(pnl, 2),
+                       miss_sh=round(b["miss_sh"], 1),
+                       miss_ev=round(b["miss_ev"], 2),
+                       book_claim_ev=round(b.get("claim_ev", 0.0), 2),
+                       day_pnl=round(self.day_pnl[day], 2), live=_real)
+                self.bars.pop(ws, None)
+
+
+def main():
+    from execution.runner import TakerRunner
+    log.info("snipe %s: coin=%s cap=%.2f fire+%.0fms minLead=%.1fbps max=%dsh",
+             "LIVE" if _real else "PAPER", COIN, CAP, FIRE_DELAY * 1000,
+             MIN_LEAD_BPS, MAX_SHARES)
+    runner = TakerRunner(SnipeStrategy(), live=_real, event_logger=_event)
+    asyncio.run(runner.run())
+
+
+if __name__ == "__main__":
+    main()

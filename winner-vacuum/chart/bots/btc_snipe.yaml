@@ -1,0 +1,21 @@
+# btc-snipe — settlement sniper, PAPER (SNIPE_REVAL.md 2026-07-31).
+# Fires at close+150ms on the Binance-locked winner; PnL booked ONLY from
+# print-attributed fills (book claims logged separately for phantom-rate
+# measurement). Live path deliberately not wired.
+botName: btc-snipe
+bot:
+  entrypoint: "snipe.py"
+  coin: "btc"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  postCloseGraceSecs: "20"
+  snipeCap: "0.05"
+  snipeFireDelayMs: "150"
+  snipeMaxShares: "5000"
+  snipeMinLeadBps: "3"
+  snipeMaxDailyLoss: "20"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  polymarketRtdsSymbol: "btc/usd"
