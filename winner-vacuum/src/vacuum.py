@@ -43,6 +43,40 @@ _real = LIVE_TRADING and not DRY_RUN
 CAP = float(os.getenv("SNIPE_CAP", "0.99"))
 FIRE_MAX = float(os.getenv("SNIPE_FIRE_MAX_SECS", "20"))
 NOTIONAL = float(os.getenv("SNIPE_NOTIONAL", "100"))
+# Session-dependent sizing (user, 2026-07-31). Both lifetime mislocks landed at
+# 16:10 and 16:40 Kyiv = 13:10/13:40 UTC, inside the US-open hours, and both
+# cost ~$149 at 151sh. ALT_NOTIONAL applies inside ALT_WINDOW (UTC "HH:MM-HH:MM",
+# wall clock, wraps midnight if start > end); NOTIONAL applies outside.
+# CAVEAT recorded deliberately: the window was chosen FROM those two losses, so
+# this rule is fitted to n=2. If a mislock lands outside it, the cost is the
+# full size. Backtest on the 113-trade record: +$489 with this rule vs -$527 at
+# flat $600 -- entirely because both losses fall inside the small window.
+ALT_NOTIONAL = float(os.getenv("SNIPE_ALT_NOTIONAL", "0") or 0)
+ALT_WINDOW = os.getenv("SNIPE_ALT_WINDOW_UTC", "").strip()
+
+
+def _window_bounds():
+    if not ALT_WINDOW or "-" not in ALT_WINDOW:
+        return None
+    try:
+        a, b = ALT_WINDOW.split("-", 1)
+        ah, am = (int(x) for x in a.split(":"))
+        bh, bm = (int(x) for x in b.split(":"))
+        return ah * 60 + am, bh * 60 + bm
+    except Exception:
+        return None
+
+
+def notional_now() -> float:
+    """Size for the CURRENT wall-clock minute (UTC)."""
+    w = _window_bounds()
+    if not w or ALT_NOTIONAL <= 0:
+        return NOTIONAL
+    lo, hi = w
+    t = time.gmtime()
+    m = t.tm_hour * 60 + t.tm_min
+    inside = (lo <= m < hi) if lo <= hi else (m >= lo or m < hi)
+    return ALT_NOTIONAL if inside else NOTIONAL
 MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "8"))
 MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "100"))
 # v2 state-lock: below the lead gate, lock the winner from POST-CLOSE PRINTS —
@@ -153,7 +187,7 @@ class VacuumStrategy:
 
     def presign_requests(self, ctx):
         # presign BOTH sides at the cap; at close we POST the winner's as GTC
-        sz = _shares(NOTIONAL)
+        sz = _shares(notional_now())
         reqs = []
         if ctx.up_token:
             reqs.append(("vac-UP", ctx.up_token, CAP, sz))
@@ -302,7 +336,7 @@ class VacuumStrategy:
             try:
                 oid, matched, _s, post_ms, avg_px, filled = \
                     await self.runner.exec.fire_direct(
-                        token, FINE_PX, _shares(NOTIONAL), tick_size="0.001")
+                        token, FINE_PX, _shares(notional_now()), tick_size="0.001")
             except Exception as exc:
                 _event("VAC_FINE_REJ", bar=ws, side=win, px=FINE_PX,
                        err=str(exc)[:120])
@@ -332,7 +366,7 @@ class VacuumStrategy:
             else:
                 oid, matched, _s, post_ms, avg_px, filled = \
                     await self.runner.exec.fire_direct(
-                        token, price_cap, _shares(NOTIONAL))
+                        token, price_cap, _shares(notional_now()))
         except Exception as exc:
             _event("VAC_ERR", bar=ws, side=win, err=str(exc)[:160])
             if self._lock_src.get(ws) == "pre":

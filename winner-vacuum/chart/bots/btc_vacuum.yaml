@@ -27,7 +27,19 @@ bot:
   # on a win, -99c/share on a loss, so breakeven needs a 99% win rate against a
   # live record of 118W/4L = 96.7% (25-30 Jul). At $30 a loss is -$29.70
   # instead of -$544, which is the whole point of being back here.
-  snipeNotional: "30"
+  # 2026-07-31 (user): $600/deal, cut to $15 during 15:30-19:00 Kyiv
+  # (12:30-16:00 UTC). Both lifetime mislocks landed inside that window
+  # (16:10 Kyiv 28 Jul -$147.98, 16:40 Kyiv 29 Jul -$149.49, both 151sh).
+  # Backtest on the 113-trade record: +$489 with this rule, -$527 at flat $600.
+  # ⚠ The window was chosen FROM those two losses -- fitted to n=2. A mislock
+  # outside it costs the full ~$600, about 9 days of gross wins at this rate.
+  # ⚠ $600 is ~100% of equity ($607): each fill consumes the account until
+  # redemption (~1-5 min); a slow redeem makes the next order fail (no loss).
+  # ⚠ snipeMaxDailyLoss $35 is decorative at this size -- it halts the day
+  # AFTER the first loss rather than preventing it.
+  snipeNotional: "600"
+  snipeAltNotional: "15"
+  snipeAltWindowUtc: "12:30-16:00"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "35"
   vacPreLeadBps: "5"
