@@ -60,6 +60,19 @@ MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "3"))
 # rejects genuine feed outages (a 15.7s gap was observed once on doge).
 # Every lock logs its spot_age so lock accuracy can be audited per bucket.
 MAX_SPOT_AGE = float(os.getenv("SNIPE_MAX_SPOT_AGE", "10"))
+# WINNER SIGNAL. "binance" = spot close vs bar open (the vacuum's method).
+# "book" = read the post-close order book instead: after BOOK_WAIT_MS the
+# market has repriced the winner's bid toward 0.99 and the loser's toward 0.
+# Why offer it: on the 5 harvestable tie bars in 27-30 Jul the Binance lead was
+# WRONG on 4 (leads of +2.65/+2.72/-2.76 bps all resolved the other way -- the
+# documented Binance-vs-Chainlink divergence on dead-flat ties), capturing only
+# 23% of the available value, while the book had it right on all 5 by +2s and
+# on 3 of 5 by +0.5s. Cost: waiting burns part of the liquidity window, which
+# ran -0.03..1.28s after close on those bars.
+LOCK_SRC = os.getenv("SNIPE_LOCK_SRC", "binance").lower()
+BOOK_WAIT = float(os.getenv("SNIPE_BOOK_WAIT_MS", "600")) / 1000.0
+# minimum bid separation for the book to count as decisive
+BOOK_MIN_EDGE = float(os.getenv("SNIPE_BOOK_MIN_EDGE", "0.20"))
 MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "20"))
 FEE_RATE = 0.07
 
@@ -102,7 +115,9 @@ class SnipeStrategy:
 
     def bind(self, runner) -> None:
         self.runner = runner
-        _event("SNIPE_START", live=_real, cap=CAP, shares=SHARES,
+        _event("SNIPE_START", live=_real, src=LOCK_SRC,
+               book_wait_ms=BOOK_WAIT * 1000, book_min_edge=BOOK_MIN_EDGE,
+               cap=CAP, shares=SHARES,
                max_loss_per_deal=round(SHARES * CAP, 4),
                fire_delay_ms=FIRE_DELAY * 1000, min_lead_bps=MIN_LEAD_BPS,
                max_spot_age=MAX_SPOT_AGE, max_daily_loss=MAX_DAILY_LOSS)
@@ -126,28 +141,49 @@ class SnipeStrategy:
         if now < end:
             return                           # nothing to do pre-close
         b = self.bars.get(ws)
-        # ── lock the winner at first post-close tick ─────────────────────────
+        # ── lock the winner ──────────────────────────────────────────────────
         if b is None:
-            if ctx.bar_open is None or ctx.spot <= 0 or ctx.spot_age > MAX_SPOT_AGE:
-                self.bars[ws] = dict(skip="no_data")
-                _event("SNIPE_SKIP", bar=ws, reason="no_data",
-                       spot_age=round(ctx.spot_age, 2))
-                return
-            lead = (ctx.spot - ctx.bar_open) / ctx.bar_open * 1e4
-            if abs(lead) < MIN_LEAD_BPS:
-                self.bars[ws] = dict(skip="tie")
-                _event("SNIPE_SKIP", bar=ws, reason="tie", lead_bps=round(lead, 2))
-                return
-            side = "UP" if lead > 0 else "DOWN"
+            lead = None
+            if ctx.bar_open and ctx.spot > 0:
+                lead = (ctx.spot - ctx.bar_open) / ctx.bar_open * 1e4
+            if LOCK_SRC == "book":
+                # wait for the market to reprice, then read it
+                if now < end + BOOK_WAIT:
+                    return
+                ub, db = ctx.up_bid or 0.0, ctx.down_bid or 0.0
+                if abs(ub - db) < BOOK_MIN_EDGE:
+                    self.bars[ws] = dict(skip="book_unclear")
+                    _event("SNIPE_SKIP", bar=ws, reason="book_unclear",
+                           up_bid=ub, down_bid=db)
+                    return
+                side = "UP" if ub > db else "DOWN"
+                fire_at = now                       # book already waited
+                _event("SNIPE_LOCK", bar=ws, side=side, src="book",
+                       up_bid=ub, down_bid=db,
+                       lead_bps=None if lead is None else round(lead, 2),
+                       wait_ms=round((now - end) * 1000, 0))
+            else:
+                if ctx.bar_open is None or ctx.spot <= 0 or ctx.spot_age > MAX_SPOT_AGE:
+                    self.bars[ws] = dict(skip="no_data")
+                    _event("SNIPE_SKIP", bar=ws, reason="no_data",
+                           spot_age=round(ctx.spot_age, 2))
+                    return
+                if abs(lead) < MIN_LEAD_BPS:
+                    self.bars[ws] = dict(skip="tie")
+                    _event("SNIPE_SKIP", bar=ws, reason="tie",
+                           lead_bps=round(lead, 2))
+                    return
+                side = "UP" if lead > 0 else "DOWN"
+                fire_at = end + FIRE_DELAY
+                _event("SNIPE_LOCK", bar=ws, side=side, src="binance",
+                       lead_bps=round(lead, 2), spot_age=round(ctx.spot_age, 2))
             token = ctx.up_token if side == "UP" else ctx.down_token
-            b = dict(side=side, token=token, lead=lead, end=end,
+            b = dict(side=side, token=token, lead=lead or 0.0, end=end,
                      spot_age=ctx.spot_age,
-                     fire_at=end + FIRE_DELAY, fired=False,
+                     fire_at=fire_at, fired=False,
                      fills_sh=0.0, fills_ev=0.0, fills_cost=0.0, n_fills=0,
                      miss_sh=0.0, miss_ev=0.0, settled=False)
             self.bars[ws] = b
-            _event("SNIPE_LOCK", bar=ws, side=side, lead_bps=round(lead, 2),
-                   spot_age=round(ctx.spot_age, 2))
             return
         if b.get("skip") or b.get("settled"):
             return
@@ -289,10 +325,11 @@ class SnipeStrategy:
 
 def main():
     from execution.runner import TakerRunner
-    log.info("snipe %s: coin=%s cap=%.2f shares=%.0f (max loss/deal $%.2f) "
-             "fire+%.0fms minLead=%.1fbps halt=$%.0f",
-             "LIVE" if _real else "PAPER", COIN, CAP, SHARES, SHARES * CAP,
-             FIRE_DELAY * 1000, MIN_LEAD_BPS, MAX_DAILY_LOSS)
+    log.info("snipe %s: coin=%s src=%s cap=%.2f shares=%.0f (max loss/deal $%.2f) "
+             "fire+%.0fms minLead=%.1fbps bookwait=%.0fms halt=$%.0f",
+             "LIVE" if _real else "PAPER", COIN, LOCK_SRC, CAP, SHARES,
+             SHARES * CAP, FIRE_DELAY * 1000, MIN_LEAD_BPS,
+             BOOK_WAIT * 1000, MAX_DAILY_LOSS)
     runner = TakerRunner(SnipeStrategy(), live=_real, event_logger=_event)
     asyncio.run(runner.run())
 
