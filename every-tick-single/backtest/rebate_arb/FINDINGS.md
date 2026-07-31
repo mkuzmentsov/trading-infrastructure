@@ -133,6 +133,56 @@ the break-even both-leg fill rate is **90.3%**. The one live attempt legged
 (0/1). An opportunity worth 27c cannot fund a 255c failure at anything less
 than near-perfect execution.
 
+## 4d. SEQUENTIAL pair + active neutraliser (user's mechanism, 31 Jul)
+
+Proposal: don't buy both sides at once. Rest bids on both, and when one fills,
+immediately either complete the pair or dump the filled side — minimising the
+time spent one-sided rather than riding it to resolution. Tested in `seqpair.py`
+over each market's full life (tl 1200 → 0, so the price has ~20 min to
+oscillate into both levels).
+
+**The insight is correct and it is the single biggest improvement found:**
+
+| bids | ride to resolution | complete @0.2s |
+|---|---|---|
+| 0.50/0.50 | −$9.65/bar | **−$2.04/bar** |
+| 0.48/0.48 | −$9.35/bar | **−$1.60/bar** |
+| 0.45/0.45 | −$8.39/bar | **−$0.72/bar** |
+
+A ~93% reduction in loss. Riding an unpaired leg is a ±50c/share coin flip;
+neutralising caps it at a few cents.
+
+**Two structural facts fell out.**
+
+1. **Completing the pair and dumping the position are mathematically
+   identical** — same result to the cent, because `bid_this ≈ 1 − ask_other` for
+   complementary tokens. Buying the complement *is* selling the token. There is
+   no choice to optimise.
+
+2. **The residual cost is 80% adverse move, only 20% fee.** Decomposed at 0.2s
+   reaction: raw pair economics −2.7c/share, taker fee −0.6c/share. Our maker
+   fill *is* the signal that the price moved, so by the time we react the
+   complement has already repriced and the pair costs ~$1.027. **Zero-fee
+   execution would not fix this.**
+
+### The deep-bid trap — a positive result that was an artifact
+
+Sweeping deeper made the loss shrink and then cross into profit: 0.42 breakeven,
+0.30/0.30 showing **+$0.90/bar at t = +6.53** over 4,759 bars. It is not real.
+At those prices our bid sits **below the touch in ~100% of entries** — the exact
+configuration where §4 proved the model 10× optimistic. Adding hidden queue:
+
+| price | hidden=0 | hidden=50 | hidden=200 | hidden=1000 |
+|---|---|---|---|---|
+| 0.30 | +$0.90/bar (t=+6.5) | **−$3.73** (t=−8.0) | −$7.07 | −$16.71 |
+| 0.35 | +$0.69/bar (t=+5.6) | **−$5.13** (t=−11.8) | −$8.66 | −$19.57 |
+
+**Fifty shares of queue flips it from +6.5σ to −8σ.** The mechanism is worth
+naming: a queue ahead of us filters out the small benign prints and leaves only
+the large sweeps — the informed ones. Queue depth is *adverse-selection
+amplifying*, so a resting order deep in the book is reached only by the flow you
+least want to trade against.
+
 ## 5. Conclusion
 
 The rebate is real, deterministic and far too small: **0.665c/share round trip
