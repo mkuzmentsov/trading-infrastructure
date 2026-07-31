@@ -41,6 +41,15 @@ CAP = float(os.getenv("SNIPE_CAP", "0.05"))
 FIRE_DELAY = float(os.getenv("SNIPE_FIRE_DELAY_MS", "150")) / 1000.0
 MAX_SHARES = float(os.getenv("SNIPE_MAX_SHARES", "5000"))
 MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "3"))
+# Max age of the Binance spot print used to lock the winner. NOT 2s: aggTrade
+# only fires on trades, so on thin coins (sol/doge/xrp) the last print at the
+# close boundary is routinely 2-5s old while the feed is perfectly healthy --
+# that cost 60-70% of their bars on 2026-07-31. Staleness is anti-correlated
+# with danger: no trades means no movement, so a 4s-old price on a quiet tape
+# IS the close price. The real ambiguity guard is MIN_LEAD_BPS. The cap only
+# rejects genuine feed outages (a 15.7s gap was observed once on doge).
+# Every lock logs its spot_age so lock accuracy can be audited per bucket.
+MAX_SPOT_AGE = float(os.getenv("SNIPE_MAX_SPOT_AGE", "10"))
 MAX_DAILY_LOSS = float(os.getenv("SNIPE_MAX_DAILY_LOSS", "20"))
 FEE_RATE = 0.07
 
@@ -98,7 +107,7 @@ class SnipeStrategy:
         b = self.bars.get(ws)
         # ── lock the winner at first post-close tick ─────────────────────────
         if b is None:
-            if ctx.bar_open is None or ctx.spot <= 0 or ctx.spot_age > 2.0:
+            if ctx.bar_open is None or ctx.spot <= 0 or ctx.spot_age > MAX_SPOT_AGE:
                 self.bars[ws] = dict(skip="no_data")
                 _event("SNIPE_SKIP", bar=ws, reason="no_data",
                        spot_age=round(ctx.spot_age, 2))
@@ -111,11 +120,13 @@ class SnipeStrategy:
             side = "UP" if lead > 0 else "DOWN"
             token = ctx.up_token if side == "UP" else ctx.down_token
             b = dict(side=side, token=token, lead=lead, end=end,
+                     spot_age=ctx.spot_age,
                      fire_at=end + FIRE_DELAY, fired=False,
                      fills_sh=0.0, fills_ev=0.0, fills_cost=0.0, n_fills=0,
                      miss_sh=0.0, miss_ev=0.0, settled=False)
             self.bars[ws] = b
-            _event("SNIPE_LOCK", bar=ws, side=side, lead_bps=round(lead, 2))
+            _event("SNIPE_LOCK", bar=ws, side=side, lead_bps=round(lead, 2),
+                   spot_age=round(ctx.spot_age, 2))
             return
         if b.get("skip") or b.get("settled"):
             return
@@ -184,6 +195,8 @@ class SnipeStrategy:
                 b["settled"] = True
                 _event("SNIPE_SETTLE", bar=ws, side=b["side"],
                        outcome="UP" if oc else "DOWN", lock_ok=lock_ok,
+                       spot_age=round(b.get("spot_age", 0.0), 2),
+                       lead_bps=round(b.get("lead", 0.0), 2),
                        fills_sh=round(b["fills_sh"], 1),
                        pnl=round(pnl, 2),
                        miss_sh=round(b["miss_sh"], 1),
