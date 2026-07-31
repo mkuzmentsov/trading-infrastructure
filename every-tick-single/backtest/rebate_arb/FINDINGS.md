@@ -260,6 +260,41 @@ The rebate is a partial refund on adverse selection, structurally smaller than
 the loss that generates it. It can subsidise an ALREADY-profitable maker
 operation by ~0.25-0.35c/share; it cannot BE the strategy.
 
+## 4g. Crypto-only completion (31 Jul, morning)
+
+**Slow crypto instruments** (same 0.07/20% category, slower clock):
+- Daily threshold markets (`bitcoin-above-66k-on-july-31`): mid-priced days
+  have **$0.19-2.19/day** pools — volume only arrives near expiry, at the
+  tails, converging. Dead.
+- Daily up/down (`bitcoin-up-or-down-on-july-31`): **$106-117/day pool while
+  mid-priced** — the best crypto pool found — but taker flow is **96% BUYS**
+  (shorting UP = buying DOWN; taker sells barely exist). Resting bids farm 4%
+  of the flow. Series total pool ~$100/day bounds any capture.
+
+**Mint + dual-ask farmer** (`msell.py`) — the mirror config the 96% buy flow
+suggests: split $1 into UP+DOWN fee-free, rest maker asks on both tokens at
+aU+aD = 1+margin. Never tested before tonight. Result: the **worst of all
+seven configs** — both-fill 47-54% (flow is indeed there) and the largest
+rebate haul of any run (+$2,316), yet **−$22/bar at t = −65**. The buyers
+lifting our asks are informed direction-takers: they buy the winner from us at
+0.51-0.53 and leave us holding its complement. Flow abundance was never the
+constraint — flow toxicity is, identically on both sides of the book.
+
+**The one clean config, sized honestly.** Pre-open 0.50/0.50, cancel at open
+(unbiased fills, |t| < 1 — §1) under the hidden-queue haircut:
+
+| hidden queue | bars traded | shares | REBATE (4 days) | direction t |
+|---|---|---|---|---|
+| 0 | 522 | 13,832 | +$48.41 | +0.10 |
+| 50 | 92 | 5,753 | +$20.14 | +0.58 |
+| 200 | 20 | 1,534 | +$5.37 | +0.58 |
+
+Clean rebate income at realistic queue: **~$1-5/day** across all six coins at
+100sh/side, direction-neutral by construction, carried on ±$250/day of
+zero-mean coin-flip variance. Real, deployable, and economically pointless.
+Every attempt to push volume beyond this window buys adverse selection at
+5-60× the rebate.
+
 ## 6. Conclusion
 
 The rebate is real, deterministic and far too small: **0.665c/share round trip
