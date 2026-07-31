@@ -16,12 +16,19 @@ close + SNIPE_FIRE_DELAY_MS. Then two parallel accountings:
   close and fire are SNIPE_MISS — the race tranche our latency loses. Asks
   cancelled unprinted are not counted (conservative).
 
-SNIPE_SETTLE verifies the lock against gamma resolution and books PnL from
-print-attributed fills only; a wrong lock books the full loss of the fills.
+SNIPE_SETTLE verifies the lock against gamma resolution. In PAPER it books the
+print-attributed fills; in LIVE it books only what the venue's trade record
+confirms (verified_filled, never poll_filled — that fabricates fills for
+orders culled at close).
 
-Env: SNIPE_CAP(0.05) SNIPE_FIRE_DELAY_MS(150) SNIPE_MAX_SHARES(5000)
-SNIPE_MIN_LEAD_BPS(3) SNIPE_MAX_DAILY_LOSS(20). PAPER ONLY — the live path is
-deliberately not wired; go-live is a separate, explicit decision.
+LIVE (2026-07-31, user go-ahead, btc only): both tokens are presigned at CAP
+each bar; at close+delay we POST the winner's FAK. Risk per deal is bounded by
+the ORDER ITSELF, not by our logic — a FAK with limit price CAP cannot fill
+above CAP and leaves no resting remainder, so a wrong lock costs at most
+SHARES*CAP (5 * 0.05 = $0.25). SNIPE_MAX_DAILY_LOSS halts the day.
+
+Env: SNIPE_CAP(0.05) SNIPE_SHARES(5) SNIPE_FIRE_DELAY_MS(150)
+SNIPE_MIN_LEAD_BPS(3) SNIPE_MAX_SPOT_AGE(10) SNIPE_MAX_DAILY_LOSS(20).
 """
 from __future__ import annotations
 
@@ -35,11 +42,14 @@ from execution.events import EventLog
 
 COIN = os.getenv("COIN", "btc").lower()
 LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
-_real = LIVE_TRADING and not DRY_RUN     # kept for symmetry; paper build
+_real = LIVE_TRADING and not DRY_RUN
 
 CAP = float(os.getenv("SNIPE_CAP", "0.05"))
 FIRE_DELAY = float(os.getenv("SNIPE_FIRE_DELAY_MS", "150")) / 1000.0
-MAX_SHARES = float(os.getenv("SNIPE_MAX_SHARES", "5000"))
+MAX_SHARES = float(os.getenv("SNIPE_MAX_SHARES", "5000"))   # paper accounting cap
+# LIVE order size, shares per deal. Max loss on a wrong lock = SHARES * CAP
+# (5 * 0.05 = $0.25), because the FAK limit price cannot be exceeded.
+SHARES = float(os.getenv("SNIPE_SHARES", "5"))
 MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "3"))
 # Max age of the Binance spot print used to lock the winner. NOT 2s: aggTrade
 # only fires on trades, so on thin coins (sol/doge/xrp) the last print at the
@@ -88,15 +98,26 @@ class SnipeStrategy:
         self.bars: dict[int, dict] = {}      # ws -> state
         self.day_pnl: dict[str, float] = {}
         self._last_seq = 0
+        self.halted = False
 
     def bind(self, runner) -> None:
         self.runner = runner
-        _event("SNIPE_START", live=_real, cap=CAP,
-               fire_delay_ms=FIRE_DELAY * 1000, max_shares=MAX_SHARES,
-               min_lead_bps=MIN_LEAD_BPS)
+        _event("SNIPE_START", live=_real, cap=CAP, shares=SHARES,
+               max_loss_per_deal=round(SHARES * CAP, 4),
+               fire_delay_ms=FIRE_DELAY * 1000, min_lead_bps=MIN_LEAD_BPS,
+               max_spot_age=MAX_SPOT_AGE, max_daily_loss=MAX_DAILY_LOSS)
 
     def presign_requests(self, ctx):
-        return []                            # paper: nothing to presign
+        """Presign a FAK buy at CAP on BOTH tokens each bar. We do not know the
+        winner until close, so both must be ready; at close we POST only the
+        winner's. FAK + a limit price of CAP means the order can NEVER fill
+        above CAP — the venue kills the unmatched remainder rather than walking
+        the book. That limit is the primary risk control, not our logic."""
+        if not _real:
+            return []
+        return [("snipe-UP", ctx.up_token, CAP, SHARES),
+                ("snipe-DOWN", ctx.down_token, CAP, SHARES)] if (
+                    ctx.up_token and ctx.down_token) else []
 
     async def on_tick(self, ctx) -> None:
         ws = ctx.ws
@@ -145,6 +166,8 @@ class SnipeStrategy:
                    book_claim_sh=round(claim_sh, 1),
                    book_claim_ev=round(claim_ev, 2),
                    ladder=[[round(p, 3), round(s, 1)] for p, s in claim[:4]])
+            if _real and not self.halted:
+                await self._fire_live(ws, b, now)
         # ── attribute prints (the honest fills) ──────────────────────────────
         from core.pm_ws import pm_state
         for t in pm_state.recent_trades:
@@ -171,6 +194,43 @@ class SnipeStrategy:
                        ms_after_close=round((ts - b["end"]) * 1000, 0),
                        cum_sh=round(b["fills_sh"], 1))
 
+    async def _fire_live(self, ws: int, b: dict, now: float) -> None:
+        """POST the winner's presigned FAK. Unmatched remainder is killed by
+        the venue; we never rest and never chase. Fills are read back from the
+        AUTHORITATIVE trade record, never poll_filled (which fabricates fills
+        for orders culled at close)."""
+        key = "snipe-" + b["side"]
+        ex = self.runner.exec
+        if not ex.has_presigned(key):
+            _event("SNIPE_LIVE_NOPRESIGN", bar=ws, side=b["side"])
+            return
+        try:
+            oid, matched, post_ms, avg_px, filled = await ex.fire_presigned(key)
+        except Exception as exc:
+            _event("SNIPE_LIVE_ERR", bar=ws, side=b["side"], err=str(exc)[:160])
+            return
+        b["live_oid"] = oid
+        b["live_post_ms"] = post_ms
+        _event("SNIPE_LIVE_FIRE", bar=ws, side=b["side"], order=oid or "FAILED",
+               matched=matched, post_ms=round(post_ms, 1),
+               imm_fill=round(filled or 0.0, 1),
+               imm_px=None if avg_px is None else round(avg_px, 4),
+               cap=CAP, shares=SHARES)
+        if oid:
+            b["live_filled"] = filled or 0.0
+            b["live_px"] = avg_px if avg_px else CAP
+
+    async def _verify_live(self, ws: int, b: dict) -> float:
+        """Authoritative filled shares for the live order (trade record)."""
+        oid = b.get("live_oid")
+        if not oid:
+            return 0.0
+        try:
+            v = await self.runner.exec.verified_filled(oid)
+        except Exception:
+            v = None
+        return 0.0 if v is None else float(v)
+
     async def settle_loop(self) -> None:
         while True:
             await asyncio.sleep(5.0)
@@ -190,8 +250,15 @@ class SnipeStrategy:
                     continue
                 lock_ok = (b["side"] == "UP") == oc
                 pnl = b["fills_ev"] if lock_ok else -b["fills_cost"]
+                live_sh = live_pnl = 0.0
+                if _real:
+                    live_sh = await self._verify_live(ws, b)
+                    px = b.get("live_px", CAP)
+                    live_pnl = (live_sh * (1.0 - px - fee(px)) if lock_ok
+                                else -live_sh * (px + fee(px)))
                 day = time.strftime("%Y-%m-%d", time.gmtime(ws))
-                self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
+                booked = live_pnl if _real else pnl
+                self.day_pnl[day] = self.day_pnl.get(day, 0.0) + booked
                 b["settled"] = True
                 _event("SNIPE_SETTLE", bar=ws, side=b["side"],
                        outcome="UP" if oc else "DOWN", lock_ok=lock_ok,
@@ -202,15 +269,21 @@ class SnipeStrategy:
                        miss_sh=round(b["miss_sh"], 1),
                        miss_ev=round(b["miss_ev"], 2),
                        book_claim_ev=round(b.get("claim_ev", 0.0), 2),
+                       live_sh=round(live_sh, 1), live_pnl=round(live_pnl, 3),
                        day_pnl=round(self.day_pnl[day], 2), live=_real)
+                if self.day_pnl[day] <= -MAX_DAILY_LOSS and not self.halted:
+                    self.halted = True
+                    _event("SNIPE_HALT", day=day,
+                           day_pnl=round(self.day_pnl[day], 2))
                 self.bars.pop(ws, None)
 
 
 def main():
     from execution.runner import TakerRunner
-    log.info("snipe %s: coin=%s cap=%.2f fire+%.0fms minLead=%.1fbps max=%dsh",
-             "LIVE" if _real else "PAPER", COIN, CAP, FIRE_DELAY * 1000,
-             MIN_LEAD_BPS, MAX_SHARES)
+    log.info("snipe %s: coin=%s cap=%.2f shares=%.0f (max loss/deal $%.2f) "
+             "fire+%.0fms minLead=%.1fbps halt=$%.0f",
+             "LIVE" if _real else "PAPER", COIN, CAP, SHARES, SHARES * CAP,
+             FIRE_DELAY * 1000, MIN_LEAD_BPS, MAX_DAILY_LOSS)
     runner = TakerRunner(SnipeStrategy(), live=_real, event_logger=_event)
     asyncio.run(runner.run())
 

@@ -1,21 +1,29 @@
-# btc-snipe — settlement sniper, PAPER (SNIPE_REVAL.md 2026-07-31).
-# Fires at close+150ms on the Binance-locked winner; PnL booked ONLY from
-# print-attributed fills (book claims logged separately for phantom-rate
-# measurement). Live path deliberately not wired.
+# btc-snipe — settlement sniper. LIVE 2026-07-31 at 5 shares/deal (user).
+#
+# Risk is bounded by the ORDER, not by our code: a FAK at limit price 0.05
+# cannot fill above 0.05 and leaves no resting remainder, so a wrong winner
+# lock costs at most 5 * 0.05 = $0.25. Lock accuracy measured 10/10 on paper
+# today and 24/24 lifetime on the vacuum's identical determination.
+# snipeMaxDailyLoss $20 = ~80 consecutive wrong deals before the day halts.
+#
+# The edge is LUMPY: ~5 events/day on btc, 62% of value in the top 3. Long
+# runs of zero fills are the expected shape, not a fault.
 botName: btc-snipe
 bot:
   entrypoint: "snipe.py"
   coin: "btc"
-  paperMode: "true"
-  dryRun: "true"
-  liveTrading: "false"
+  paperMode: "false"
+  dryRun: "false"
+  liveTrading: "true"
   loopIntervalSecs: "300"
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   postCloseGraceSecs: "20"
   snipeCap: "0.05"
+  snipeShares: "5"
   snipeFireDelayMs: "150"
-  snipeMaxShares: "5000"
   snipeMinLeadBps: "3"
+  snipeMaxSpotAge: "10"
   snipeMaxDailyLoss: "20"
+  favOrderType: "fak"
   binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
   polymarketRtdsSymbol: "btc/usd"
