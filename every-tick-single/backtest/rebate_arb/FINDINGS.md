@@ -218,7 +218,49 @@ coherent; the instrument contradicts it. If it has a home, it is slower
 markets: hourly/daily up-downs or non-crypto markets that genuinely sit near
 50c with two-sided flow — none of which the current recorder covers.
 
-## 5. Conclusion
+## 4f. The slow-market escape hatch, measured (politics/finance, 31 Jul)
+
+Category rates (verified from docs 31 Jul): crypto fee 0.07 / rebate 20%
+(0.35c/sh at 50c); politics & finance 0.04 / 25% (0.25c/sh); sports 0.05 / 15%
+(0.19c/sh); **geopolitics fee-free → no pool at all** (excludes the biggest
+"stable mid" markets — Iran, Taiwan, ceasefires).
+
+Case study on the best available candidate — the Sept-2026 Fed no-change market
+($1.46M/24h "headline" volume, 1c spread, mid ~0.445): 6,918 prints across 79
+days, plus the live book.
+
+```
+median daily volume        6,263 sh    (the $1.46M day was FOMC — 100x median)
+median daily REBATE POOL   $15.47      <- the WHOLE market's pool, ALL makers
+days with >=10c repricing  13%
+median flow imbalance      |sell%-50| = 30pp  (flow is one-sided even on quiet days)
+book at the touch          33.5k bid / 11k ask resting ahead of any new quote
+```
+
+Three independent killers:
+1. **The pool is tiny.** $15/day for the entire market, shared by weight. With
+   33.5k shares already at the bid, a 1k-share quoter owns ~3% of the queue →
+   cents per day. Even 100% capture cannot fund a strategy.
+2. **The pool is big exactly when farming is deadly.** Pool ∝ volume; volume
+   spikes on repricing days (FOMC day: $3,687 pool, 8-46c ranges). The fee
+   revenue and the inventory toxicity are the same variable.
+3. **Flow is one-sided even when price is flat** (median imbalance 30pp), so
+   two-sided quotes don't cycle — they accumulate the drift side. Same adverse
+   selection as crypto, on a slower clock.
+
+## 5. The general bound (why no variant can work)
+
+Rebate farming as a PRIMARY strategy is capped by an identity: the pool is
+20-25% of taker fees **in that market**. Taker fees come attached to the flow
+that repriced the market. So either
+  - the market is calm → fees ≈ 0 → pool ≈ 0 (politics median: $15/day), or
+  - the pool is large → the market is fast → maker inventory is toxic
+    (crypto 5m: every configuration −5σ to −40σ).
+The rebate is a partial refund on adverse selection, structurally smaller than
+the loss that generates it. It can subsidise an ALREADY-profitable maker
+operation by ~0.25-0.35c/share; it cannot BE the strategy.
+
+## 6. Conclusion
 
 The rebate is real, deterministic and far too small: **0.665c/share round trip
 against a 50c/share coin flip whenever the exit does not fill.** The strategy
