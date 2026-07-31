@@ -17,14 +17,17 @@ bot:
   postCloseGraceSecs: "50"
   snipeCap: "0.99"
   snipeFireMaxSecs: "45"
-  # 2026-07-31: user set size to $550/deal (555sh at 0.99), up from $30.
-  # Note the arithmetic this commits to: +1c/share on a win, -99c/share on a
-  # loss, so ONE mislock is -$544 and breakeven needs a 99% win rate. The live
-  # record 25-30 Jul is 118W/4L = 96.7% and -$192.35 cumulative at $30 sizing.
-  # snipeMaxDailyLoss stays 35 deliberately: at this size any single loss blows
-  # through it, which halts the bot for the rest of the UTC day -- one bad
-  # trade per day is the cap, and that is the only real protection left.
-  snipeNotional: "550"
+  # Sizing history:
+  #   2026-07-31 01:30 UTC  $30 -> $550/deal (555sh at 0.99), user's call.
+  #   2026-07-31 04:00 UTC  back to $30/deal, user's call.
+  # What the $550 run measured in ~5h live: 4 fills, ALL COMPLETE 555-share
+  # fills (rested_fill=555, taker_cross=0), 4-0, +$22.20. So size did NOT cost
+  # queue priority and the partial-fill worry was unfounded -- but 4 wins say
+  # nothing about the tail. The arithmetic is unchanged at any size: +1c/share
+  # on a win, -99c/share on a loss, so breakeven needs a 99% win rate against a
+  # live record of 118W/4L = 96.7% (25-30 Jul). At $30 a loss is -$29.70
+  # instead of -$544, which is the whole point of being back here.
+  snipeNotional: "30"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "35"
   vacPreLeadBps: "5"
