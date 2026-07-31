@@ -228,16 +228,25 @@ class SnipeStrategy:
                 b["miss_sh"] += sz
                 b["miss_ev"] += sz * (1.0 - px - fee(px))
                 _event("SNIPE_MISS", bar=ws, px=px, sz=round(sz, 1),
-                       ms_after_close=round((ts - b["end"]) * 1000, 0))
+                       ms_after_close=round((ts - b["end"]) * 1000, 0),
+                       tok=str(b["token"])[-10:])
             elif b["fills_sh"] < MAX_SHARES:
                 take = min(sz, MAX_SHARES - b["fills_sh"])
                 b["fills_sh"] += take
                 b["fills_cost"] += take * (px + fee(px))
                 b["fills_ev"] += take * (1.0 - px - fee(px))
                 b["n_fills"] += 1
+                # tok + live book are logged so a paper fill can be VERIFIED
+                # against the recorder later. 2026-07-31: a 5,000sh "fill" at
+                # 0.01 was corroborated by NO print in any recorded market, and
+                # the recorder's book for that bar had frozen -- unresolved, so
+                # every paper fill now carries its own evidence.
+                _ask = ctx.down_ask if b["side"] == "DOWN" else ctx.up_ask
+                _bid = ctx.down_bid if b["side"] == "DOWN" else ctx.up_bid
                 _event("SNIPE_PAPER_FILL", bar=ws, px=px, sz=round(take, 1),
                        ms_after_close=round((ts - b["end"]) * 1000, 0),
-                       cum_sh=round(b["fills_sh"], 1))
+                       cum_sh=round(b["fills_sh"], 1),
+                       tok=str(b["token"])[-10:], book_ask=_ask, book_bid=_bid)
 
     async def _fire_live(self, ws: int, b: dict, now: float) -> None:
         """POST the winner's presigned FAK. Unmatched remainder is killed by
