@@ -19,7 +19,15 @@ bot:
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   postCloseGraceSecs: "20"
   snipeCap: "0.05"
-  snipeShares: "5"
+  # 2026-08-01: 5 -> 25 shares. The venue rejects a marketable BUY worth under
+  # $1.00 ("invalid amount for a marketable BUY order ($0.25), min size: 1"),
+  # and the order's dollar amount is shares x cap = 5 x 0.05 = $0.25. EVERY
+  # live fire was rejected from the moment this bot went live (306/306 on
+  # btc-snipe, 312/312 on btc-snipeb) -- not one order ever reached the book,
+  # so the "0 fills" measured nothing. 25 x 0.05 = $1.25 clears the minimum
+  # with margin; max loss per deal is $1.25. snipe.py now also floors the size
+  # at ceil(SNIPE_MIN_ORDER_USD / cap) so a cap change cannot reintroduce this.
+  snipeShares: "25"
   snipeFireDelayMs: "150"
   # 0 = TRADE TIES (user, 2026-07-31). Measured on 4,860 bars: 100% of the
   # settlement-snipe pot ($6,952) is in |lead|<3bps bars; the 3,105 bars with

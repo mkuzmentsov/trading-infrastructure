@@ -47,9 +47,22 @@ _real = LIVE_TRADING and not DRY_RUN
 CAP = float(os.getenv("SNIPE_CAP", "0.05"))
 FIRE_DELAY = float(os.getenv("SNIPE_FIRE_DELAY_MS", "150")) / 1000.0
 MAX_SHARES = float(os.getenv("SNIPE_MAX_SHARES", "5000"))   # paper accounting cap
-# LIVE order size, shares per deal. Max loss on a wrong lock = SHARES * CAP
-# (5 * 0.05 = $0.25), because the FAK limit price cannot be exceeded.
+# LIVE order size, shares per deal. Max loss on a wrong lock = SHARES * CAP,
+# because the FAK limit price cannot be exceeded.
+#
+# ⚠ 2026-08-01: the venue rejects a marketable BUY worth less than $1.00
+#   {'error': 'invalid amount for a marketable BUY order ($0.25), min size: 1'}
+# and SHARES*CAP is exactly that dollar amount (makerAmount). At the default
+# 5 shares x 0.05 that is $0.25, so EVERY live fire was rejected -- 306/306 on
+# btc-snipe and 312/312 on btc-snipeb from the moment they went live. Zero
+# orders ever reached the book; the "0 fills" was this, not the market.
+# Floor the size so SHARES*CAP clears the minimum with margin.
+MIN_ORDER_USD = float(os.getenv("SNIPE_MIN_ORDER_USD", "1.25"))
 SHARES = float(os.getenv("SNIPE_SHARES", "5"))
+if CAP > 0:
+    _floor = math.ceil(MIN_ORDER_USD / CAP)
+    if SHARES < _floor:
+        SHARES = float(_floor)
 MIN_LEAD_BPS = float(os.getenv("SNIPE_MIN_LEAD_BPS", "3"))
 # Max age of the Binance spot print used to lock the winner. NOT 2s: aggTrade
 # only fires on trades, so on thin coins (sol/doge/xrp) the last print at the
