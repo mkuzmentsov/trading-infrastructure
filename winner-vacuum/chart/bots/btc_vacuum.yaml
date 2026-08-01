@@ -28,6 +28,8 @@ bot:
   # live record of 118W/4L = 96.7% (25-30 Jul). At $30 a loss is -$29.70
   # instead of -$544, which is the whole point of being back here.
   # 2026-07-31 (user): $600/deal, cut to $15 during 15:30-19:00 Kyiv
+  # 2026-08-01 (user): window size reduced $15 -> $5 (= 5 shares, max loss
+  # $4.95 inside the window) before the window ever traded once.
   # (12:30-16:00 UTC). Both lifetime mislocks landed inside that window
   # (16:10 Kyiv 28 Jul -$147.98, 16:40 Kyiv 29 Jul -$149.49, both 151sh).
   # Backtest on the 113-trade record: +$489 with this rule, -$527 at flat $600.
@@ -38,7 +40,7 @@ bot:
   # ⚠ snipeMaxDailyLoss $35 is decorative at this size -- it halts the day
   # AFTER the first loss rather than preventing it.
   snipeNotional: "600"
-  snipeAltNotional: "15"
+  snipeAltNotional: "5"
   snipeAltWindowUtc: "12:30-16:00"
   snipeMinLeadBps: "3"
   snipeMaxDailyLoss: "35"
