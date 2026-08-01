@@ -82,3 +82,63 @@ Untested variants that remain, in order of how much I would trust them:
    recorder; none of our mrec data covers those markets.
 2. Asymmetric pair: rest the cheap leg only when the expensive leg is already
    filled (sequential), sized so the single-leg loss is bounded by a few cents.
+
+---
+
+# CORRECTION (Sat 01 Aug, later) — rebates DO exist, and two of my numbers were wrong
+
+## 1. Crypto markets pay a maker rebate. My earlier "structurally impossible" was wrong.
+
+Straight from a live `btc-updown-5m` market on gamma:
+
+```
+feeType                  crypto_fees_v2
+feeSchedule              {exponent: 1, rate: 0.07, takerOnly: true, rebateRate: 0.2}
+makerRebatesFeeShareBps  10000
+rewardsMinSize           50        rewardsMaxSpread  4.5
+```
+
+Takers pay `0.07 · p(1−p)`; **makers receive 20% of it**:
+
+| p | taker fee/sh | **maker rebate/sh** |
+|---|---|---|
+| 0.50 | 0.01750 | **0.350 c** |
+| 0.75 | 0.01313 | 0.263 c |
+| 0.90 | 0.00630 | 0.126 c |
+| 0.99 | 0.00069 | **0.014 c** |
+
+What I tested earlier was the *liquidity rewards* programme
+(`get_current_rewards`, `get_earnings_for_user_for_day`) — a different
+mechanism — and wrongly generalised its $0 to "no rebates in these markets".
+
+Our measured $0 was nonetheless right *for the vacuum*: it quotes at 0.99,
+where the rebate is 0.014c/share (~$1.61 across all-time maker volume) and the
+order sits ~49c from mid, far outside `rewardsMaxSpread 4.5`. The rebate is
+maximal at 50/50 — exactly where a pair farm operates.
+
+## 2. The single-leg unwind was mismeasured — it costs 8c, not 28c
+
+The first pass priced the unwind at the **last book before close**, i.e. it
+held the orphan leg to the end of the bar. That is not "sell it", which is the
+actual variant. Pricing the unwind at the book *at the moment of the fill*:
+
+| reaction | single-fill cost | net/bar incl rebate |
+|---|---|---|
+| 1.0 s | −0.0844 | **−0.0125** |
+| 0.3 s | −0.0821 | −0.0118 |
+| 0.1 s | −0.0805 | −0.0112 |
+
+Corrected economics at t−150s, join-the-bid, 2,904 bars:
+
+- BOTH fill 58.7% → **+0.0213**/pair
+- ONE fills 34.1% → **−0.0844**/single (was −0.2757)
+- maker rebate → **+0.00375**/bar
+- **NET −0.0125/bar** (was −0.0814)
+
+So the honest verdict moves from *hopeless* to *close but still losing*. The
+rebate covers about a quarter of the remaining gap.
+
+**Speed is not the missing piece.** Cutting reaction from 1.0s to 0.1s recovers
+0.4c of the 8.4c single-fill cost — the cost is the spread plus the immediate
+adverse move, not latency. Anything that closes the last ~1.1c/bar has to
+attack the 34% single-fill rate itself, not how fast we react to it.
