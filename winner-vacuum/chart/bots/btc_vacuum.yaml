@@ -30,6 +30,15 @@ bot:
   # 2026-07-31 (user): $600/deal, cut to $15 during 15:30-19:00 Kyiv
   # 2026-08-01 (user): window size reduced $15 -> $5 (= 5 shares, max loss
   # $4.95 inside the window) before the window ever traded once.
+  # 2026-08-01 (user): ALL-DAY SIZE CUT TO $5 to test the @bookTicker feed
+  # switch below (rev 37, 11:07 Kyiv). Bars seen on the new feed: 2, both
+  # correct VAC_SKIPs at 0.3/2.5bps -- feed verified live, no staleness abort,
+  # but NO fill and NO resting order was observed at $5, so the 5sh wire size
+  # was never confirmed and the feed has not yet been through a lock+rest.
+  # 2026-08-01 (user, ~11:25 Kyiv): back to 600/5 -- $600 outside the window,
+  # $5 inside 12:30-16:00 UTC. So the first order the new feed ever rests is
+  # a $600 one. The feed itself is low-risk (same lead math, denser input),
+  # but the size decision is the user's and is deliberately not hedged here.
   # (12:30-16:00 UTC). Both lifetime mislocks landed inside that window
   # (16:10 Kyiv 28 Jul -$147.98, 16:40 Kyiv 29 Jul -$149.49, both 151sh).
   # Backtest on the 113-trade record: +$489 with this rule, -$527 at flat $600.
@@ -53,5 +62,19 @@ bot:
   favOrderType: "gtc"
   liveMaxOrderUsd: "25"
   liveMaxDailyLossUsd: "35"
-  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
+  # 2026-08-01: @aggTrade -> @bookTicker. aggTrade only pushes when a trade
+  # PRINTS, so a quiet BTC minute gaps 3-5s with the price perfectly healthy;
+  # vacuum.py:397 then can't compute a lead and the watchdog at :410 reads
+  # spot_age>5 as a dead feed, cancels a good resting 0.99 bid and salvages.
+  # 9 of 16 lifetime VAC_PRE_ABORTs were exactly that (lead_bps=None,
+  # spot_age=5.0) -- each forgoes a ~1c/share win on a bar we had locked right.
+  # bookTicker pushes on every BBO change (~continuous on BTCUSDT), so
+  # spot_age>5 now means the socket is genuinely dead -- the case we DO want
+  # to abort on. Same venue as the kline seed (spot), so bar_open and spot
+  # keep a common basis; mid vs last-trade differs by ~half a spread (<0.1bp)
+  # against a 3-8bp gate. binance_ws.py already parses bookTicker (b/a -> mid).
+  # Trade-off: spot bookTicker carries no exchange timestamp, so spot_age is
+  # measured off the local clock -- it detects a dead socket but no longer
+  # measures delivery lag (last_delay_ms goes to 0 and means nothing here).
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/btcusdt@bookTicker"
   polymarketRtdsSymbol: "btc/usd"
