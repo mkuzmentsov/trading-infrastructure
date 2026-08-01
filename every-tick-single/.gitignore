@@ -18,3 +18,5 @@ backtest/fiftycent/*.csv
 backtest/fiftycent/*.txt
 backtest/fiftycent/*_report.json
 measurements/.last_breakdown.json
+# regenerable replay output (rerun replay.py); keep the .py + FINDINGS.md
+backtest/vacuum/replay_out.json
