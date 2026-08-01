@@ -271,10 +271,24 @@ class VacuumStrategy:
         _event("VAC_SALVAGE", bar=ws, side=win, qty=round(filled, 1),
                floor=SALVAGE_FLOOR, matched=matched, order=sell_oid, live=_real)
         if matched:
-            # position exited: conservative PnL at the floor; keep it out of
-            # the hold-to-resolution settle path
+            # Position exited. Book the REALISED exit, not the floor: the FAK
+            # walks the bid book from the top down and normally fills far above
+            # SALVAGE_FLOOR. Pricing it at the floor is not "conservative", it
+            # is wrong — 2026-08-01 18:04 UTC a 606sh exit that actually sold
+            # for $569.64 (0.94/sh, a -$30.30 loss) was booked as -$296.94,
+            # which then tripped the -$35 daily halt and stopped the bot for
+            # the rest of the UTC day on a number that never happened.
             px = self._px.get(ws, CAP)
-            pnl = filled * (SALVAGE_FLOOR - px)
+            sell_px = SALVAGE_FLOOR
+            try:
+                from engine.clob import LAST_SELL_FILL
+                got = LAST_SELL_FILL.get(sell_oid or "")
+                if got and got[1] > 0:
+                    sell_px = got[0] / got[1]     # usdc received / shares sold
+                    filled = min(filled, got[1])  # count only what really sold
+            except Exception:
+                pass
+            pnl = filled * (sell_px - px)
             day = time.strftime("%Y-%m-%d", time.gmtime(ws))
             self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
             self.settled.add(ws)
@@ -282,7 +296,8 @@ class VacuumStrategy:
                                   "fill_qty": filled, "order_id": oid,
                                   "verified": True, "salvaged": True}
             _event("VAC_SETTLE", bar=ws, side=win, outcome="SALVAGED",
-                   won=False, fill_px=round(px, 4), qty=round(filled, 1),
+                   won=False, fill_px=round(px, 4), sell_px=round(sell_px, 4),
+                   qty=round(filled, 1),
                    pnl=round(pnl, 3), day_pnl=round(self.day_pnl[day], 2),
                    live=_real)
 

@@ -305,6 +305,16 @@ def sign_sell_order(
     return signed
 
 
+# Realised proceeds of the last FAK sells, keyed by orderID:
+# (usdc_received, shares_sold). The (order_id, matched) tuple is unpacked at a
+# fixed arity by three call sites, so the fill price rides alongside instead of
+# widening the signature. Callers that price a salvage MUST read this rather
+# than assuming the limit/floor price — booking a salvage at the floor
+# overstated a -$30.30 exit as -$296.94 and tripped the daily halt
+# (2026-08-01 18:04 UTC, btc-vacuum).
+LAST_SELL_FILL: dict[str, tuple[float, float]] = {}
+
+
 def post_signed_sell_fak(clob, signed) -> tuple[Optional[str], bool]:
     from py_clob_client_v2 import OrderType
 
@@ -313,6 +323,15 @@ def post_signed_sell_fak(clob, signed) -> tuple[Optional[str], bool]:
         log.info("CLOB post_order SELL FAK RESPONSE  %s", resp)
         order_id = resp.get("orderID") or resp.get("order_id") or None
         is_matched = str(resp.get("status", "")).lower() in ("matched", "filled")
+        try:
+            taking = float(resp.get("takingAmount") or 0.0)   # USDC received
+            making = float(resp.get("makingAmount") or 0.0)   # shares sold
+            if order_id and making > 0 and taking > 0:
+                if len(LAST_SELL_FILL) > 256:
+                    LAST_SELL_FILL.clear()
+                LAST_SELL_FILL[order_id] = (taking, making)
+        except Exception:
+            pass
         return order_id, is_matched
     except Exception as exc:
         if "not enough balance" in str(exc).lower() or "balance is not enough" in str(exc).lower():
