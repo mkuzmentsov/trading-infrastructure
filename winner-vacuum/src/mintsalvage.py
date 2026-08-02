@@ -55,8 +55,8 @@ _real = LIVE_TRADING and not DRY_RUN
 MINT_USD = float(os.getenv("PM_MINT_USD", "5"))
 SIZE = float(int(MINT_USD))
 SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
-SALV_ARM_TL = float(os.getenv("PM_SALV_ARM_TL", "45"))
-LEAD_GATE_BPS = float(os.getenv("PM_LEAD_GATE_BPS", "5"))
+SALV_ARM_TL = float(os.getenv("PM_SALV_ARM_TL", "10"))
+LEAD_GATE_BPS = float(os.getenv("PM_LEAD_GATE_BPS", "3"))
 LEAD_CANCEL_BPS = float(os.getenv("PM_LEAD_CANCEL_BPS", "2"))
 MAX_DAILY_LOSS = float(os.getenv("PM_MAX_DAILY_LOSS", "5"))
 COLLATERAL = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
@@ -202,37 +202,37 @@ class MintSalvage:
         self.halted = bool(d.get("halted", False))
         _event("PF_RESUME", bars=len(self.bars), halted=self.halted)
 
-    # ── discovery only: cache the CURRENT bar's market (no tx, no capital).
-    # The mint happens inside the salvage gate — knife-edge bars never mint,
-    # never pay gas, never hold capital.
+    # ── mint the NEXT bar's outcomes during the current bar (user spec:
+    # unconditional pre-open mint, 5 tokens each side) ───────────────────────
     async def mint_loop(self):
         while True:
             try:
-                await self._discover_once()
+                await self._mint_next()
             except Exception as exc:
-                log.exception("discover: %s", exc)
-                _event("PF_ERR", where="discover", err=str(exc)[:160])
+                log.exception("mint: %s", exc)
+                _event("PF_ERR", where="mint", err=str(exc)[:160])
             await asyncio.sleep(8.0)
 
-    async def _discover_once(self):
+    async def _mint_next(self):
         if self.halted:
             return
         now = time.time()
-        for target in (grid_window_start(now), grid_window_start(now) + BAR_SECONDS):
-            if target in self.bars:
-                continue
-            mk = await asyncio.to_thread(fetch_market_for_window, target)
-            if not mk:
-                continue
-            up, dn = get_up_down_tokens(mk)
-            cond = mk.get("conditionId")
-            if not (up and dn and cond):
-                continue
-            bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
-            self.bars[target] = bar
-            _event("PF_DISCOVER", bar=target, slug=bar.slug,
-                   tl_to_open=round(target - now, 1))
-            self._save()
+        target = grid_window_start(now) + BAR_SECONDS
+        if target in self.bars:
+            return
+        mk = await asyncio.to_thread(fetch_market_for_window, target)
+        if not mk:
+            return
+        up, dn = get_up_down_tokens(mk)
+        cond = mk.get("conditionId")
+        if not (up and dn and cond):
+            return
+        bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
+        _event("PF_DISCOVER", bar=target, slug=bar.slug,
+               tl_to_open=round(target - now, 1))
+        self.bars[target] = bar
+        await self._mint_now(bar)
+        self._save()
 
     async def _mint_now(self, bar: Bar) -> bool:
         """Gate passed: mint the pair via the adapter, receipt-waited."""
@@ -325,13 +325,7 @@ class MintSalvage:
         if lead is None or abs(lead) < LEAD_GATE_BPS:
             return
         if not bar.minted:
-            if tl < 18:                      # not enough time to mint+place
-                return
-            if not await self._mint_now(bar):
-                return
-            lead = self._lead_bps(bar.ws)    # re-check after the ~5-10s mint
-            if lead is None or abs(lead) < LEAD_GATE_BPS:
-                return
+            return
         loser = "DOWN" if lead > 0 else "UP"
         if not _real:
             bar.salv_side, bar.salv_oid, bar.salv_sh = loser, f"paper-{bar.ws}", SIZE
@@ -363,7 +357,10 @@ class MintSalvage:
             await asyncio.sleep(15.0)
             now = time.time()
             for bar in list(self.bars.values()):
-                if bar.settled or not bar.minted or now < bar.ws + BAR_SECONDS + 10:
+                if bar.settled or now < bar.ws + BAR_SECONDS + 10:
+                    continue
+                if not bar.minted:
+                    bar.settled = True
                     continue
                 try:
                     await self._settle_bar(bar, now)
