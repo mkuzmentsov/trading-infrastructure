@@ -313,3 +313,35 @@ So the edge is specifically IN-BAR, where resolution is genuinely unknown to
 everyone and both price-insensitive flows coexist. The post-close window
 adds a small free tail (already counted) but cannot carry the structure, and
 the round-4 build spec stands unchanged.
+
+
+---
+
+# LIVE (2026-08-02) — pennymint v2 running the round-4 strategy
+
+Day-1 build log (`winner-vacuum/src/pennymint.py`, commits 5a8f4db..pennymint v2):
+
+- **Manual minting is venue-impossible**, measured on-chain: balances are pUSD,
+  the book's tokens are USDC.e-collateral positionIds (verified via CTF
+  getPositionId), and pUSD's convert authority is the v2 exchange alone. Six
+  $5 pUSD splits produced valid-but-untradeable tokens; merged back in full.
+- **Split/merge round trips are exactly $0.00** — controlled 4-bar live
+  experiment (mid-bar, at-close, post-resolution merges): 624.451381 →
+  604.451381 → 624.451381, six decimals. The docs' intended uses: maker
+  inventory, capital-efficient exit, arb enforcement; the exchange itself
+  mints/merges inside complementary matches (MINT/MERGE match types).
+- **Taker pair-buy entry donates the whole edge** (~1.01 entry vs 1.01 exit)
+  — the only toll-free entry is the 1c maker bid, where the exchange performs
+  the split inside the match.
+- **First live cycles (v1, 100sh)**: one full lock (+$1.00 — bought 100 DOWN
+  @1c, sold all @2c in three prints), two orphans (−$1.00 each: a tl=0 fill
+  whose flip landed post-close, and one killed by a mid-session redeploy).
+  Net −$1.00. Both branches exactly as backtested.
+- **v2 config (user-approved, live 15:03 UTC)**: 1c bids ×100sh on BOTH tokens
+  of every existing future bar up to 10 ahead (~$20 float, first-in-FIFO at
+  placement), 250ms fill loop, 0.3s flip retries, matched 2c mirrors in
+  >=50sh chunks, no orphan salvage (jackpot EV forbids), btc 5m only, −$5
+  daily halt, state persisted, monitor + hourly reports.
+- Open questions the 24h run answers: live fill rate at the 1c level vs the
+  hid grid, flip completion vs orphan rate, jackpot frequency; then the
+  scaling decision (capacity ≈500sh from corpse-buy flow ~700sh/bar median).
