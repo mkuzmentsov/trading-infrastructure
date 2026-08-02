@@ -165,3 +165,44 @@ innocent it looks. The give-away here: "delay sensitivity 0.5s→30s ≈
 unchanged" — a real exit's cost is dominated by WHEN you decide, so
 insensitivity to the delay was the smell that the decision itself was
 clairvoyant.
+
+---
+
+# Addendum (2026-08-02, later) — mint 50/50 + resting 99c asks (user variant)
+
+`snipe99.py` / `snipe99b.py`. The structure is different from the farm: an
+unsold minted pair redeems at $1.00, so the baseline is exactly zero and the
+worst case is bounded at −1c/share/bar. Branches per 100sh: winner's 99c ask
+fills → −$1 (96% of bars print a taker BUY ≥0.99 on the winner); the
+**loser** prints a taker BUY ≥0.99 in **1.5% of bars** (71/4,860 — knife-edge
+flips) → +$99 jackpot; optional 5c leg on the complement after a 99c fill.
+
+Findings, in kill order:
+
+1. **The user rule as stated ("when one fills at 99, delete other, place 5c")
+   has a partial-fill disaster**: an 8-share false spike on the loser triggers
+   dumping the full 100-share complement — the actual WINNER — at 5c. Worst
+   bars −$84 to −$92. Sizing the 5c leg to the filled quantity fixes it, but
+   the leg is still EV-negative (−$0.11 to −$0.14/bar, t to −3.6): it caps
+   every jackpot at +4c (a 5c ask on a secretly-winning complement always
+   fills) and collects +5c only on already-dead losers.
+2. **Ride (no 5c leg) is the best shape and it is a fair lottery**: at zero
+   queue +$0.09/bar (t=+0.68), at hid=100 −$0.06/bar, at hid=300 +$0.02/bar —
+   zero ± noise everywhere. The tails studies said cheap tails are
+   fairly/over-priced; this is the same fact mirrored to the 99c level.
+3. **Timing does not separate drag from jackpot**: winner's first ≥0.99 print
+   median tl=32s, jackpot prints median tl=29s, 80% in the final 20% of the
+   bar. Both are the same endgame knife-edge event — in the jackpot case the
+   certainty then flips. Every cancel-at-tl cuts jackpots proportionally with
+   drag (cancel@45s: −$0.02/bar).
+4. **The measured 0.99-level ask depth ends the queue debate**: when 0.99 is
+   best ask on 5m btc, visible size is **median 4,265sh, p25 2,586** —
+   matching §4's live vacuum calibration (~3,000). The level is the crowd's
+   profit-taking/ladder magnet; open-placement priority does not beat a
+   4,000-share standing wall. 1h: median 288sh but ZERO jackpots in 51 bars
+   (an hourly bar's loser never touches 0.99) → pure drag, t=−20.
+
+Verdict: bounded-loss, zero-EV lottery behind a 4,000-share queue. Nothing to
+deploy; closes the last untested corner of the 2-side arb family. Selling at
+0.99 is the counterparty side of our own vacuum — the tape keeps saying the
+PAID side of that level is the buyer after close, not the seller before it.
