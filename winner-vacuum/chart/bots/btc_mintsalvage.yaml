@@ -17,7 +17,7 @@ bot:
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   pmMintUsd: "100"
   pmMintLeadSecs: "25"
-  pmZTiers: "15:2.0,45:2.5,90:3.0,120:3.5"
+  pmZTiers: "15:2.0,45:2.5"
   pmRisk: "1.25"
   pmSigFloor: "0.6"
   pmMaxDailyLoss: "5"
