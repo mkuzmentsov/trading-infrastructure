@@ -163,12 +163,13 @@ def _outcome_up(ws: int):
 
 
 class Bar:
-    FIELDS = ("ws", "cond", "slug", "tok", "minted", "salv_side", "salv_oid",
-              "salv_sh", "aborted", "settled")
+    FIELDS = ("ws", "cond", "slug", "tok", "usd", "minted", "salv_side",
+              "salv_oid", "salv_sh", "aborted", "settled")
 
     def __init__(self, ws: int, cond: str, up: str, dn: str, slug: str):
         self.ws, self.cond, self.slug = ws, cond, slug
         self.tok = {"UP": up, "DOWN": dn}
+        self.usd = MINT_USD            # size is PER BAR (resizes mid-flight)
         self.minted = False
         self.salv_side = None          # side we sold (the identified LOSER)
         self.salv_oid = None
@@ -184,7 +185,7 @@ class Bar:
     def load(cls, d):
         b = cls(d["ws"], d["cond"], d["tok"]["UP"], d["tok"]["DOWN"], d["slug"])
         for k in cls.FIELDS[4:]:
-            setattr(b, k, d[k])
+            setattr(b, k, d.get(k, 5.0 if k == "usd" else None))
         return b
 
 
@@ -257,16 +258,16 @@ class MintSalvage:
         """Gate passed: mint the pair via the adapter, receipt-waited."""
         if not _real:
             bar.minted = True
-            _event("PF_MINT", bar=bar.ws, usd=MINT_USD, dry=True)
+            _event("PF_MINT", bar=bar.ws, usd=bar.usd, dry=True)
             return True
         bal = await asyncio.to_thread(fetch_usdc_balance, self.clob)
-        if bal is not None and bal < MINT_USD + 1.0:
+        if bal is not None and bal < bar.usd + 1.0:
             _event("PF_SKIP", bar=bar.ws, reason="low_usdc", bal=round(bal or 0, 2))
             return False
         if self.mint_tries.get(bar.ws, 0) >= 2:
             return False
         self.mint_tries[bar.ws] = self.mint_tries.get(bar.ws, 0) + 1
-        calldata = _split_calldata(bar.cond, int(MINT_USD * 1e6))
+        calldata = _split_calldata(bar.cond, int(bar.usd * 1e6))
         t0 = time.time()
         tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
         status = gas_used = None
@@ -280,13 +281,13 @@ class MintSalvage:
                 status = int(r.get("status", "0x0"), 16)
                 gas_used = int(r.get("gasUsed", "0x0"), 16)
                 break
-        _event("PF_MINT", bar=bar.ws, usd=MINT_USD, tx=tx, status=status,
+        _event("PF_MINT", bar=bar.ws, usd=bar.usd, tx=tx, status=status,
                gas_used=gas_used, secs=round(time.time() - t0, 1), live=True)
         if status != 1:
             return False
         for _ in range(4):
             have = await asyncio.to_thread(_erc1155_balance, bar.tok["UP"], _onchain_owner())
-            if have >= int(SIZE * 1e6) - 10:
+            if have >= int(bar.usd * 1e6) - 10:
                 break
             await asyncio.sleep(1.0)
         else:
@@ -367,27 +368,28 @@ class MintSalvage:
         if zreq is None or z is None or z < zreq:
             return
         loser = "DOWN" if lead > 0 else "UP"
+        sz = float(int(bar.usd))
         if not _real:
-            bar.salv_side, bar.salv_oid, bar.salv_sh = loser, f"paper-{bar.ws}", SIZE
-            _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=SIZE,
+            bar.salv_side, bar.salv_oid, bar.salv_sh = loser, f"paper-{bar.ws}", sz
+            _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
                    lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1), dry=True)
             return
         try:
             oid, matched = await asyncio.to_thread(
-                place_limit_sell, self.clob, bar.tok[loser], SIZE, SALV_PX)
+                place_limit_sell, self.clob, bar.tok[loser], sz, SALV_PX)
         except Exception as exc:
-            _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=SIZE,
+            _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=sz,
                    err=str(exc)[:160])
             bar.aborted = True
             return
         if oid:
-            bar.salv_side, bar.salv_oid, bar.salv_sh = loser, oid, SIZE
-            _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=SIZE,
+            bar.salv_side, bar.salv_oid, bar.salv_sh = loser, oid, sz
+            _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
                    lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1),
                    order=oid, matched=matched)
         else:
             bar.aborted = True
-            _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=SIZE,
+            _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=sz,
                    err="no order id (venue min? post-only cross?)")
         self._save()
 
@@ -425,8 +427,8 @@ class MintSalvage:
             salv_fill = v or 0.0
         sold_winner = bar.salv_side == wside and salv_fill > 0
         # winner shares held redeem at 1.00; sold loser shares got SALV_PX
-        win_held = SIZE - (salv_fill if sold_winner else 0.0)
-        pnl = win_held * 1.0 + salv_fill * SALV_PX - MINT_USD
+        win_held = float(int(bar.usd)) - (salv_fill if sold_winner else 0.0)
+        pnl = win_held * 1.0 + salv_fill * SALV_PX - bar.usd
         day = time.strftime("%Y-%m-%d", time.gmtime(bar.ws))
         self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
         bar.settled = True
