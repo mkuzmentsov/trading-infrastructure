@@ -236,3 +236,53 @@ Program-level conclusion, three rounds in: every observable at decision time
 (price, time-left, lead, fill size, book state) is already inside the 0.99
 price. The only lever that has EVER separated anything here is queue priority
 in a window where information is dead — which is the vacuum, already built.
+
+## Round 4 — the user's build spec, and the first surviving cell (btc @ 2c)
+
+Spec (`snipe99d.py`): mint PRE-OPEN (next1/cur+2 → earliest FIFO priority),
+99c asks both tokens; on every fill increment of q shares, place a
+matched-size ask for q on the complement at k_lo. No look-ahead anywhere;
+matched sizing keeps worst-bar = −$1.00 exactly.
+
+The true break-even for the flip leg, including jackpot-capping, is
+P(corpse prints ≥ k_lo afterwards) ≈ **50%**, not the naive 33%:
+flip−ride = drag_bars·(k_hi+k_lo−1)·P3 − jackpots·0.97.
+
+| P3 measured | 0.02 | 0.03 | 0.05 |
+|---|---|---|---|
+| 5m x6 | 34.4% | 20.9% | 12.6% |
+| **5m btc** | **86.8%** | 40.5% | 21.0% |
+
+So the spec at 3c is negative everywhere (x6 −$0.34 to −$0.36/bar, t −5 to
+−12; btc −$0.18). **At 2c on btc only, it goes positive and stays there**:
+
+| btc flip2c, 100sh | net/bar | t |
+|---|---|---|
+| hid_hi=0, hid_lo=0 | +$0.45 | +4.8 |
+| hid_hi=100, hid_lo=0 | +$0.31 | +4.4 |
+| hid_hi=100, hid_lo=50/100/200 | +$0.22/+$0.13/+$0.14 | +3.2/+2.3/+1.3 |
+| hid_hi=300, hid_lo=0 | +$0.17 | +3.5 |
+| hid_hi=1000 | −$0.06 | −1.1 |
+| react 0.5s / 3s / 10s | +$0.36/+$0.32/+$0.26 | +6.3/+2.1/+1.0 |
+
+All 4 recorded days positive (+$0.21 to +$0.50/bar). eth NEGATIVE (−$0.47,
+t=−16.7) despite P3=50.3% — its 2c prints are tiny (128sh med vs btc 704) and
+orphans dominate. Every other coin worse. btc-only, as with everything else.
+
+Why btc and why 2c: btc bars are chronically knife-edge — the winner prints
+0.99 while the loser's remnant book is still ALIVE (87% of bars print ≥2c on
+the corpse afterwards). The two flows at the extremes — certainty-buyers
+paying 0.99 and lottery-buyers paying 0.02 — are the market's only genuinely
+price-insensitive flows, and they sum to 1.01 per $1.00 pair. The +1c is the
+overround of the two late books; capturing both sides of it maker-only, with
+loss bounded at −1c/share/bar. Note the PnL is properly REACT-SENSITIVE
+(t +6.3 → +1.0 as reaction 0.5s→10s) — passes the round-2 clairvoyance smell
+test; FAST_EXEC's sub-second placement is exactly the needed machinery.
+
+Honest caveats: 4 days, one coin; capacity ~100-500sh matched/bar (corpse-leg
+prints med 704sh) → roughly $60-130/day at 100sh if queues cooperate; the
+whole edge dies at hid_hi≥1000, and the measured 4,265sh at the 0.99 level is
+the LATE-joiner view — pre-open placement priority is the untested premise.
+Unlike round 1's withdrawn probe, this sim actually supports a live probe:
+btc 5m only, ~20sh, worst case ≈ −$0.20/bar bounded, measures both queue
+premises (99c fill rate + 2c fill rate vs sim) in a day or two.
