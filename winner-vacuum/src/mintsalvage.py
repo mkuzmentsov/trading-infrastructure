@@ -73,6 +73,23 @@ Z_TIERS = sorted(
 SALV_ARM_TL = max(t[0] for t in Z_TIERS)
 LEAD_FLOOR_BPS = float(os.getenv("PM_LEAD_FLOOR_BPS", "2.5"))
 SIG_FLOOR = float(os.getenv("PM_SIG_FLOOR", "0.4"))
+# Vol-regime discount on z* (two-way calibration 2026-08-02): when sigma is
+# HONESTLY measured high, flips at modest z are rare (HIGH regime z>=1.6:
+# <=1.05% at every tl<=90; 0.00% at 120/z>=2) -- the strict ladder is only
+# needed when sigma sits on the floor (quiet tape hides jump risk).
+# "sig_min:mult,..." applied highest-first.
+VOL_DISC = sorted(
+    ((float(a), float(b)) for a, b in
+     (part.split(":") for part in
+      os.getenv("PM_VOL_DISC", "0.75:0.70,0.50:0.85").split(","))),
+    key=lambda t: -t[0])
+
+
+def vol_mult(raw_sig: float) -> float:
+    for sig_min, mult in VOL_DISC:
+        if raw_sig >= sig_min:
+            return mult
+    return 1.0
 
 
 def z_star(tl: float):
@@ -331,15 +348,16 @@ class MintSalvage:
         return (binance_state.current_price - op) / op * 1e4
 
     def _bar_z(self, bar: Bar, lead: float, tl: float):
-        """sigma from the bar's own 1s lead increments (calibration parity)."""
+        """(z, raw_sigma) from the bar's own 1s lead increments."""
         d = [bar.lead_samples[i][1] - bar.lead_samples[i - 1][1]
              for i in range(1, len(bar.lead_samples))]
         if len(d) < 30:
-            return None
+            return None, None
         mu = sum(d) / len(d)
         import math
-        sig = max(math.sqrt(sum((x - mu) ** 2 for x in d) / (len(d) - 1)), SIG_FLOOR)
-        return abs(lead) / (sig * math.sqrt(max(tl, 1.0)))
+        raw = math.sqrt(sum((x - mu) ** 2 for x in d) / (len(d) - 1))
+        sig = max(raw, SIG_FLOOR)
+        return abs(lead) / (sig * math.sqrt(max(tl, 1.0))), raw
 
     async def _salvage_bar(self, bar: Bar, now: float):
         tl = bar.ws + BAR_SECONDS - now
@@ -353,8 +371,10 @@ class MintSalvage:
             return
         if bar.salv_oid and not bar.aborted and tl > 0:
             # watchdog: the outcome we sold against must STAY decided
-            zz = None if lead is None else self._bar_z(bar, lead, tl)
+            zz, raw = (None, None) if lead is None else self._bar_z(bar, lead, tl)
             zreq = z_star(tl)
+            if zreq is not None and raw is not None:
+                zreq *= vol_mult(raw)
             if lead is None or abs(lead) < LEAD_CANCEL_BPS or \
                     (zz is not None and zreq is not None and zz < zreq / 2) or \
                     (lead < 0) != (bar.salv_side == "UP"):
@@ -370,8 +390,11 @@ class MintSalvage:
         if lead is None or not bar.minted or abs(lead) < LEAD_FLOOR_BPS:
             return
         zreq = z_star(tl)
-        z = self._bar_z(bar, lead, tl)
-        if zreq is None or z is None or z < zreq:
+        z, raw = self._bar_z(bar, lead, tl)
+        if zreq is None or z is None:
+            return
+        zreq *= vol_mult(raw)
+        if z < zreq:
             return
         loser = "DOWN" if lead > 0 else "UP"
         sz = float(int(bar.usd))
@@ -391,8 +414,9 @@ class MintSalvage:
         if oid:
             bar.salv_side, bar.salv_oid, bar.salv_sh = loser, oid, sz
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
-                   lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1),
-                   order=oid, matched=matched)
+                   lead_bps=round(lead, 1), z=round(z, 2), sig=round(raw, 2),
+                   zreq=round(zreq, 2), tl=round(tl, 1), order=oid,
+                   matched=matched)
         else:
             bar.aborted = True
             _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=sz,
