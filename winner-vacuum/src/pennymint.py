@@ -46,7 +46,8 @@ COIN = os.getenv("COIN", "btc").lower()
 LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
 _real = LIVE_TRADING and not DRY_RUN
 
-AHEAD = int(os.getenv("PM_AHEAD_BARS", "2"))
+AHEAD = int(os.getenv("PM_AHEAD_BARS", "1"))
+LOOKAHEAD = int(os.getenv("PM_LOOKAHEAD_BARS", "10"))
 SIZE = float(os.getenv("PM_SIZE_SH", "100"))
 BID_PX = float(os.getenv("PM_BID_PX", "0.01"))
 LO_PX = float(os.getenv("PM_LO_PX", "0.02"))
@@ -150,26 +151,37 @@ class PennyMint:
         if self.halted:
             return
         now = time.time()
-        target = grid_window_start(now) + AHEAD * BAR_SECONDS
-        if target in self.bars or now >= target:      # never enter a started bar
-            return
+        cur = grid_window_start(now)
+        armed = sum(1 for w, b in self.bars.items() if w > now and not b.settled)
+        for k in range(AHEAD, LOOKAHEAD + 1):
+            if armed >= LOOKAHEAD:
+                return
+            target = cur + k * BAR_SECONDS
+            if target in self.bars or now >= target:  # never enter a started bar
+                continue
+            if await self._arm_bar(target):
+                armed += 1
+            else:
+                return          # markets are created in order — stop at the first gap
+
+    async def _arm_bar(self, target: int) -> bool:
         mk = await asyncio.to_thread(fetch_market_for_window, target)
         if not mk:
-            return
+            return False
         up, dn = get_up_down_tokens(mk)
         cond = mk.get("conditionId")
         if not (up and dn and cond):
             _event("PF_ERR", where="discover", err="tokens/cond missing", ws=target)
-            return
+            return False
         bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
         _event("PF_DISCOVER", bar=target, slug=bar.slug,
-               tl_to_open=round(target - now, 1))
+               tl_to_open=round(target - time.time(), 1))
         if _real:
             bal = await asyncio.to_thread(fetch_usdc_balance, self.clob)
             if bal is not None and bal < 2 * SIZE * BID_PX + 1.0:
                 _event("PF_SKIP", bar=target, reason="low_usdc",
                        bal=round(bal or 0, 2))
-                return
+                return False
         for side in ("UP", "DOWN"):
             if _real:
                 oid = await asyncio.to_thread(
@@ -181,18 +193,19 @@ class PennyMint:
                    order=oid or "REJECTED", live=_real)
         self.bars[target] = bar
         self._save()
+        return True
 
     # ── fills -> matched 2c sell of the same token ───────────────────────────
     async def fills_flip_loop(self):
         n = 0
         while True:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.25)
             n += 1
             for bar in list(self.bars.values()):
                 if bar.settled:
                     continue
                 try:
-                    await self._check_bar(bar, poll=(n % 5 == 0))
+                    await self._check_bar(bar, poll=(n % 20 == 0))
                 except Exception as exc:
                     log.exception("fills: %s", exc)
                     _event("PF_ERR", where="fills", bar=bar.ws, err=str(exc)[:160])
@@ -236,17 +249,17 @@ class PennyMint:
             _event("PF_LO_PLACE", bar=bar.ws, side=side, px=LO_PX, sh=qty, dry=True)
             return
         # tokens from a just-matched fill credit on-chain a few seconds later;
-        # retry at 1s — a late-bar fill's flip window is seconds wide (the
-        # 8:15 bar's fill at tl=0 lost its flip to the 3s cadence)
+        # hammer at 0.3s — a late-bar fill's flip window is seconds wide (the
+        # 8:15 bar's fill at tl=0 lost its flip to a 3s cadence)
         oid = None
-        for attempt in range(1, 7):
+        for attempt in range(1, 21):
             try:
                 oid, matched = await asyncio.to_thread(
                     place_limit_sell, self.clob, bar.tok[side], qty, LO_PX)
                 break
             except Exception as exc:
-                if "not enough balance" in str(exc).lower() and attempt < 6:
-                    await asyncio.sleep(1.0)
+                if "not enough balance" in str(exc).lower() and attempt < 20:
+                    await asyncio.sleep(0.3)
                     continue
                 _event("PF_LO_REJ", bar=bar.ws, side=side, sh=qty,
                        err=str(exc)[:160])
