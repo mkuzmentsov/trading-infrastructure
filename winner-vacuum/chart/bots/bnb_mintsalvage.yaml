@@ -19,6 +19,7 @@ bot:
   pmZTiers: "15:2.0,45:2.5,90:3.0,120:3.5"
   pmRisk: "1.25"
   pmSigFloor: "0.6"
+  pmMintLeadSecs: "85"
   pmMaxDailyLoss: "5"
   liveMaxOrderUsd: "6"
   liveMaxDailyLossUsd: "5"

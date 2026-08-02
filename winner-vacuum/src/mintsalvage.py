@@ -320,7 +320,17 @@ class MintSalvage:
                 return False
             self.mint_tries[bar.ws] = self.mint_tries.get(bar.ws, 0) + 1
             calldata = _split_calldata(bar.cond, int(bar.usd * 1e6))
-            bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+            try:
+                bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+            except Exception as exc:
+                # fleet bots share one EOA: simultaneous submits collide on the
+                # pending nonce ("replacement transaction underpriced"). Wait
+                # for the winner to mine, then retry with a fresh nonce.
+                if "underpriced" in str(exc).lower() or "nonce" in str(exc).lower():
+                    await asyncio.sleep(3.0)
+                    bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+                else:
+                    raise
             self._save()
             ok = False
             for _ in range(8):
