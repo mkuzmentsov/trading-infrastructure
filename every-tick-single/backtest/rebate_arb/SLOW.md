@@ -286,3 +286,30 @@ the LATE-joiner view — pre-open placement priority is the untested premise.
 Unlike round 1's withdrawn probe, this sim actually supports a live probe:
 btc 5m only, ~20sh, worst case ≈ −$0.20/bar bounded, measures both queue
 premises (99c fill rate + 2c fill rate vs sim) in a day or two.
+
+## Round 5 — the post-close window (`snipe99e.py`)
+
+User hypothesis: the structure keeps working after close (resolution not yet
+posted) and the volume is still there. Measured:
+
+- Orders DO keep working post-close and round 4 already includes those fills
+  — but they are only **2-3% of the strategy's fills**: in 94% of bars our
+  99c asks are fully sold before the bell by the in-bar convergence sweeps.
+- The winner's ask side post-close is EMPTY in 99% of snap-secs (zero queue
+  — the one place the 4,265sh wall provably doesn't exist), and post-close
+  ≥0.99 BUY flow is real but concentrated: 8% of bars, ~2,600sh when present
+  (the settlement-snipe-adjacent certainty-buyers).
+- **The 2c leg dies at the bell**: loser ≥0.02 BUY post-close = 526sh across
+  816 btc bars (7% of bars, dust). The corpse's 2c buyers are HOPE buyers —
+  "resolution unknown" in the tradable sense ends at close, because the
+  Binance close is public even though the oracle hasn't posted. Nobody pays
+  2c for a known corpse.
+- Consequences: post-close-ONLY variant = a −1c drag machine (unpaired 99c
+  sales at −1c each: btc −$0.063/bar t=−7.1); and the split-queue scenario
+  (in-bar wall 1000+, post-close queue 0) does NOT rescue the strategy
+  (−$0.07/bar) — free post-close fills are too few to matter.
+
+So the edge is specifically IN-BAR, where resolution is genuinely unknown to
+everyone and both price-insensitive flows coexist. The post-close window
+adds a small free tail (already counted) but cannot carry the structure, and
+the round-4 build spec stands unchanged.
