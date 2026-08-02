@@ -218,21 +218,22 @@ class MintSalvage:
             return
         now = time.time()
         target = grid_window_start(now) + BAR_SECONDS
-        if target in self.bars:
-            return
-        mk = await asyncio.to_thread(fetch_market_for_window, target)
-        if not mk:
-            return
-        up, dn = get_up_down_tokens(mk)
-        cond = mk.get("conditionId")
-        if not (up and dn and cond):
-            return
-        bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
-        _event("PF_DISCOVER", bar=target, slug=bar.slug,
-               tl_to_open=round(target - now, 1))
-        self.bars[target] = bar
-        await self._mint_now(bar)
-        self._save()
+        bar = self.bars.get(target)
+        if bar is None:
+            mk = await asyncio.to_thread(fetch_market_for_window, target)
+            if not mk:
+                return
+            up, dn = get_up_down_tokens(mk)
+            cond = mk.get("conditionId")
+            if not (up and dn and cond):
+                return
+            bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
+            _event("PF_DISCOVER", bar=target, slug=bar.slug,
+                   tl_to_open=round(target - now, 1))
+            self.bars[target] = bar
+        if not bar.minted:
+            await self._mint_now(bar)
+            self._save()
 
     async def _mint_now(self, bar: Bar) -> bool:
         """Gate passed: mint the pair via the adapter, receipt-waited."""
