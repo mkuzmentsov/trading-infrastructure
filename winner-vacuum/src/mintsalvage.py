@@ -54,6 +54,9 @@ LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in ("true", "1", "yes"
 _real = LIVE_TRADING and not DRY_RUN
 
 MINT_USD = float(os.getenv("PM_MINT_USD", "5"))
+# mint the NEXT bar only just before it opens: at most one future bar held,
+# float ~= one bar instead of 2-3 (user 2026-08-02 evening)
+MINT_LEAD_SECS = float(os.getenv("PM_MINT_LEAD_SECS", "25"))
 SIZE = float(int(MINT_USD))
 SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
 # z-gate (empirical, flipfrontier.py on 7,155 btc + 42k pooled samples):
@@ -274,6 +277,8 @@ class MintSalvage:
                    tl_to_open=round(target - now, 1))
             self.bars[target] = bar
         if not bar.minted:
+            if bar.ws - time.time() > MINT_LEAD_SECS:
+                return                      # discovered & cached; mint at T-25s
             await self._mint_now(bar)
             self._save()
 
