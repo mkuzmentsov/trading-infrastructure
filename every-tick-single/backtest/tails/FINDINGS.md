@@ -151,3 +151,33 @@ useless. Use a raw bps gate per decision time, not σ√t.
 ⚠ Sample sizes at the useful thresholds are small (16–30 fills per cell). This
 is a hypothesis with a clean mechanism and a monotone gradient behind it, not
 a proven edge. It needs more mrec days before anything is deployed.
+
+---
+
+# Full-bar ≤5c tail buy (hold-to-redemption / 50c TP) — Sun 02 Aug 2026
+
+User spec: "buy losing side for ≤5c, hold till redemption (or sell at 50c)".
+The last-180s view above already covered most of this; the open question was
+entries EARLIER in the bar. `fullbar_tail.py` answers it: streaming causal
+replay over the FULL live bar, one bet per (bar, side) at the first trailing
+ask ≤ 0.05, taker fee 0.07·p(1−p) both ways.
+
+Data: Thu 30 Jul 13:00 → Sun 02 Aug 06:00 UTC, 6 coins, 4,403 bars, 4,499 bets.
+
+**POOLED: win 3.09% | EV/share hold −0.0176 (t = −6.8) | tp50 −0.0196.**
+ROI −36% hold, −41% with the 50c take-profit. Negative in every price bucket
+(1c: 0/134 wins; the +0.75c blip at 2c is 5 wins/173, p=0.27 vs fair — noise),
+every time-left bucket, every coin.
+
+- **Early entries (tl>180s, outside the old view): n=172, EV −0.0169** — same
+  favourite-longshot tax earlier in the bar. No unmeasured zone remains.
+- **The 50c TP is worse than holding, again**: 95% of the 139 winners pass
+  through 50c (payoff capped ~0.95 → 0.48 net of fees) to rescue only 84
+  spike-then-die losers. Confirms the 326-bet tick-path result structurally.
+- Deployed at the $5/bet capacity wall (~1,660 qualifying bets/day fleet-wide)
+  this bot would lose ≈ $2,900/day.
+
+**Verdict: do not build.** Identical mechanism to the −38%…−72% scan and the
+live tail fleet that was halted 2026-07-17; the extra 1.3 days and the
+full-bar entry window change nothing. The tail ask is rich by more than the
+flip rate at every price and every time.
