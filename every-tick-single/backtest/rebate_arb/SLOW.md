@@ -206,3 +206,33 @@ Verdict: bounded-loss, zero-EV lottery behind a 4,000-share queue. Nothing to
 deploy; closes the last untested corner of the 2-side arb family. Selling at
 0.99 is the counterparty side of our own vacuum — the tape keeps saying the
 PAID side of that level is the buyer after close, not the seller before it.
+
+## Round 3 — the conditional flip (full-fill + lead/time gates), user 2026-08-02
+
+Proposal: flip the complement to a 5c ask only when the 99c leg sold
+COMPLETELY, and/or gate the flip on time-left and the spot's distance from
+the bar open. `snipe99c.py` + a parallel 1Hz lead cache (`lead_extract.py`).
+
+1. **Full-fill condition**: fixes the disaster (worst bar −$1.00 everywhere
+   now) — but it is itself adversely selected. Jackpot events are HALF the
+   size of drag events (≥0.99 BUY volume med 76sh vs 215sh x6; 1,458 vs
+   3,978 btc), so requiring a complete 100sh fill preferentially keeps the
+   −1c branch and drops the +99c branch.
+2. **The lead gate does not exist in the data.** Lead toward the printing
+   token at the first ≥0.99 print: jackpots med +5.4bps (p25-p75 3.0-8.6),
+   true winners med +7.5bps (3.7-12.8) — nearly the same distribution. At
+   tl≈30s a few-bps lead is what prices 0.99 in both cases; whether it holds
+   the last 30 seconds is the coin flip the 0.99 quote already encodes.
+   Gate table: Y=6bps flips 59% of drag but wrongly caps 26/71 jackpots
+   (−$95 each); Y=25bps caps ~none but flips 2-4% of drag → collects ~no 5c
+   → equals ride. Time gates: same event timing (med tl 29s vs 32s), no
+   separation (round 2).
+3. Sim ladder at every queue depth: flip-always −$0.32 to −$0.37/bar
+   (t −4 to −13) < gated (monotone toward zero as Y grows) < **ride ≈ $0**.
+   The best member of the family is "never flip" — the fair lottery again.
+   1h: zero jackpots exist; every variant −3 to −20σ.
+
+Program-level conclusion, three rounds in: every observable at decision time
+(price, time-left, lead, fill size, book state) is already inside the 0.99
+price. The only lever that has EVER separated anything here is queue priority
+in a window where information is dead — which is the vacuum, already built.
