@@ -378,3 +378,23 @@ to hope before it.
 Meta-lesson for the backtest file: **P3-style conditional statistics must be
 conditioned on OUR fill event (post-queue, real timing), not on the
 market-print event that proxies it.** The 86.8% was the latter.
+
+
+## CORRECTION (user-found, same day): manual pUSD minting IS possible — via the collateral adapter
+
+"Manual minting impossible" was overstated. Polymarket ships **collateral
+adapter** contracts for exactly this: approve pUSD to the adapter, then call
+`splitPosition(pUSD, 0x0, conditionId, [1,2], amount)` ON THE ADAPTER
+(`CtfCollateralAdapter 0xAdA100Db00Ca00073811820692005400218FcE1f` standard,
+`0xadA2005600Dec949baf300f4C6120000bDB6eAab` neg-risk) — it converts pUSD
+internally and mints the CANONICAL tradeable tokens. The user proved it in
+one click via the UI split feature (positions appeared with Sell buttons).
+My splits called the raw CTF with pUSD collateral — wrong tokens, right
+idea, one contract address away from working. Docs:
+docs.polymarket.com/trading/ctf/split.
+
+What this does NOT change: the live refutation. Both frames share the
+unified queue (ask@0.99 ≡ bid@0.01), so the 8 measured bars — fills 8/8,
+flips 1/8 — apply identically to a mint-frame implementation, which would
+also lock ~100× the capital ($1.00/pair vs 1c margin) for the same exposure.
+The strategy verdict stands; the venue-mechanics claim is corrected.
