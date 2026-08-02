@@ -55,15 +55,25 @@ _real = LIVE_TRADING and not DRY_RUN
 MINT_USD = float(os.getenv("PM_MINT_USD", "5"))
 SIZE = float(int(MINT_USD))
 SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
-# tiered arming: "tl_max:gate_bps,..." — the more decided the bar, the earlier
-# the loser's 1c ask goes out (vacuum-measured btc ladder: >=8-10bps held from
-# t-45s produced zero flips). The last tier is the late fallback.
-SALV_TIERS = sorted(
+# z-gate (empirical, flipfrontier.py on 7,155 btc + 42k pooled samples):
+# z = |lead| / (sigma_1s * sqrt(tl)), sigma from the bar's own 1s lead
+# increments. Measured flip rates are monotone in z but fat-tailed in time,
+# so z* tightens with horizon: "tl_max:z_min,...". Holds P(flip) <= ~0.5-0.7%
+# at every horizon (breakeven for the 1c sale is 1%).
+Z_TIERS = sorted(
     (tuple(float(x) for x in part.split(":"))
-     for part in os.getenv("PM_SALV_TIERS", "60:10,30:6,10:3").split(",")),
-    key=lambda t: -t[0])
-SALV_ARM_TL = max(t[0] for t in SALV_TIERS)
-LEAD_CANCEL_FLOOR = 2.0
+     for part in os.getenv("PM_Z_TIERS", "15:2.0,45:2.5,90:3.0,120:3.5").split(",")),
+    key=lambda t: t[0])
+SALV_ARM_TL = max(t[0] for t in Z_TIERS)
+LEAD_FLOOR_BPS = float(os.getenv("PM_LEAD_FLOOR_BPS", "2.5"))
+SIG_FLOOR = float(os.getenv("PM_SIG_FLOOR", "0.4"))
+
+
+def z_star(tl: float):
+    for tl_max, zmin in Z_TIERS:
+        if tl <= tl_max:
+            return zmin
+    return None
 LEAD_CANCEL_BPS = float(os.getenv("PM_LEAD_CANCEL_BPS", "2"))
 MAX_DAILY_LOSS = float(os.getenv("PM_MAX_DAILY_LOSS", "5"))
 COLLATERAL = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
@@ -165,6 +175,7 @@ class Bar:
         self.salv_sh = 0.0
         self.aborted = False           # watchdog cancelled the salvage ask
         self.settled = False
+        self.lead_samples = []         # runtime only: 1s (sec, lead) for sigma
 
     def dump(self):
         return {k: getattr(self, k) for k in self.FIELDS}
@@ -312,14 +323,33 @@ class MintSalvage:
             return None
         return (binance_state.current_price - op) / op * 1e4
 
+    def _bar_z(self, bar: Bar, lead: float, tl: float):
+        """sigma from the bar's own 1s lead increments (calibration parity)."""
+        d = [bar.lead_samples[i][1] - bar.lead_samples[i - 1][1]
+             for i in range(1, len(bar.lead_samples))]
+        if len(d) < 30:
+            return None
+        mu = sum(d) / len(d)
+        import math
+        sig = max(math.sqrt(sum((x - mu) ** 2 for x in d) / (len(d) - 1)), SIG_FLOOR)
+        return abs(lead) / (sig * math.sqrt(max(tl, 1.0)))
+
     async def _salvage_bar(self, bar: Bar, now: float):
         tl = bar.ws + BAR_SECONDS - now
+        lead = self._lead_bps(bar.ws)
+        # 1s lead sampling for the in-bar sigma (runs from bar open)
+        if lead is not None and 0 < tl <= BAR_SECONDS:
+            sec = int(now)
+            if not bar.lead_samples or bar.lead_samples[-1][0] != sec:
+                bar.lead_samples.append((sec, lead))
         if tl > SALV_ARM_TL or tl < -60:
             return
-        lead = self._lead_bps(bar.ws)
         if bar.salv_oid and not bar.aborted and tl > 0:
             # watchdog: the outcome we sold against must STAY decided
+            zz = None if lead is None else self._bar_z(bar, lead, tl)
+            zreq = z_star(tl)
             if lead is None or abs(lead) < LEAD_CANCEL_BPS or \
+                    (zz is not None and zreq is not None and zz < zreq / 2) or \
                     (lead < 0) != (bar.salv_side == "UP"):
                 bar.aborted = True
                 await asyncio.to_thread(cancel_order, self.clob, bar.salv_oid) if _real else None
@@ -330,16 +360,17 @@ class MintSalvage:
             return
         if bar.salv_oid or bar.aborted or tl <= 0:
             return
-        if lead is None or not bar.minted:
+        if lead is None or not bar.minted or abs(lead) < LEAD_FLOOR_BPS:
             return
-        if not any(tl <= tl_max and abs(lead) >= gate
-                   for tl_max, gate in SALV_TIERS):
+        zreq = z_star(tl)
+        z = self._bar_z(bar, lead, tl)
+        if zreq is None or z is None or z < zreq:
             return
         loser = "DOWN" if lead > 0 else "UP"
         if not _real:
             bar.salv_side, bar.salv_oid, bar.salv_sh = loser, f"paper-{bar.ws}", SIZE
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=SIZE,
-                   lead_bps=round(lead, 1), tl=round(tl, 1), dry=True)
+                   lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1), dry=True)
             return
         try:
             oid, matched = await asyncio.to_thread(
@@ -352,8 +383,8 @@ class MintSalvage:
         if oid:
             bar.salv_side, bar.salv_oid, bar.salv_sh = loser, oid, SIZE
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=SIZE,
-                   lead_bps=round(lead, 1), tl=round(tl, 1), order=oid,
-                   matched=matched)
+                   lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1),
+                   order=oid, matched=matched)
         else:
             bar.aborted = True
             _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=SIZE,
@@ -444,12 +475,11 @@ class MintSalvage:
                 log.warning("kline seed via %s failed: %s", base, exc)
 
     async def run(self):
-        log.info("mintsalvage %s: mint=$%.0f salv=%.2f tiers=%s cancel=%.0fbps "
-                 "maxDD=$%.0f adapter=%s", "LIVE" if _real else "PAPER",
-                 MINT_USD, SALV_PX, SALV_TIERS, LEAD_CANCEL_BPS,
-                 MAX_DAILY_LOSS, ADAPTER[:10])
+        log.info("mintsalvage %s: mint=$%.0f salv=%.2f z_tiers=%s maxDD=$%.0f",
+                 "LIVE" if _real else "PAPER", MINT_USD, SALV_PX, Z_TIERS,
+                 MAX_DAILY_LOSS)
         _event("PF_START", live=_real, mint=MINT_USD, salv=SALV_PX,
-               tiers=os.getenv("PM_SALV_TIERS", "60:10,30:6,10:3"))
+               z_tiers=os.getenv("PM_Z_TIERS", "15:2.0,45:2.5,90:3.0,120:3.5"))
         self._seed_history()
         self._load()
         if _real:
