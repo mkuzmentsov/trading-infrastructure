@@ -117,3 +117,51 @@ rebate) says the flow exists; the seat, not the flow, is the constraint.
 
 Daily series: 2 bars, both trended (0 mid-crossings, 0% time near mid) — no
 sim is meaningful; recorder now accrues RES-complete data; revisit at n≥14.
+
+---
+
+# RETRACTION (same day, hours later) — §2-3 were a LOOK-AHEAD artifact
+
+Re-deriving the mechanics to describe them exposed the flaw: `slow_deep.py`
+dumps the **eventual end-of-bar residual** at *first-fill + 1s* — a moment
+when a real bot cannot know what the residual will be (the complement's fills
+come minutes later, if ever). The sim was implicitly running a perfect
+trend/chop classifier: exit instantly (at the −1c-to−5c price that exists
+only right after the fill) in exactly the bars where the pair won't complete,
+hold in exactly the bars where it will.
+
+`slow_exec.py` replays the same fills through a 1Hz state machine with only
+implementable rules — imbalance timer X (dump stuck at bid on expiry, reset
+if paired back), stop-K on the stuck side's bid, combinations, ride:
+
+| 5m btc, hid=200, 100sh | fullpair | net/bar | t |
+|---|---|---|---|
+| 0.55 ride | 67% | −$7.39 | −8.1 |
+| 0.55 timer 120s | 52% | −$5.98 | −8.5 |
+| 0.55 stop 0.40 | 15% | −$5.30 | −18.0 |
+| 0.65 ride | 45% | −$4.88 | −4.2 |
+| 0.65 timer 120s | 25% | −$4.22 | −4.9 |
+| 0.65 stop 0.40 (≈dump-on-fill) | 0% | −$4.07 | −25.1 |
+| best 1h config (0.65 stop 0.30) | 4% | −$2.72 | −2.4 |
+| 0.65 stop 0.25, hid=0 | 20% | −$3.27 | −5.3 |
+
+Every implementable point on both datasets is negative. The structure is the
+familiar coupling: **to keep the both-fill option you must hold the stuck
+side through its collapse, and the collapse costs more than the lock pays.**
+Fast exits forfeit the pairs (timer-10s keeps 4%), slow exits eat the
+collapse; the ~$11/bar gap between clairvoyant and honest is the value of
+knowing the future. No entry- or fill-time observable separates pairing bars
+from stuck bars (§2's finding, again).
+
+**§4g's original pooled verdict stands. The btc "reversal" is retracted.**
+The live probe proposed above is WITHDRAWN — there is nothing to probe; the
+queue question is moot when the hid=0 case already loses. What §1 established
+(book self-similarity, pool sizes, 89% buy-skew, hourly bid-side −3 to −9σ)
+is unaffected: those are direct measurements, not fill sims.
+
+Meta-lesson for every future maker sim in this repo: **any rule that prices
+an exit using quantities finalized later in the bar is look-ahead**, however
+innocent it looks. The give-away here: "delay sensitivity 0.5s→30s ≈
+unchanged" — a real exit's cost is dominated by WHEN you decide, so
+insensitivity to the delay was the smell that the decision itself was
+clairvoyant.

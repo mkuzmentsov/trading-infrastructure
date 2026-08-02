@@ -317,9 +317,16 @@ explicit decision with the expected loss stated, not a silent start.
 
 ---
 
-# UPDATE 2026-08-02 — slow bars measured; §4g partially REVERSED for btc
+# UPDATE 2026-08-02 — slow bars measured; §4g "btc reversal" RETRACTED same day
 
-See `SLOW.md` for the full study on the new hourly/daily recorders. Headlines:
+See `SLOW.md` for the full study on the new hourly/daily recorders — INCLUDING
+the same-day retraction of point 2 below: the btc-positive dual-ask result was
+a **look-ahead artifact** (the sim dumped the eventual end-of-bar residual at
+first-fill+1s, i.e. it ran a perfect trend/chop classifier). With only
+implementable exits (`slow_exec.py`: imbalance timers, stops, ride) every
+configuration on both datasets is −4 to −25σ negative; §4g's verdict stands;
+the general bound (§5) survives another attack. Points 1 and 3's structural
+measurements remain valid. Headlines:
 
 1. The binary book is **self-similar across bar lengths** (median first-half
    range 0.42 on both 5m and 1h) — the "slower market that sits near 50c"
