@@ -345,3 +345,36 @@ Day-1 build log (`winner-vacuum/src/pennymint.py`, commits 5a8f4db..pennymint v2
 - Open questions the 24h run answers: live fill rate at the 1c level vs the
   hid grid, flip completion vs orphan rate, jackpot frequency; then the
   scaling decision (capacity ≈500sh from corpse-buy flow ~700sh/bar median).
+
+
+## SHUT DOWN (2026-08-02 15:37 UTC) — live-refuted in 8 bars, −$6.00 total
+
+Live totals across both sessions: **8 bars filled at the 1c level, 1 flip
+completed (+$1.00), 7 orphans (−$1.00 each)**. Day −$6.00 (v1 −$1, v2 −$5 —
+the bot's own −$5 halt would have tripped on the last bar anyway). Final
+balance 619.452089, every cent reconciled.
+
+The two live numbers that killed it, vs the tape-derived backtest:
+
+1. **Fill rate ~100% of bars** (backtest at hid=100-200 expected far less).
+   The 1c level gets swept every bar by many small endgame dumps — queue
+   position provides no protection because everyone at the level fills.
+2. **Flip rate 1/8 vs the 86.8% tape P3.** Our fills arrive in the final
+   seconds (t−67s → t−5s → post-close in the sample) — mirroring the
+   winner-99c print timing — and the 2c hope-buyers trade EARLIER in the bar
+   than our fill exists. P(2c print after the 99c print) ≠ P(2c print after
+   OUR fill clears the queue): the tape statistic double-counts flow that is
+   gone by the time a real position needs it.
+
+Classic adverse selection, one level from the end of the book: being filled
+at 1c late in the bar IS the information that nobody will pay 2c afterward.
+The single winning bar was the exception (an early-enough fill with residual
+two-way flow). Same family verdict as every round: the tape's overround is
+real, but every implementable seat at it is priced by the flow that fills
+you. The vacuum remains the only structure that escapes this — it BUYS from
+capital-releasing sellers after the outcome is decided, rather than selling
+to hope before it.
+
+Meta-lesson for the backtest file: **P3-style conditional statistics must be
+conditioned on OUR fill event (post-queue, real timing), not on the
+market-print event that proxies it.** The 86.8% was the latter.
