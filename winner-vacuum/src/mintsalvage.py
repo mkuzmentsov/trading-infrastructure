@@ -55,8 +55,15 @@ _real = LIVE_TRADING and not DRY_RUN
 MINT_USD = float(os.getenv("PM_MINT_USD", "5"))
 SIZE = float(int(MINT_USD))
 SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
-SALV_ARM_TL = float(os.getenv("PM_SALV_ARM_TL", "10"))
-LEAD_GATE_BPS = float(os.getenv("PM_LEAD_GATE_BPS", "3"))
+# tiered arming: "tl_max:gate_bps,..." — the more decided the bar, the earlier
+# the loser's 1c ask goes out (vacuum-measured btc ladder: >=8-10bps held from
+# t-45s produced zero flips). The last tier is the late fallback.
+SALV_TIERS = sorted(
+    (tuple(float(x) for x in part.split(":"))
+     for part in os.getenv("PM_SALV_TIERS", "60:10,30:6,10:3").split(",")),
+    key=lambda t: -t[0])
+SALV_ARM_TL = max(t[0] for t in SALV_TIERS)
+LEAD_CANCEL_FLOOR = 2.0
 LEAD_CANCEL_BPS = float(os.getenv("PM_LEAD_CANCEL_BPS", "2"))
 MAX_DAILY_LOSS = float(os.getenv("PM_MAX_DAILY_LOSS", "5"))
 COLLATERAL = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
@@ -323,9 +330,10 @@ class MintSalvage:
             return
         if bar.salv_oid or bar.aborted or tl <= 0:
             return
-        if lead is None or abs(lead) < LEAD_GATE_BPS:
+        if lead is None or not bar.minted:
             return
-        if not bar.minted:
+        if not any(tl <= tl_max and abs(lead) >= gate
+                   for tl_max, gate in SALV_TIERS):
             return
         loser = "DOWN" if lead > 0 else "UP"
         if not _real:
@@ -436,12 +444,12 @@ class MintSalvage:
                 log.warning("kline seed via %s failed: %s", base, exc)
 
     async def run(self):
-        log.info("mintsalvage %s: mint=$%.0f salv=%.2f arm_tl=%.0fs gate=%.0fbps "
-                 "cancel=%.0fbps maxDD=$%.0f adapter=%s",
-                 "LIVE" if _real else "PAPER", MINT_USD, SALV_PX, SALV_ARM_TL,
-                 LEAD_GATE_BPS, LEAD_CANCEL_BPS, MAX_DAILY_LOSS, ADAPTER[:10])
+        log.info("mintsalvage %s: mint=$%.0f salv=%.2f tiers=%s cancel=%.0fbps "
+                 "maxDD=$%.0f adapter=%s", "LIVE" if _real else "PAPER",
+                 MINT_USD, SALV_PX, SALV_TIERS, LEAD_CANCEL_BPS,
+                 MAX_DAILY_LOSS, ADAPTER[:10])
         _event("PF_START", live=_real, mint=MINT_USD, salv=SALV_PX,
-               arm_tl=SALV_ARM_TL, gate=LEAD_GATE_BPS)
+               tiers=os.getenv("PM_SALV_TIERS", "60:10,30:6,10:3"))
         self._seed_history()
         self._load()
         if _real:
