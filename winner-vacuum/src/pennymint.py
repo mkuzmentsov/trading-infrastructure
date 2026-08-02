@@ -75,6 +75,9 @@ def _outcome_up(ws: int):
         return None
 
 
+STATE_PATH = os.getenv("PM_STATE_PATH", "/app/logs/pennymint-state.json")
+
+
 class Bar:
     def __init__(self, ws: int, cond: str, up: str, dn: str, slug: str):
         self.ws, self.cond, self.slug = ws, cond, slug
@@ -85,6 +88,18 @@ class Bar:
         self.lo_sh = {"UP": 0.0, "DOWN": 0.0}       # 2c size placed
         self.settled = False
 
+    def dump(self) -> dict:
+        return {k: getattr(self, k) for k in
+                ("ws", "cond", "slug", "tok", "bid_oid", "bid_fill",
+                 "lo_oid", "lo_sh", "settled")}
+
+    @classmethod
+    def load(cls, d: dict) -> "Bar":
+        b = cls(d["ws"], d["cond"], d["tok"]["UP"], d["tok"]["DOWN"], d["slug"])
+        for k in ("bid_oid", "bid_fill", "lo_oid", "lo_sh", "settled"):
+            setattr(b, k, d[k])
+        return b
+
 
 class PennyMint:
     def __init__(self):
@@ -93,6 +108,33 @@ class PennyMint:
         self.bars: dict[int, Bar] = {}
         self.day_pnl: dict[str, float] = {}
         self.halted = False
+
+    # ── restart safety: resting GTC orders outlive the process ──────────────
+    def _save(self):
+        try:
+            tmp = STATE_PATH + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump({"bars": {str(w): b.dump() for w, b in self.bars.items()},
+                           "day_pnl": self.day_pnl, "halted": self.halted}, fh)
+            os.replace(tmp, STATE_PATH)
+        except Exception as exc:
+            log.warning("state save failed: %s", exc)
+
+    def _load(self):
+        try:
+            with open(STATE_PATH) as fh:
+                d = json.load(fh)
+        except Exception:
+            return
+        cutoff = time.time() - 3600
+        for w, bd in d.get("bars", {}).items():
+            if bd["ws"] >= cutoff:
+                self.bars[int(w)] = Bar.load(bd)
+        self.day_pnl = d.get("day_pnl", {})
+        self.halted = bool(d.get("halted", False))
+        _event("PF_RESUME", bars=len(self.bars),
+               open=[w for w, b in self.bars.items() if not b.settled],
+               halted=self.halted)
 
     # ── place the two 1c bids on the cur+AHEAD bar, pre-open ─────────────────
     async def place_loop(self):
@@ -138,6 +180,7 @@ class PennyMint:
             _event("PF_BID_PLACE", bar=target, side=side, px=BID_PX, sh=SIZE,
                    order=oid or "REJECTED", live=_real)
         self.bars[target] = bar
+        self._save()
 
     # ── fills -> matched 2c sell of the same token ───────────────────────────
     async def fills_flip_loop(self):
@@ -176,6 +219,7 @@ class PennyMint:
             _event("PF_BID_FILL", bar=bar.ws, side=side, filled=round(got, 2),
                    new=round(new, 2))
             await self._flip(bar, side)
+            self._save()
 
     async def _flip(self, bar: Bar, side: str):
         """Sell the tokens the 1c bid just delivered, at 2c, in chunks that
@@ -191,16 +235,18 @@ class PennyMint:
             bar.lo_sh[side] += qty
             _event("PF_LO_PLACE", bar=bar.ws, side=side, px=LO_PX, sh=qty, dry=True)
             return
-        # tokens from a just-matched fill credit on-chain a few seconds later
+        # tokens from a just-matched fill credit on-chain a few seconds later;
+        # retry at 1s — a late-bar fill's flip window is seconds wide (the
+        # 8:15 bar's fill at tl=0 lost its flip to the 3s cadence)
         oid = None
-        for attempt in (1, 2, 3, 4):
+        for attempt in range(1, 7):
             try:
                 oid, matched = await asyncio.to_thread(
                     place_limit_sell, self.clob, bar.tok[side], qty, LO_PX)
                 break
             except Exception as exc:
-                if "not enough balance" in str(exc).lower() and attempt < 4:
-                    await asyncio.sleep(3.0)
+                if "not enough balance" in str(exc).lower() and attempt < 6:
+                    await asyncio.sleep(1.0)
                     continue
                 _event("PF_LO_REJ", bar=bar.ws, side=side, sh=qty,
                        err=str(exc)[:160])
@@ -273,6 +319,7 @@ class PennyMint:
             _event("PF_HALT", day=day, day_pnl=round(self.day_pnl[day], 2))
         for w in [w for w in self.bars if self.bars[w].settled and w < bar.ws - 7200]:
             self.bars.pop(w, None)
+        self._save()
 
     async def hb_loop(self):
         while True:
@@ -289,6 +336,7 @@ class PennyMint:
                  int(SIZE), BID_PX, LO_PX, MAX_DAILY_LOSS)
         _event("PF_START", live=_real, ahead=AHEAD, size=SIZE, bid=BID_PX,
                lo=LO_PX)
+        self._load()
         if _real:
             self.clob = await asyncio.to_thread(build_clob_client)
             await asyncio.to_thread(ensure_approvals, self.clob)
