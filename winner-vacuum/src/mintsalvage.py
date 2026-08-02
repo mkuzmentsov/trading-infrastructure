@@ -124,7 +124,7 @@ def _submit_tx(calldata: str, to: str) -> str:
     from eth_account import Account
     account = Account.from_key(POLYMARKET_PK)
     nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
-    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
+    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 2.0)
     if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
         # the adapter path (pUSD burn -> USDC.e -> CTF split -> mints) needs
         # ~600-700k gas; redemptions' 300k default OOG'd at 291,753 (measured)
@@ -189,14 +189,15 @@ def _outcome_up(ws: int):
 
 
 class Bar:
-    FIELDS = ("ws", "cond", "slug", "tok", "usd", "minted", "salv_side",
-              "salv_oid", "salv_sh", "aborted", "settled")
+    FIELDS = ("ws", "cond", "slug", "tok", "usd", "minted", "mint_tx",
+              "salv_side", "salv_oid", "salv_sh", "aborted", "settled")
 
     def __init__(self, ws: int, cond: str, up: str, dn: str, slug: str):
         self.ws, self.cond, self.slug = ws, cond, slug
         self.tok = {"UP": up, "DOWN": dn}
         self.usd = MINT_USD            # size is PER BAR (resizes mid-flight)
         self.minted = False
+        self.mint_tx = None            # pending adapter-split tx (nonce guard)
         self.salv_side = None          # side we sold (the identified LOSER)
         self.salv_oid = None
         self.salv_sh = 0.0
@@ -282,37 +283,55 @@ class MintSalvage:
             await self._mint_now(bar)
             self._save()
 
+    async def _finish_mint(self, bar: Bar) -> bool:
+        """Poll the bar's pending mint tx; True once mined+credited."""
+        try:
+            r = await asyncio.to_thread(_rpc, "eth_getTransactionReceipt",
+                                        [bar.mint_tx])
+        except Exception:
+            return False
+        if not r:
+            return False                    # still pending — do NOT resubmit
+        status = int(r.get("status", "0x0"), 16)
+        _event("PF_MINT", bar=bar.ws, usd=bar.usd, tx=bar.mint_tx,
+               status=status, gas_used=int(r.get("gasUsed", "0x0"), 16),
+               live=True)
+        if status != 1:
+            bar.mint_tx = None              # reverted — allow a resubmit
+            return False
+        return True
+
     async def _mint_now(self, bar: Bar) -> bool:
         """Gate passed: mint the pair via the adapter, receipt-waited."""
         if not _real:
             bar.minted = True
             _event("PF_MINT", bar=bar.ws, usd=bar.usd, dry=True)
             return True
-        bal = await asyncio.to_thread(fetch_usdc_balance, self.clob)
-        if bal is not None and bal < bar.usd + 1.0:
-            _event("PF_SKIP", bar=bar.ws, reason="low_usdc", bal=round(bal or 0, 2))
-            return False
-        if self.mint_tries.get(bar.ws, 0) >= 2:
-            return False
-        self.mint_tries[bar.ws] = self.mint_tries.get(bar.ws, 0) + 1
-        calldata = _split_calldata(bar.cond, int(bar.usd * 1e6))
-        t0 = time.time()
-        tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
-        status = gas_used = None
-        for _ in range(10):
-            await asyncio.sleep(1.5)
-            try:
-                r = await asyncio.to_thread(_rpc, "eth_getTransactionReceipt", [tx])
-            except Exception:
-                r = None
-            if r:
-                status = int(r.get("status", "0x0"), 16)
-                gas_used = int(r.get("gasUsed", "0x0"), 16)
-                break
-        _event("PF_MINT", bar=bar.ws, usd=bar.usd, tx=tx, status=status,
-               gas_used=gas_used, secs=round(time.time() - t0, 1), live=True)
-        if status != 1:
-            return False
+        if bar.mint_tx:                     # a submit is in flight — poll it
+            if not await self._finish_mint(bar):
+                return False
+        else:
+            bal = await asyncio.to_thread(fetch_usdc_balance, self.clob)
+            if bal is not None and bal < bar.usd + 1.0:
+                _event("PF_SKIP", bar=bar.ws, reason="low_usdc",
+                       bal=round(bal or 0, 2))
+                return False
+            if self.mint_tries.get(bar.ws, 0) >= 2:
+                return False
+            self.mint_tries[bar.ws] = self.mint_tries.get(bar.ws, 0) + 1
+            calldata = _split_calldata(bar.cond, int(bar.usd * 1e6))
+            bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+            self._save()
+            ok = False
+            for _ in range(8):
+                await asyncio.sleep(1.5)
+                if await self._finish_mint(bar):
+                    ok = True
+                    break
+                if bar.mint_tx is None:     # reverted
+                    return False
+            if not ok:
+                return False                # pending — later loops keep polling
         for _ in range(4):
             have = await asyncio.to_thread(_erc1155_balance, bar.tok["UP"], _onchain_owner())
             if have >= int(bar.usd * 1e6) - 10:
