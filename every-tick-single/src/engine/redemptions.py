@@ -106,7 +106,8 @@ def _send_tx(calldata: str, nonce: int, gas_price: int) -> str:
     return _rpc("eth_sendRawTransaction", ["0x" + raw.hex()])
 
 
-def _send_tx_via_safe(calldata: str, to: str, nonce: int, gas_price: int) -> str:
+def _send_tx_via_safe(calldata: str, to: str, nonce: int, gas_price: int,
+                      gas_limit: int = 300_000) -> str:
     """Submit a call through the Gnosis Safe (SIGNATURE_TYPE=2).
 
     The proxy wallet (POLYMARKET_ADDRESS) is the sole Safe owner and signs the
@@ -161,7 +162,7 @@ def _send_tx_via_safe(calldata: str, to: str, nonce: int, gas_price: int) -> str
         "data": exec_data,
         "nonce": nonce,
         "gasPrice": gas_price,
-        "gas": 300_000,
+        "gas": gas_limit,
         "chainId": CHAIN_ID,
         "value": 0,
     }

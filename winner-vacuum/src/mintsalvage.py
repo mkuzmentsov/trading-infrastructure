@@ -83,7 +83,10 @@ def _submit_tx(calldata: str, to: str) -> str:
     nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
     gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 1.5)
     if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
-        return redemptions._send_tx_via_safe(calldata, to, nonce, gas_price)
+        # the adapter path (pUSD burn -> USDC.e -> CTF split -> mints) needs
+        # ~600-700k gas; redemptions' 300k default OOG'd at 291,753 (measured)
+        return redemptions._send_tx_via_safe(calldata, to, nonce, gas_price,
+                                             gas_limit=900_000)
     raise RuntimeError("mintsalvage requires the Safe or relayer path")
 
 
@@ -199,77 +202,85 @@ class MintSalvage:
         self.halted = bool(d.get("halted", False))
         _event("PF_RESUME", bars=len(self.bars), halted=self.halted)
 
-    # ── mint the next bar's pair via the adapter ─────────────────────────────
+    # ── discovery only: cache the CURRENT bar's market (no tx, no capital).
+    # The mint happens inside the salvage gate — knife-edge bars never mint,
+    # never pay gas, never hold capital.
     async def mint_loop(self):
         while True:
             try:
-                await self._mint_once()
+                await self._discover_once()
             except Exception as exc:
-                log.exception("mint: %s", exc)
-                _event("PF_ERR", where="mint", err=str(exc)[:160])
+                log.exception("discover: %s", exc)
+                _event("PF_ERR", where="discover", err=str(exc)[:160])
             await asyncio.sleep(8.0)
 
-    async def _mint_once(self):
+    async def _discover_once(self):
         if self.halted:
             return
         now = time.time()
-        target = grid_window_start(now) + BAR_SECONDS
-        if target in self.bars or now >= target:
-            return
-        mk = await asyncio.to_thread(fetch_market_for_window, target)
-        if not mk:
-            return
-        up, dn = get_up_down_tokens(mk)
-        cond = mk.get("conditionId")
-        if not (up and dn and cond):
-            return
-        bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
-        _event("PF_DISCOVER", bar=target, slug=bar.slug,
-               tl_to_open=round(target - now, 1))
+        for target in (grid_window_start(now), grid_window_start(now) + BAR_SECONDS):
+            if target in self.bars:
+                continue
+            mk = await asyncio.to_thread(fetch_market_for_window, target)
+            if not mk:
+                continue
+            up, dn = get_up_down_tokens(mk)
+            cond = mk.get("conditionId")
+            if not (up and dn and cond):
+                continue
+            bar = Bar(target, cond, up["token_id"], dn["token_id"], mk.get("slug", ""))
+            self.bars[target] = bar
+            _event("PF_DISCOVER", bar=target, slug=bar.slug,
+                   tl_to_open=round(target - now, 1))
+            self._save()
+
+    async def _mint_now(self, bar: Bar) -> bool:
+        """Gate passed: mint the pair via the adapter, receipt-waited."""
         if not _real:
             bar.minted = True
-            self.bars[target] = bar
-            _event("PF_MINT", bar=target, usd=MINT_USD, dry=True)
-            return
+            _event("PF_MINT", bar=bar.ws, usd=MINT_USD, dry=True)
+            return True
         bal = await asyncio.to_thread(fetch_usdc_balance, self.clob)
         if bal is not None and bal < MINT_USD + 1.0:
-            _event("PF_SKIP", bar=target, reason="low_usdc", bal=round(bal or 0, 2))
-            return
-        # idempotency vs crashes: canonical tokens — balance check on the REAL ids
-        have = await asyncio.to_thread(_erc1155_balance, bar.tok["UP"], _onchain_owner())
-        if have < int(SIZE * 1e6):
-            if self.mint_tries.get(target, 0) >= 3:
-                _event("PF_SKIP", bar=target, reason="mint_tries")
-                return
-            self.mint_tries[target] = self.mint_tries.get(target, 0) + 1
-            calldata = _split_calldata(cond, int(MINT_USD * 1e6))
-            tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
-            _event("PF_MINT", bar=target, usd=MINT_USD, tx=tx, live=True)
-            status = None
-            for _ in range(20):
-                await asyncio.sleep(3.0)
-                status = await asyncio.to_thread(_tx_status, tx)
-                if status is not None:
-                    break
-            if status != 1:
-                _event("PF_MINT_ERR", bar=target, tx=tx, status=status)
-                return
-            for _ in range(5):
-                have = await asyncio.to_thread(_erc1155_balance, bar.tok["UP"], _onchain_owner())
-                if have >= int(SIZE * 1e6):
-                    break
-                await asyncio.sleep(2.0)
-            else:
-                _event("PF_ERR", where="mint_credit", bar=target, have=have)
-                return
+            _event("PF_SKIP", bar=bar.ws, reason="low_usdc", bal=round(bal or 0, 2))
+            return False
+        if self.mint_tries.get(bar.ws, 0) >= 2:
+            return False
+        self.mint_tries[bar.ws] = self.mint_tries.get(bar.ws, 0) + 1
+        calldata = _split_calldata(bar.cond, int(MINT_USD * 1e6))
+        t0 = time.time()
+        tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+        status = gas_used = None
+        for _ in range(10):
+            await asyncio.sleep(1.5)
+            try:
+                r = await asyncio.to_thread(_rpc, "eth_getTransactionReceipt", [tx])
+            except Exception:
+                r = None
+            if r:
+                status = int(r.get("status", "0x0"), 16)
+                gas_used = int(r.get("gasUsed", "0x0"), 16)
+                break
+        _event("PF_MINT", bar=bar.ws, usd=MINT_USD, tx=tx, status=status,
+               gas_used=gas_used, secs=round(time.time() - t0, 1), live=True)
+        if status != 1:
+            return False
+        for _ in range(4):
+            have = await asyncio.to_thread(_erc1155_balance, bar.tok["UP"], _onchain_owner())
+            if have >= int(SIZE * 1e6) - 10:
+                break
+            await asyncio.sleep(1.0)
+        else:
+            _event("PF_ERR", where="mint_credit", bar=bar.ws)
+            return False
         bar.minted = True
-        self.bars[target] = bar
         self._save()
         for side in ("UP", "DOWN"):
             try:
                 await asyncio.to_thread(ensure_ctf_approval, self.clob, bar.tok[side])
             except Exception:
                 pass
+        return True
 
     # ── salvage: gated 1c ask on the identified loser, with watchdog ────────
     async def salvage_loop(self):
@@ -277,7 +288,7 @@ class MintSalvage:
             await asyncio.sleep(0.5)
             now = time.time()
             for bar in list(self.bars.values()):
-                if not bar.minted or bar.settled:
+                if bar.settled:
                     continue
                 try:
                     await self._salvage_bar(bar, now)
@@ -313,6 +324,14 @@ class MintSalvage:
             return
         if lead is None or abs(lead) < LEAD_GATE_BPS:
             return
+        if not bar.minted:
+            if tl < 18:                      # not enough time to mint+place
+                return
+            if not await self._mint_now(bar):
+                return
+            lead = self._lead_bps(bar.ws)    # re-check after the ~5-10s mint
+            if lead is None or abs(lead) < LEAD_GATE_BPS:
+                return
         loser = "DOWN" if lead > 0 else "UP"
         if not _real:
             bar.salv_side, bar.salv_oid, bar.salv_sh = loser, f"paper-{bar.ws}", SIZE
