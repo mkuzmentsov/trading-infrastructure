@@ -61,9 +61,14 @@ SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
 # increments. Measured flip rates are monotone in z but fat-tailed in time,
 # so z* tightens with horizon: "tl_max:z_min,...". Holds P(flip) <= ~0.5-0.7%
 # at every horizon (breakeven for the 1c sale is 1%).
+# PM_RISK divides the calibrated z requirements: 1.0 = calibrated (~0.6%
+# flip per placement), 1.25 ~= 1.0-1.3% (breakeven is ~1.5-2% at the real
+# ~1.5c average proceeds), 1.5 ~= breakeven, 2.0 negative. User dial.
+RISK = max(0.5, float(os.getenv("PM_RISK", "1.0")))
 Z_TIERS = sorted(
-    (tuple(float(x) for x in part.split(":"))
-     for part in os.getenv("PM_Z_TIERS", "15:2.0,45:2.5,90:3.0,120:3.5").split(",")),
+    ((float(a), float(b) / RISK) for a, b in
+     (part.split(":") for part in
+      os.getenv("PM_Z_TIERS", "15:2.0,45:2.5,90:3.0,120:3.5").split(","))),
     key=lambda t: t[0])
 SALV_ARM_TL = max(t[0] for t in Z_TIERS)
 LEAD_FLOOR_BPS = float(os.getenv("PM_LEAD_FLOOR_BPS", "2.5"))
@@ -483,8 +488,8 @@ class MintSalvage:
         log.info("mintsalvage %s: mint=$%.0f salv=%.2f z_tiers=%s maxDD=$%.0f",
                  "LIVE" if _real else "PAPER", MINT_USD, SALV_PX, Z_TIERS,
                  MAX_DAILY_LOSS)
-        _event("PF_START", live=_real, mint=MINT_USD, salv=SALV_PX,
-               z_tiers=os.getenv("PM_Z_TIERS", "15:2.0,45:2.5,90:3.0,120:3.5"))
+        _event("PF_START", live=_real, mint=MINT_USD, salv=SALV_PX, risk=RISK,
+               z_eff=[(t, round(z, 2)) for t, z in Z_TIERS])
         self._seed_history()
         self._load()
         if _real:
