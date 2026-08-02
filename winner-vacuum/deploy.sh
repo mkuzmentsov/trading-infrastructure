@@ -1,10 +1,12 @@
 #!/bin/bash
-# winner-vacuum deploy. ./deploy.sh <coin> <paper|live>
+# winner-vacuum deploy. ./deploy.sh <coin> <paper|live> [bot]
+# bot defaults to "vacuum"; e.g. ./deploy.sh btc live pennymint uses
+# chart/bots/btc_pennymint.yaml and release btc-pennymint-every-tick-single.
 # Bundles src/ (deref symlinks → commons) into chart/files/scripts, helm upgrades.
 # source ../.dev-env-source first (Hetzner k3s, ns every-tick-single).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
-COIN="${1:?coin}"; MODE="${2:-paper}"
+COIN="${1:?coin}"; MODE="${2:-paper}"; BOT="${3:-vacuum}"
 # Trading bots run on their OWN Polymarket account (crypto.secret.yaml).
 # scout.secret.yaml is the pm-scout / world-bets account — do NOT point bots
 # at it, or a key rotation on one side silently moves the other.
@@ -21,7 +23,7 @@ if [ "$MODE" = "live" ] && [ ! -f "$CREDS" ]; then
   echo "  scout.secret.yaml belongs to pm-scout - do not reuse it here." >&2
   exit 1
 fi
-ARGS=(-f "chart/bots/${COIN}_vacuum.yaml")
-[ "$MODE" = "live" ] && { ARGS+=(-f "$CREDS"); echo ">>> LIVE ${COIN}-vacuum (real money)"; } || echo ">>> PAPER ${COIN}-vacuum"
-helm upgrade --install "${COIN}-vacuum-every-tick-single" ./chart "${ARGS[@]}" -n every-tick-single
-echo "done: ${COIN}-vacuum-every-tick-single ($MODE)"
+ARGS=(-f "chart/bots/${COIN}_${BOT}.yaml")
+[ "$MODE" = "live" ] && { ARGS+=(-f "$CREDS"); echo ">>> LIVE ${COIN}-${BOT} (real money)"; } || echo ">>> PAPER ${COIN}-${BOT}"
+helm upgrade --install "${COIN}-${BOT}-every-tick-single" ./chart "${ARGS[@]}" -n every-tick-single
+echo "done: ${COIN}-${BOT}-every-tick-single ($MODE)"
