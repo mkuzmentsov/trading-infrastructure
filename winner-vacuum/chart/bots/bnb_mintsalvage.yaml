@@ -1,0 +1,31 @@
+# bnb-mintsalvage (clone of btc, $20 probe size — capital-constrained fleet) — MINT the pair via the collateral adapter, HOLD the winner
+# to redemption (never sell it — keep the full $1.00), SALVAGE the loser at 1c
+# in the final 45s, gated on |Binance lead| >= 5bps with a 2bps decay/flip
+# watchdog (the vacuum's zero-flip thresholds). Knife-edge bars sell nothing:
+# hold both to redemption = breakeven by construction. User spec 2026-08-02.
+# EV/bar = +1c/share x P(1c ask fills); open venue question: 5sh @ 1c =
+# $0.05 notional vs the $1 min that rejected cheap BUYS -> PF_SALV_REJ logs it.
+botName: bnb-mintsalvage
+
+bot:
+  entrypoint: "mintsalvage.py"
+  coin: "bnb"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  pmMintUsd: "20"
+  pmZTiers: "15:2.0,45:2.5,90:3.0,120:3.5"
+  pmRisk: "1.25"
+  pmSigFloor: "0.6"
+  pmMaxDailyLoss: "5"
+  liveMaxOrderUsd: "6"
+  liveMaxDailyLossUsd: "5"
+  polygonRpcUrl: "https://polygon-bor-rpc.publicnode.com"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/bnbusdt@bookTicker"
+  polymarketRtdsSymbol: "bnb/usd"
+
+persistence:
+  enabled: true
+  size: 2Gi
