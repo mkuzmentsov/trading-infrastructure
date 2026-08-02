@@ -44,7 +44,8 @@ from core.gamma import (fetch_market_for_window, get_up_down_tokens,
 from engine import redemptions
 from engine.clob import (build_clob_client, cancel_order, ensure_approvals,
                          ensure_ctf_approval, fetch_usdc_balance,
-                         get_order_filled_verified, place_limit_sell)
+                         get_order_filled_verified, get_order_proceeds,
+                         place_limit_sell)
 from engine.redemptions import _erc1155_balance, _rpc, redeem_resolved_positions
 from execution.events import EventLog
 
@@ -419,21 +420,23 @@ class MintSalvage:
                 self._save()
             return
         wside = "UP" if oc else "DOWN"
-        salv_fill = 0.0
+        salv_fill = salv_usd = 0.0
         if bar.salv_oid and _real:
             await asyncio.to_thread(cancel_order, self.clob, bar.salv_oid)
-            v = await asyncio.to_thread(get_order_filled_verified,
-                                        self.clob, bar.salv_oid, bar.cond)
-            salv_fill = v or 0.0
+            sh, usd = await asyncio.to_thread(get_order_proceeds,
+                                              self.clob, bar.salv_oid, bar.cond)
+            salv_fill, salv_usd = sh or 0.0, usd or 0.0
         sold_winner = bar.salv_side == wside and salv_fill > 0
-        # winner shares held redeem at 1.00; sold loser shares got SALV_PX
+        # winner shares held redeem at 1.00; sold shares got their REAL price
+        # (a marketable 1c limit fills at the standing bid -- often 2c)
         win_held = float(int(bar.usd)) - (salv_fill if sold_winner else 0.0)
-        pnl = win_held * 1.0 + salv_fill * SALV_PX - bar.usd
+        pnl = win_held * 1.0 + salv_usd - bar.usd
         day = time.strftime("%Y-%m-%d", time.gmtime(bar.ws))
         self.day_pnl[day] = self.day_pnl.get(day, 0.0) + pnl
         bar.settled = True
         _event("PF_SETTLE", bar=bar.ws, outcome=wside, salv_side=bar.salv_side,
-               salv_fill=round(salv_fill, 2), mislock=sold_winner,
+               salv_fill=round(salv_fill, 2), salv_usd=round(salv_usd, 2),
+               mislock=sold_winner,
                aborted=bar.aborted, pnl=round(pnl, 4),
                day_pnl=round(self.day_pnl[day], 3), live=_real)
         if self.day_pnl[day] <= -MAX_DAILY_LOSS and not self.halted:

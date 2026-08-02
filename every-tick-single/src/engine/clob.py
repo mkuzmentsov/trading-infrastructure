@@ -457,6 +457,37 @@ def get_order_filled_verified(clob, order_id: str,
         return None
 
 
+def get_order_proceeds(clob, order_id: str,
+                       condition_id: str = None):
+    """(shares, usd) actually executed for this order from the CLOB trade
+    record. A marketable limit fills at the RESTING side's price, so proceeds
+    can beat the limit (mintsalvage's 1c sells regularly execute at 2c);
+    booking at the limit price understates PnL."""
+    from py_clob_client_v2 import TradeParams
+    try:
+        params = TradeParams(market=condition_id) if condition_id else None
+        trades = clob.get_trades(params, only_first_page=True) or []
+        sh = usd = 0.0
+        for t in trades:
+            d = t if isinstance(t, dict) else getattr(t, "__dict__", {})
+            if d.get("taker_order_id") == order_id:
+                q = float(d.get("size") or 0)
+                sh += q
+                usd += q * float(d.get("price") or 0)
+                continue
+            for mo in (d.get("maker_orders") or []):
+                if not isinstance(mo, dict):
+                    continue
+                if (mo.get("order_id") or mo.get("id")) == order_id:
+                    q = float(mo.get("matched_amount") or 0)
+                    sh += q
+                    usd += q * float(mo.get("price") or d.get("price") or 0)
+        return sh, usd
+    except Exception as exc:
+        log.warning("get_order_proceeds %s failed: %s", order_id, exc)
+        return None, None
+
+
 def cancel_order(clob, order_id: str) -> bool:
     # v2 renamed cancel(order_id) → cancel_order(OrderPayload(orderID=...)).
     from py_clob_client_v2 import OrderPayload
