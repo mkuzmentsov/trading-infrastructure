@@ -133,8 +133,11 @@ class MultiRecorder:
                         self._drop(w)
                 except Exception:
                     pass
-                # safety: give up 10min after close
-                if now - m.end > 600 and w in self.mkts:
+                # safety give-up. 10min was enough for 5m markets, but hourly/
+                # daily carry customLiveness=600: gamma flips closed=true only
+                # ~10-11min after close, exactly when the old 600s cutoff had
+                # already dropped the market -- zero RES rows in 52 archives.
+                if now - m.end > (600 if BAR_SECONDS < 3600 else 1800) and w in self.mkts:
                     self._drop(w)
 
     # ── one PM WS for all tracked tokens ─────────────────────────────────────

@@ -314,3 +314,24 @@ tier pulled at −$7.29/152 bars).
 a real measurement of queue position — the single quantity this dataset cannot
 provide (§4). That is a measurement cost, not an edge, and it should be an
 explicit decision with the expected loss stated, not a silent start.
+
+---
+
+# UPDATE 2026-08-02 — slow bars measured; §4g partially REVERSED for btc
+
+See `SLOW.md` for the full study on the new hourly/daily recorders. Headlines:
+
+1. The binary book is **self-similar across bar lengths** (median first-half
+   range 0.42 on both 5m and 1h) — the "slower market that sits near 50c"
+   §4e hoped for does not exist on any timescale. Every bid-side config is
+   worse on 1h than on 5m (−3 to −9σ at n=51).
+2. §4g's mint+dual-ask "worst config" verdict was a **Simpson artifact**: the
+   −$22/bar pooled six coins; **btc alone is +$4.0/bar t=+11** (0.55/0.55,
+   hid=200, neutralise@1s), rising to +$10/bar at 0.65/0.65, and the
+   independent 51-bar hourly dataset agrees (+$3.2 to +$5.3/bar, t=+2.2 to
+   +3.5). btc is the only coin whose bar is quiet enough that the book swings
+   through both asks instead of converging.
+3. Survives hid≤1000 (0.65), 10c dump slippage, delay 0.5-30s; dies at
+   hid≥2000, on every other coin, and on mid-bar entry. The go/no-go is the
+   real mid-book queue — unknowable from top-of-book data (§4). Next step if
+   pursued: ~20sh live probe on btc 5m+1h, fills-vs-sim, bounded at ~$10/day.
