@@ -377,17 +377,29 @@ class MintSalvage:
             calldata = _split_calldata(bar.cond, int(bar.usd * 1e6))
             try:
                 bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
-            except Exception as exc:
-                # fleet bots share one EOA: simultaneous submits collide on the
-                # pending nonce ("replacement transaction underpriced"). Wait
-                # for the winner to mine, then retry with a fresh nonce.
-                if "underpriced" in str(exc).lower() or "nonce" in str(exc).lower():
-                    # replace the stranded tx: same nonce, >10% higher price
-                    await asyncio.sleep(2.0)
-                    bar.mint_tx = await asyncio.to_thread(
-                        _submit_tx, calldata, ADAPTER, 1.25)
-                else:
+            except Exception as first_exc:
+                # Six bots share one signer and check-then-submit is NOT atomic
+                # across pods: two can both see a clear nonce and build the
+                # same one ("replacement transaction underpriced", xrp 11:09).
+                # A replacement must beat the pending tx by >10%, so escalate.
+                msg = str(first_exc).lower()
+                if not ("underpriced" in msg or "nonce" in msg or "in-flight" in msg):
                     raise
+                bar.mint_tx = None
+                for attempt, bump in enumerate((1.3, 1.7), start=1):
+                    await asyncio.sleep(1.0 + attempt)
+                    try:
+                        bar.mint_tx = await asyncio.to_thread(
+                            _submit_tx, calldata, ADAPTER, bump)
+                        break
+                    except Exception as exc:
+                        m = str(exc).lower()
+                        if not ("underpriced" in m or "nonce" in m or "in-flight" in m):
+                            raise
+                if bar.mint_tx is None:
+                    _event("PF_MINT_ERR", bar=bar.ws, attempts=3,
+                           err=str(first_exc)[:120])
+                    return False
             self._save()
             ok = False
             for _ in range(8):
