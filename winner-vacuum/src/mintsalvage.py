@@ -106,6 +106,8 @@ COLLATERAL = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82
 # user-found correction: split goes through the collateral adapter, which
 # converts pUSD internally and mints the CANONICAL tradeable tokens
 ADAPTER = os.getenv("PM_ADAPTER", "0xAdA100Db00Ca00073811820692005400218FcE1f")
+GAS_MULT = float(os.getenv("PM_GAS_MULT", "1.15"))
+GAS_CAP_GWEI = float(os.getenv("PM_GAS_CAP_GWEI", "400"))
 STATE_PATH = os.getenv("PM_STATE_PATH", "/app/logs/mintsalvage-state.json")
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
@@ -124,7 +126,12 @@ def _submit_tx(calldata: str, to: str) -> str:
     from eth_account import Account
     account = Account.from_key(POLYMARKET_PK)
     nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
-    gas_price = int(int(_rpc("eth_gasPrice", []), 16) * 2.0)
+    # gas: the RPC's suggested price is already a fast-inclusion estimate
+    # (285 gwei measured); the 2.0x we added for nonce collisions is now
+    # redundant (the per-coin stagger fixed those) and was the dominant cost
+    # -- ~0.22 POL/mint. 1.15x with a hard ceiling keeps inclusion fast.
+    gp = int(_rpc("eth_gasPrice", []), 16)
+    gas_price = min(int(gp * GAS_MULT), int(GAS_CAP_GWEI * 1e9))
     if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
         # the adapter path (pUSD burn -> USDC.e -> CTF split -> mints) needs
         # ~600-700k gas; redemptions' 300k default OOG'd at 291,753 (measured)
