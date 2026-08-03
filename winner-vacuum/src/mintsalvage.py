@@ -57,6 +57,13 @@ MINT_USD = float(os.getenv("PM_MINT_USD", "5"))
 # mint the NEXT bar only just before it opens: at most one future bar held,
 # float ~= one bar instead of 2-3 (user 2026-08-02 evening)
 MINT_LEAD_SECS = float(os.getenv("PM_MINT_LEAD_SECS", "25"))
+# GATED MINT: only split when the bar is already approaching the sell rule.
+# Measured on 4,849 bars -- checking |lead| at t-50s with a 4bps pre-gate
+# mints 68% of bars while keeping 96% of the placements the old
+# always-mint policy produced (gas -32%, and fewer txs on the shared nonce).
+MINT_MODE = os.getenv("PM_MINT_MODE", "preopen").lower()
+MINT_GATE_BPS = float(os.getenv("PM_MINT_GATE_BPS", "4"))
+MINT_GATE_TL = float(os.getenv("PM_MINT_GATE_TL", "50"))
 SIZE = float(int(MINT_USD))
 SALV_PX = float(os.getenv("PM_SALV_PX", "0.01"))
 # z-gate (empirical, flipfrontier.py on 7,155 btc + 42k pooled samples):
@@ -304,6 +311,8 @@ class MintSalvage:
                    tl_to_open=round(target - now, 1))
             self.bars[target] = bar
         if not bar.minted:
+            if MINT_MODE == "gated":
+                return                      # the salvage loop mints on the pre-gate
             if bar.ws - time.time() > MINT_LEAD_SECS:
                 return                      # discovered & cached; mint at T-25s
             await self._mint_now(bar)
@@ -460,7 +469,18 @@ class MintSalvage:
             return
         if bar.salv_oid or bar.aborted or tl <= 0:
             return
-        if lead is None or not bar.minted or abs(lead) < LEAD_FLOOR_BPS:
+        if lead is None:
+            return
+        # gated mint: the bar is approaching the sell rule -- split now so the
+        # inventory exists when (if) the full gate opens a few seconds later
+        if not bar.minted and MINT_MODE == "gated":
+            if tl <= MINT_GATE_TL and abs(lead) >= MINT_GATE_BPS:
+                _event("PF_MINT_GATE", bar=bar.ws, lead_bps=round(lead, 1),
+                       tl=round(tl, 1))
+                await self._mint_now(bar)
+                self._save()
+            return
+        if not bar.minted or abs(lead) < LEAD_FLOOR_BPS:
             return
         zreq = z_star(tl)
         z, raw = self._bar_z(bar, lead, tl)
