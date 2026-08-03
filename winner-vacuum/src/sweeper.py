@@ -44,6 +44,7 @@ PUSD = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
 USDCE = os.getenv("PM_USDCE", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
 ADAPTER = os.getenv("PM_ADAPTER", "0xAdA100Db00Ca00073811820692005400218FcE1f")
 GAS_CAP_GWEI = float(os.getenv("PM_GAS_CAP_GWEI", "700"))
+REDEEM_COOLDOWN = float(os.getenv("PM_REDEEM_COOLDOWN_SECS", "900"))
 
 _event_log = EventLog(TRAINING_EVENT_LOG_PATH)
 
@@ -166,18 +167,29 @@ async def run():
              "LIVE" if LIVE else "DRY", EVERY, MIN_USD, ADAPTER[:10])
     _event("PF_SWEEP_START", live=LIVE, every=EVERY, min_usd=MIN_USD)
     seen_fail = {}
+    done = {}          # cond -> ts of last successful redeem (Data API lags,
+                       # and a dust/loser position can keep reporting
+                       # redeemable=true; without this it re-redeems every
+                       # cycle, ~$0.01 a time = tens of dollars a day)
     hb = 0.0
     while True:
         try:
             if LIVE:
                 # 1. redeem resolved positions through the adapter (pays pUSD)
+                now_ts = time.time()
                 for cond, size in (await asyncio.to_thread(_redeemable)).items():
                     if seen_fail.get(cond, 0) >= 3:
                         continue
+                    if now_ts - done.get(cond, 0) < REDEEM_COOLDOWN:
+                        continue
                     st = await asyncio.to_thread(_redeem_via_adapter, cond)
                     _event("PF_REDEEM", cond=cond[:12], shares=round(size, 1), status=st)
+                    done[cond] = now_ts
                     if st != 1:
                         seen_fail[cond] = seen_fail.get(cond, 0) + 1
+                    if len(done) > 400:
+                        cutoff = now_ts - REDEEM_COOLDOWN
+                        done = {k: v for k, v in done.items() if v > cutoff}
                 # 2. convert whatever stranded as USDC.e
                 amt = await asyncio.to_thread(_erc20, USDCE)
                 if amt >= int(MIN_USD * 1e6):
