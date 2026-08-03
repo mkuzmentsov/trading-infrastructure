@@ -24,7 +24,7 @@ bot:
   pmRisk: "1.25"
   pmSigFloor: "0.6"
   pmGasCapGwei: "700"
-  pmLeadFloorBps: "8"
+  pmLeadFloorBps: "10"
   pmTrajWindowSecs: "10"
   pmTrajMinDeltaBps: "-3"
   pmMaxDailyLoss: "120"
