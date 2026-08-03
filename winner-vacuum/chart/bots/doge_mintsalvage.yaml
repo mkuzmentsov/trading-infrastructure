@@ -20,6 +20,7 @@ bot:
   pmRisk: "1.25"
   pmSigFloor: "0.6"
   pmMintLeadSecs: "100"
+  pmGasCapGwei: "700"
   pmMaxDailyLoss: "120"
   liveMaxOrderUsd: "6"
   liveMaxDailyLossUsd: "5"

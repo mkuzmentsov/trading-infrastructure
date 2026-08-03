@@ -119,19 +119,26 @@ def _event(ev: str, **kw):
 
 # ── on-chain: adapter split + pUSD allowance (Safe/relayer tx paths) ─────────
 
-def _submit_tx(calldata: str, to: str) -> str:
+def _submit_tx(calldata: str, to: str, bump: float = 1.0) -> str:
     if USE_RELAYER:
         from engine.relayer import submit_and_wait
         return submit_and_wait(to, calldata)
     from eth_account import Account
     account = Account.from_key(POLYMARKET_PK)
     nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
-    # gas: the RPC's suggested price is already a fast-inclusion estimate
-    # (285 gwei measured); the 2.0x we added for nonce collisions is now
-    # redundant (the per-coin stagger fixed those) and was the dominant cost
-    # -- ~0.22 POL/mint. 1.15x with a hard ceiling keeps inclusion fast.
+    # Price off the CURRENT base fee, not the RPC's suggestion: Polygon's base
+    # fee moves +-12.5%/block and a mint priced under it strands, which then
+    # collides the next coin's mint on the same nonce ("replacement
+    # transaction underpriced"). base*1.4 + priority tracks congestion both
+    # ways; `bump` re-prices a genuine replacement (must exceed +10%).
     gp = int(_rpc("eth_gasPrice", []), 16)
-    gas_price = min(int(gp * GAS_MULT), int(GAS_CAP_GWEI * 1e9))
+    try:
+        blk = _rpc("eth_getBlockByNumber", ["latest", False])
+        base = int(blk.get("baseFeePerGas", "0x0"), 16)
+    except Exception:
+        base = 0
+    want = max(int(base * 1.4) + int(30e9), int(gp * GAS_MULT))
+    gas_price = min(int(want * bump), int(GAS_CAP_GWEI * 1e9))
     if SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER:
         # the adapter path (pUSD burn -> USDC.e -> CTF split -> mints) needs
         # ~600-700k gas; redemptions' 300k default OOG'd at 291,753 (measured)
@@ -338,8 +345,10 @@ class MintSalvage:
                 # pending nonce ("replacement transaction underpriced"). Wait
                 # for the winner to mine, then retry with a fresh nonce.
                 if "underpriced" in str(exc).lower() or "nonce" in str(exc).lower():
-                    await asyncio.sleep(3.0)
-                    bar.mint_tx = await asyncio.to_thread(_submit_tx, calldata, ADAPTER)
+                    # replace the stranded tx: same nonce, >10% higher price
+                    await asyncio.sleep(2.0)
+                    bar.mint_tx = await asyncio.to_thread(
+                        _submit_tx, calldata, ADAPTER, 1.25)
                 else:
                     raise
             self._save()
