@@ -64,12 +64,32 @@ def _owner() -> str:
     return POLYMARKET_FUNDER if (SIGNATURE_TYPE == 2 and POLYMARKET_FUNDER) else POLYMARKET_ADDRESS
 
 
+
+def _wait_nonce_clear(addr: str, tries: int = 12, pause: float = 1.5) -> bool:
+    """Polygon caps in-flight txs hard for delegated (EIP-7702) accounts, and
+    seven processes share this signer. Submitting while one of ours is still
+    pending returns "in-flight transaction limit reached" and the tx is lost,
+    so wait for the pool to drain first (pending nonce == latest nonce).
+    Measured 2026-08-03: a 4s per-coin stagger was NOT enough."""
+    import time as _t
+    for _ in range(tries):
+        try:
+            latest = int(_rpc("eth_getTransactionCount", [addr, "latest"]), 16)
+            pending = int(_rpc("eth_getTransactionCount", [addr, "pending"]), 16)
+        except Exception:
+            return True
+        if pending <= latest:
+            return True
+        _t.sleep(pause)
+    return False
+
 def _submit(data: str, to: str, gas_limit: int = 900_000) -> str:
     if USE_RELAYER:
         from engine.relayer import submit_and_wait
         return submit_and_wait(to, data)
     from eth_account import Account
     acct = Account.from_key(POLYMARKET_PK)
+    _wait_nonce_clear(acct.address)
     nonce = int(_rpc("eth_getTransactionCount", [acct.address, "pending"]), 16)
     gp = int(_rpc("eth_gasPrice", []), 16)
     try:

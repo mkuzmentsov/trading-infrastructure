@@ -134,12 +134,32 @@ def _event(ev: str, **kw):
 
 # ── on-chain: adapter split + pUSD allowance (Safe/relayer tx paths) ─────────
 
+
+def _wait_nonce_clear(addr: str, tries: int = 12, pause: float = 1.5) -> bool:
+    """Polygon caps in-flight txs hard for delegated (EIP-7702) accounts, and
+    seven processes share this signer. Submitting while one of ours is still
+    pending returns "in-flight transaction limit reached" and the tx is lost,
+    so wait for the pool to drain first (pending nonce == latest nonce).
+    Measured 2026-08-03: a 4s per-coin stagger was NOT enough."""
+    import time as _t
+    for _ in range(tries):
+        try:
+            latest = int(_rpc("eth_getTransactionCount", [addr, "latest"]), 16)
+            pending = int(_rpc("eth_getTransactionCount", [addr, "pending"]), 16)
+        except Exception:
+            return True
+        if pending <= latest:
+            return True
+        _t.sleep(pause)
+    return False
+
 def _submit_tx(calldata: str, to: str, bump: float = 1.0) -> str:
     if USE_RELAYER:
         from engine.relayer import submit_and_wait
         return submit_and_wait(to, calldata)
     from eth_account import Account
     account = Account.from_key(POLYMARKET_PK)
+    _wait_nonce_clear(account.address)
     nonce = int(_rpc("eth_getTransactionCount", [account.address, "pending"]), 16)
     # Price off the CURRENT base fee, not the RPC's suggestion: Polygon's base
     # fee moves +-12.5%/block and a mint priced under it strands, which then
