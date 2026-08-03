@@ -1,0 +1,25 @@
+# btc-sweeper — redemption + collateral converter for the mintsalvage fleet.
+# Not a trading bot: it places no orders and takes no market risk. Every 15s:
+#   1. redeem resolved positions via CtfCollateralAdapter.redeemPositions ->
+#      proceeds arrive as pUSD (Polymarket's auto-redeemer pays USDC.e, which
+#      cannot be minted from and strands capital until "Activate Funds")
+#   2. convert any stranded USDC.e back to pUSD (raw-CTF split + adapter merge)
+# One instance only: it shares the signing EOA with the trading bots.
+botName: btc-sweeper
+
+bot:
+  entrypoint: "sweeper.py"
+  coin: "btc"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
+  pmSweepEverySecs: "15"
+  pmSweepMinUsd: "5"
+  pmGasCapGwei: "700"
+  polygonRpcUrl: "https://polygon-bor-rpc.publicnode.com"
+
+persistence:
+  enabled: true
+  size: 1Gi
