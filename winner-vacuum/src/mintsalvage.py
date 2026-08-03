@@ -474,9 +474,14 @@ class MintSalvage:
         # gated mint: the bar is approaching the sell rule -- split now so the
         # inventory exists when (if) the full gate opens a few seconds later
         if not bar.minted and MINT_MODE == "gated":
-            if tl <= MINT_GATE_TL and abs(lead) >= MINT_GATE_BPS:
-                _event("PF_MINT_GATE", bar=bar.ws, lead_bps=round(lead, 1),
-                       tl=round(tl, 1))
+            tries = self.mint_tries.get(bar.ws, 0)
+            armed = tl <= MINT_GATE_TL and abs(lead) >= MINT_GATE_BPS
+            # keep polling a submitted tx; otherwise fire at most twice, and
+            # log the gate ONCE per bar (it re-evaluated every 0.5s before)
+            if bar.mint_tx or (armed and tries < 2):
+                if not bar.mint_tx and tries == 0:
+                    _event("PF_MINT_GATE", bar=bar.ws, lead_bps=round(lead, 1),
+                           tl=round(tl, 1))
                 await self._mint_now(bar)
                 self._save()
             return

@@ -21,7 +21,7 @@ bot:
   pmSigFloor: "0.6"
   pmMintMode: "gated"
   pmMintGateBps: "4"
-  pmMintGateTl: "50"
+  pmMintGateTl: "48"
   pmMintLeadSecs: "55"
   pmGasCapGwei: "700"
   pmLeadFloorBps: "8"
