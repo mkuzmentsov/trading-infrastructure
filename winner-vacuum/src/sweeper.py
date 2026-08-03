@@ -39,6 +39,13 @@ from execution.events import EventLog
 
 LIVE = os.getenv("LIVE_TRADING", "false").lower() in ("true", "1", "yes") and not DRY_RUN
 EVERY = float(os.getenv("PM_SWEEP_EVERY_SECS", "15"))
+# Adapter-redeem is OFF by default: Polymarket's auto-redeemer already clears
+# every resolved position for free, so redeeming ourselves costs one tx per
+# position and -- measured 2026-08-03 09:13 -- pushed the shared EOA past
+# Polygon's "in-flight transaction limit for delegated accounts", which made
+# the six trading bots fail their MINTS. Converting the resulting USDC.e in
+# batches costs 2 txs per sweep instead of one per position.
+REDEEM_ON = os.getenv("PM_REDEEM_VIA_ADAPTER", "false").lower() in ("true", "1", "yes")
 MIN_USD = float(os.getenv("PM_SWEEP_MIN_USD", "5"))
 PUSD = os.getenv("PM_COLLATERAL", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
 USDCE = os.getenv("PM_USDCE", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
@@ -174,7 +181,7 @@ async def run():
     hb = 0.0
     while True:
         try:
-            if LIVE:
+            if LIVE and REDEEM_ON:
                 # 1. redeem resolved positions through the adapter (pays pUSD)
                 now_ts = time.time()
                 for cond, size in (await asyncio.to_thread(_redeemable)).items():
@@ -190,7 +197,8 @@ async def run():
                     if len(done) > 400:
                         cutoff = now_ts - REDEEM_COOLDOWN
                         done = {k: v for k, v in done.items() if v > cutoff}
-                # 2. convert whatever stranded as USDC.e
+            if LIVE:
+                # 2. convert whatever stranded as USDC.e (the cheap path)
                 amt = await asyncio.to_thread(_erc20, USDCE)
                 if amt >= int(MIN_USD * 1e6):
                     await asyncio.to_thread(_convert, amt)
