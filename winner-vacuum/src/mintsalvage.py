@@ -75,6 +75,14 @@ Z_TIERS = sorted(
     key=lambda t: t[0])
 SALV_ARM_TL = max(t[0] for t in Z_TIERS)
 LEAD_FLOOR_BPS = float(os.getenv("PM_LEAD_FLOOR_BPS", "2.5"))
+# Block sales into a COLLAPSING lead: measured (42k samples, |lead|>=7 gate)
+# flip rate by the lead's move over the 10s before placement --
+#   collapsing < -3bps: 1.69% (-$0.69/fill)   fading -3..0: 0.69%
+#   flat/rising 0..+3 : 0.51% (+$0.49/fill)   accel >+3   : 0.90%
+# A lead already rolling over is 3.3x more likely to flip; both the eth
+# (-$99) and doge (-$19.80) mislocks were exactly this shape.
+TRAJ_WINDOW = float(os.getenv("PM_TRAJ_WINDOW_SECS", "10"))
+TRAJ_MIN_DELTA = float(os.getenv("PM_TRAJ_MIN_DELTA_BPS", "-3"))
 SIG_FLOOR = float(os.getenv("PM_SIG_FLOOR", "0.4"))
 # Vol-regime discount on z* (two-way calibration 2026-08-02): when sigma is
 # HONESTLY measured high, flips at modest z are rare (HIGH regime z>=1.6:
@@ -401,6 +409,17 @@ class MintSalvage:
             return None
         return (binance_state.current_price - op) / op * 1e4
 
+    def _lead_traj(self, bar: Bar, lead: float, now: float):
+        """Change in |lead| (signed toward the CURRENT leading side) over the
+        last TRAJ_WINDOW seconds. None when history is too short."""
+        cutoff = now - TRAJ_WINDOW
+        past = [lb for sec, lb in bar.lead_samples if sec <= cutoff]
+        if not past:
+            return None
+        prev = past[-1]
+        aligned = abs(prev) if (prev > 0) == (lead > 0) else -abs(prev)
+        return abs(lead) - aligned
+
     def _bar_z(self, bar: Bar, lead: float, tl: float):
         """(z, raw_sigma) from the bar's own 1s lead increments."""
         d = [bar.lead_samples[i][1] - bar.lead_samples[i - 1][1]
@@ -449,6 +468,12 @@ class MintSalvage:
             return
         zreq *= vol_mult(raw)
         if z < zreq:
+            return
+        traj = self._lead_traj(bar, lead, now)
+        if traj is not None and traj < TRAJ_MIN_DELTA:
+            _event("PF_SALV_SKIP", bar=bar.ws, reason="collapsing_lead",
+                   lead_bps=round(lead, 1), traj=round(traj, 1),
+                   tl=round(tl, 1))
             return
         loser = "DOWN" if lead > 0 else "UP"
         sz = float(int(bar.usd))
