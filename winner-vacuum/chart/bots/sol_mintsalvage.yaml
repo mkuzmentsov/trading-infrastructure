@@ -20,7 +20,7 @@ bot:
   pmRisk: "1.25"
   pmSigFloor: "0.6"
   pmMintLeadSecs: "55"
-  pmMaxDailyLoss: "5"
+  pmMaxDailyLoss: "120"
   liveMaxOrderUsd: "6"
   liveMaxDailyLossUsd: "5"
   polygonRpcUrl: "https://polygon-bor-rpc.publicnode.com"

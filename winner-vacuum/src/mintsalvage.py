@@ -245,8 +245,12 @@ class MintSalvage:
             if bd["ws"] >= cutoff:
                 self.bars[int(w)] = Bar.load(bd)
         self.day_pnl = d.get("day_pnl", {})
-        self.halted = bool(d.get("halted", False))
-        _event("PF_RESUME", bars=len(self.bars), halted=self.halted)
+        # re-derive halted from TODAY's pnl vs the CURRENT threshold (a stored
+        # flag would pin a bot to yesterday's halt after a threshold change)
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        self.halted = self.day_pnl.get(today, 0.0) <= -MAX_DAILY_LOSS
+        _event("PF_RESUME", bars=len(self.bars), halted=self.halted,
+               day_pnl=round(self.day_pnl.get(today, 0.0), 2))
 
     # ── mint the NEXT bar's outcomes during the current bar (user spec:
     # unconditional pre-open mint, 5 tokens each side) ───────────────────────
