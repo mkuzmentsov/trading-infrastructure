@@ -16,7 +16,7 @@ bot:
   loopIntervalSecs: "300"
   trainingEventLogPath: "/app/logs/logs-training-events.jsonl"
   pmMintUsd: "50"
-  pmZTiers: "15:2.0,45:2.5"
+  pmZTiers: "12:2.0"
   pmRisk: "1.25"
   pmSigFloor: "0.6"
   pmMintMode: "gated"
