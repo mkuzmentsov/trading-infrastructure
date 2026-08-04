@@ -222,6 +222,25 @@ def _tx_status(tx: str):
     return None if not r else int(r.get("status", "0x0"), 16)
 
 
+def _best_bid(token: str):
+    """Top of the loser's book at the moment we sell. Our fills have always
+    been instant matches against a resting bid, so if this is empty the sale
+    cannot fill at any price -- and that, not order validity, is what a
+    zero-fill day looks like."""
+    try:
+        d = json.loads(urllib.request.urlopen(urllib.request.Request(
+            f"https://clob.polymarket.com/book?token_id={token}",
+            headers={"User-Agent": "mintsalvage"}), timeout=3).read())
+        bids = [float(b["price"]) for b in (d.get("bids") or [])]
+        sizes = {float(b["price"]): float(b["size"]) for b in (d.get("bids") or [])}
+        if not bids:
+            return 0.0, 0.0
+        top = max(bids)
+        return top, sizes.get(top, 0.0)
+    except Exception:
+        return None, None
+
+
 def _outcome_up(ws: int):
     try:
         url = ("https://gamma-api.polymarket.com/markets?slug=" + window_slug(ws)
@@ -545,6 +564,7 @@ class MintSalvage:
         # 0 matched -- even with deep 1c bids resting (sol 5,384 shares, btc
         # 1,274 measured at t-15s during a whole day of zero fills). Force the
         # venue to re-read this token's on-chain balance before selling.
+        bb, bsz = await asyncio.to_thread(_best_bid, bar.tok[loser])
         try:
             await asyncio.to_thread(ensure_ctf_approval, self.clob, bar.tok[loser])
         except Exception as exc:
@@ -562,7 +582,8 @@ class MintSalvage:
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
                    lead_bps=round(lead, 1), z=round(z, 2), sig=round(raw, 2),
                    zreq=round(zreq, 2), tl=round(tl, 1), order=oid,
-                   matched=matched)
+                   matched=matched,
+                   best_bid=bb, bid_sz=bsz)
         else:
             bar.aborted = True
             _event("PF_SALV_REJ", bar=bar.ws, side=loser, sh=sz,
