@@ -539,6 +539,16 @@ class MintSalvage:
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
                    lead_bps=round(lead, 1), z=round(z, 2), tl=round(tl, 1), dry=True)
             return
+        # The CLOB validates orders against ITS OWN cached balance. Gated
+        # minting leaves only ~35s between the split and the sale, and orders
+        # placed in that gap post as status=live then read back INVALID with
+        # 0 matched -- even with deep 1c bids resting (sol 5,384 shares, btc
+        # 1,274 measured at t-15s during a whole day of zero fills). Force the
+        # venue to re-read this token's on-chain balance before selling.
+        try:
+            await asyncio.to_thread(ensure_ctf_approval, self.clob, bar.tok[loser])
+        except Exception as exc:
+            _event("PF_SALV_REFRESH_ERR", bar=bar.ws, side=loser, err=str(exc)[:120])
         try:
             oid, matched = await asyncio.to_thread(
                 place_limit_sell, self.clob, bar.tok[loser], sz, SALV_PX)
