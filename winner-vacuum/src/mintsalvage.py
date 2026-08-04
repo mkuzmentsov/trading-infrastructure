@@ -82,6 +82,34 @@ Z_TIERS = sorted(
     key=lambda t: t[0])
 SALV_ARM_TL = max(t[0] for t in Z_TIERS)
 LEAD_FLOOR_BPS = float(os.getenv("PM_LEAD_FLOOR_BPS", "2.5"))
+# Session-conditional floor. The US morning supplies most of the fills
+# (57-82% vs 12-17% quiet) AND produced every current-gate reversal, but the
+# hour-sliced calibration says that is a FLOOR problem, not a session one:
+#   floor 8bps  -> quiet 0.88% flips, US morning 1.70%  (above break-even)
+#   floor 10bps -> quiet 0.55% flips, US morning 0.34%  (the safest window)
+# So tighten inside the window instead of halting, and keep the loose floor
+# in the quiet hours where it measures safe.
+SESSION_FLOOR_BPS = float(os.getenv("PM_SESSION_FLOOR_BPS", "10"))
+SESSION_WINDOW_UTC = os.getenv("PM_SESSION_WINDOW_UTC", "12:30-16:00").strip()
+
+
+def _in_session(now: float) -> bool:
+    if not SESSION_WINDOW_UTC or "-" not in SESSION_WINDOW_UTC:
+        return False
+    try:
+        a, b = SESSION_WINDOW_UTC.split("-", 1)
+        ah, am = (int(x) for x in a.split(":"))
+        bh, bm = (int(x) for x in b.split(":"))
+    except Exception:
+        return False
+    t = time.gmtime(now)
+    m = t.tm_hour * 60 + t.tm_min
+    lo, hi = ah * 60 + am, bh * 60 + bm
+    return (lo <= m < hi) if lo <= hi else (m >= lo or m < hi)
+
+
+def lead_floor_now(now: float) -> float:
+    return max(LEAD_FLOOR_BPS, SESSION_FLOOR_BPS) if _in_session(now) else LEAD_FLOOR_BPS
 # Block sales into a COLLAPSING lead: measured (42k samples, |lead|>=7 gate)
 # flip rate by the lead's move over the 10s before placement --
 #   collapsing < -3bps: 1.69% (-$0.69/fill)   fading -3..0: 0.69%
@@ -536,7 +564,8 @@ class MintSalvage:
                 await self._mint_now(bar)
                 self._save()
             return
-        if not bar.minted or abs(lead) < LEAD_FLOOR_BPS:
+        floor_now = lead_floor_now(now)
+        if not bar.minted or abs(lead) < floor_now:
             return
         zreq = z_star(tl)
         z, raw = self._bar_z(bar, lead, tl)
@@ -582,7 +611,7 @@ class MintSalvage:
             _event("PF_SALV_PLACE", bar=bar.ws, side=loser, px=SALV_PX, sh=sz,
                    lead_bps=round(lead, 1), z=round(z, 2), sig=round(raw, 2),
                    zreq=round(zreq, 2), tl=round(tl, 1), order=oid,
-                   matched=matched,
+                   matched=matched, floor=floor_now,
                    best_bid=bb, bid_sz=bsz)
         else:
             bar.aborted = True

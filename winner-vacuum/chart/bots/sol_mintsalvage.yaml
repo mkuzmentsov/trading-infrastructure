@@ -24,6 +24,8 @@ bot:
   pmMintGateTl: "48"
   pmMintLeadSecs: "55"
   pmGasCapGwei: "700"
+  pmSessionFloorBps: "10"
+  pmSessionWindowUtc: "12:30-16:00"
   pmLeadFloorBps: "8"
   pmTrajWindowSecs: "10"
   pmTrajMinDeltaBps: "-3"
