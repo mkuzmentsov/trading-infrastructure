@@ -133,8 +133,19 @@ step back to ≤20 s, which still measures 0.12%.
 
 ## 5. Ranked improvements
 
-**1. Later placement window — DONE (≤12 s).** ~3× lower flip rate, ~2× EV.
-Zero implementation risk. Verify fill rate holds over the next session.
+**1. Later placement window — TRIED AND REVERTED. It optimised the flip rate
+into zero fills.** The calibration was right that flips fall from 0.53% at
+t−45 s to 0.06% at t−5 s. What it could not see is the other side of the
+coupling: instrumenting the book at placement time (`best_bid`, `bid_sz` in
+PF_SALV_PLACE) shows placements inside 20 s read **best_bid = 0.0** — the
+corpse has no bid at any price. ~60 placements and a full trading day
+produced **zero** fills. Reverting to 15–45 s produced a `matched=True` fill
+on the very first placement, at t−39.6 s against a 1¢ bid.
+
+The lesson generalises: **flip rate and fill rate are the same variable
+viewed from two sides.** Anything that makes our sale safer makes the corpse
+less attractive to the only people who would buy it. The window is not a free
+parameter to optimise — it is the price of having a counterparty.
 
 **2. More markets, not more size.** EV per placement is fixed by `fill_rate ×
 (0.01 − p)`; total profit scales with placement count. Gated minting made
@@ -197,6 +208,24 @@ The strategy is real but small. Its edge is a 1¢ rounding artefact, harvested a
 cent at a time, against a tail that is 99× the size of each win. It survives
 only while `p < 1%`, and every design decision — floors, windows, gates — is in
 service of that one inequality.
+
+## 7b. The zero-fill day (2026-08-04) — how it was diagnosed
+
+Worth recording because the false leads were expensive:
+
+1. Orders posted `status: live`, then read back `status=INVALID, matched=0`.
+   INVALID looks like an order-validity failure and sent me hunting for
+   balance/allowance/token-id bugs.
+2. A controlled test sell disproved all of them: the CLOB saw our full 100
+   shares and max allowances on all three exchange contracts, and the token id
+   matched the market's canonical pair.
+3. The same test printed `book bids: []`. Adding `best_bid` to the placement
+   event confirmed it live. INVALID is simply the terminal state of an order
+   that never matched before its market closed — a symptom, not a cause.
+
+**Diagnostic to keep:** log the counterparty side of the book at decision
+time. Without it, "no fills" is indistinguishable from "broken orders", and
+the two lead to opposite fixes.
 
 ## 8. Next measurements, in order
 
