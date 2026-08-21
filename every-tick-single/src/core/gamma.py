@@ -39,6 +39,10 @@ def window_slug(window_start_ts: int) -> str:
                                     ZoneInfo("America/New_York"))
         return (f"{_COIN_FULL.get(COIN, COIN)}-up-or-down-on-"
                 f"{dt.strftime('%B').lower()}-{dt.day}-{dt.year}")
+    if BAR_SECONDS == 14400:
+        # 4h series uses the hour form, not 240m (verified live 2026-08-11:
+        # btc-updown-4h-<ts>, epoch-aligned 14400 grid)
+        return f"{COIN}-updown-4h-{int(window_start_ts)}"
     return f"{COIN}-updown-{BAR_SECONDS // 60}m-{int(window_start_ts)}"
 
 

@@ -1143,3 +1143,70 @@ and was WRONG. Cutting it would burn $34 of good bars to dodge 3 disasters.
 Tail, not selection — same cell as §28-31 (ask>=0.98, tl 26-30), config frozen
 by user 08-19 ("Nothing, let it run"). NB one bar lost $23 > the $15 halt: the
 halt is realized-daily and a single bar can blow through it.
+
+---
+
+## §33 — TIMING IS THE EDGE: the accuracy-vs-tl curve (2026-08-21)
+
+**Settlement is ARITHMETIC, not prediction.** TWAP-60 = mean over [T-62,T-3]
+~= 59 ticks. At tl=14s, 48 of those 59 ticks ALREADY EXIST — 81% of the final
+average is locked. Measured on 4,791 archive bars, the T-14 estimator (known
+ticks + last-value carry) has **mean |error| 0.025 bps and calls the SIDE wrong
+1 time in 864 (0.12%)**. This is why the whale's cheap bucket wins ~100%: he is
+not forecasting, he is averaging a series that is mostly already written.
+
+**Accuracy vs seconds-left (n=4,791; near-tie = |final TWAP - open| < 2bps):**
+
+| tl | near-tie (<2bps) | clear (>=2bps) |
+|---|---|---|
+| 3s | 99.9% | 100.0% |
+| 8s | 99.0% | 100.0% |
+| 14s | 97.2% | 100.0% |
+| 20s | 94.9% | 100.0% |
+| 25s | 93.6% | 100.0% |
+| 30s | 90.6% | 100.0% |
+| 40s | 85.8% | 99.8% |
+
+⭐ **Clear bars are 100% at EVERY horizon — waiting buys nothing, fire early for
+price. Near-tie bars decay steeply — every second of waiting is accuracy.**
+
+**⚠️ THE LIVE VOL-DELAY GATE CONDITIONS ON THE WRONG VARIABLE.** Separation of
+accuracy by candidate gate, same bars:
+
+| tl | split by MARGIN | split by VOL |
+|---|---|---|
+| 14s | 2.8 pp | -0.1 pp |
+| 30s | 9.4 pp | -0.3 pp |
+| 40s | **14.0 pp** | **-0.6 pp** |
+
+Margin separates by up to 14 points; ambient vol separates by ~0 (slightly
+backwards). `PM_TE_WHALE_VOL_DELAY_VOL=10` is keyed on a non-discriminating
+quantity. (Caveat: the vol column uses a 100ms-spot reconstruction, not the
+bot's internal `vol`, so treat it as suggestive; the margin column stands alone.)
+
+**PnL by time-left band, 230h, venue truth (`whalepnl.py` + activity tl):**
+
+| band | US clips | win | ROI | HIM clips | win | ROI |
+|---|---|---|---|---|---|---|
+| tl>62 (no window yet) | 28 | 64.3% | +1.18% | **0** | | |
+| tl 31-62 (partial) | 250 | 91.6% | **-0.34%** | **0** | | |
+| tl 13-30 | 1296 | 96.6% | +0.21% | 2893 | 99.2% | +0.96% |
+| **tl<=12** | **138** | 98.6% | **+3.76%** | **2583** | 99.1% | +1.64% |
+
+⭐ **He fires NOTHING outside tl<=30. We put 16% of clips there and the 31-62
+band LOSES money.** Our own late lane earns **+3.76% = 18x our 13-30 lane**, yet
+holds only 138 clips vs his 2,583. He takes 47% of clips late; we take 8%.
+Mechanism: `WHALE_LADDER_USD=16` is exhausted early in [3,30], leaving no budget
+for the high-accuracy late lane. Our cheap-leg win rate 84.8% sits exactly at the
+tl~40 point of the curve (median cheap fire tl=26, p90=53) vs his 94% at tl~12.
+
+**NEGATIVE results (do not re-run):** cheap-bar arrival is NOT predictable from
+news/macro timing (permutation p=0.840, observed max BELOW null mean) nor from
+whole-bar realized vol (p=0.101) nor from late-minute reversal structure (six
+features, p=0.47-0.99 on 1m klines — though 1m cannot resolve the last 15s, so
+that one is underpowered rather than refuted). Cheap bars arrive RANDOMLY ⇒ you
+must be continuously present; "trade only during window X" is not available.
+
+Also: the live bot ALREADY reads Chainlink RTDS directly (`twapedge.py:43,1237`,
+correct `twap_sixty` topic) — the Binance-proxy problem was only ever an OFFLINE
+research handicap, now fixed by the mrec `cl` capture. Nothing live was mis-sourced.
