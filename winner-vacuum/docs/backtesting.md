@@ -184,3 +184,25 @@ if the verdict changed. A sim whose result isn't written down didn't happen.
     appears precisely when the book disagrees with us. Any EV table built on
     all-bars accuracy overstates a taker strategy by ~5pp in the weak cell.
     Always cut EV on the fills-possible subset.
+
+## Bug #13 — the STRIKE is the TWAP at bar open, not the spot at bar open
+
+5m/15m markets settle by comparing the final TWAP-60 to a strike that is itself
+`rtds_state.twap_at(SYM, ws)` = mean over **[ws-62, ws-3]** (`twapedge.py:566`).
+Using spot-at-open instead scored the known-profitable 5m lane at **-2.40% ROI**
+(87.8% win at median ask 0.980). Corollary: the strike window lies BEFORE the bar
+opens, so a series keyed per-bar cannot see it — build ONE continuous per-coin
+spot series across bars, then slice.
+
+## Bug #14 — scan the whole tl window; never sample one snapshot
+
+Taking a single snapshot (e.g. `sorted(snaps)[-1]`) instead of scanning tl 14->3
+the way the live loop does fabricates missing liquidity: any one snapshot carries
+an ask on a given side only ~52% of the time, so single-sampling reported
+`ask_none` on 97% of bars and declared 15m untradeable for the wrong reason.
+
+**Validity check that caught both:** the 5m lane is profitable LIVE, so any harness
+scoring it negative is broken — and after fixing, a correct harness is MONOTONE in
+the margin gate (79.4%/+2.67% at >=1bps -> 100%/+16.28% at >=3bps). Gate-ordering
+monotonicity is a free correctness test; if it is not monotone, doubt the harness.
+

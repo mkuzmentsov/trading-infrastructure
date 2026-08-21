@@ -1210,3 +1210,72 @@ must be continuously present; "trade only during window X" is not available.
 Also: the live bot ALREADY reads Chainlink RTDS directly (`twapedge.py:43,1237`,
 correct `twap_sixty` topic) — the Binance-proxy problem was only ever an OFFLINE
 research handicap, now fixed by the mrec `cl` capture. Nothing live was mis-sourced.
+
+### §33.1 — PROPOSED, DEFERRED BY USER 2026-08-21 ("just note this, we will try this later")
+
+**DO NOT DEPLOY until the user reopens it.** Ready-to-run options, best first:
+
+1. **Margin-conditioned delay** (code): clear bars (margin>=2bps) fire immediately
+   for price; near-ties hold until tl<=12. Replaces the vol gate with the variable
+   that actually discriminates (14pp vs ~0).
+2. **Config-only**: `PM_TE_WHALE_START` 30 -> 15. No code, instantly revertible.
+   Blunter (delays clear bars too, costing some price) but zero code risk.
+3. **Conservative**: kill only the tl>30 lanes (the 31-62 band at -0.34% ROI and
+   the tl>62 fires that have NO TWAP window). Captures the smaller half.
+4. Paper A/B first via the `PF_TE_WHALE_DELAY` counterfactual lane.
+
+Expected direction (NOT a promise — the late lane's high ROI is partly SELECTION:
+opportunities surviving to tl<=12 are those the market has not corrected, so
+moving the window does NOT convert tl-20 fills into tl-10 fills at the same price;
+volume will drop). The whale proves the late volume EXISTS (2,583 clips vs our 138).
+
+---
+
+## §34 — DURATION IS SETTLED: 5m is optimal AND the shortest available (2026-08-21)
+
+Tested whether the TWAP-taker edge ports to 15m (whale trades 5m 5,489 clips vs
+**11** on 15m — effectively uncontested, so worth checking).
+
+**Verdict: 15m is DEAD — not for lack of edge, for lack of a book.**
+Validated harness (`/tmp/sim4.py` pattern: scan tl 14->3, take first ask<=0.99
+with size>=5, score vs RES ground truth):
+
+| | tradable bars | rate | ROI |
+|---|---|---|---|
+| BTC 5m (control) | 102 / 2,400 | 4.3% | +2.67% (>=1bps) rising to **+16.28% (>=3bps)** |
+| BTC 15m | 2 / 420 | 0.5% | n/a |
+| ETH 15m | 2 / 414 | 0.5% | n/a |
+
+**Mechanism (this is the general law):** longer bars are decided by LARGER margins,
+so the loser is worthless before the close, nobody bids it, and therefore **no ask
+exists on the winner to lift** (`ask_none` killed 331 of 342 candidate bars).
+
+| | median \|final TWAP − strike\| | bars <2bps (near-ties) |
+|---|---|---|
+| BTC 5m | 2.29 bps | **45.6%** |
+| BTC 15m | 3.98 bps | 27.7% |
+| ETH 15m | 4.90 bps | 24.7% |
+
+⇒ **The edge needs near-ties, and near-ties need SHORT bars.** 5m keeps ~46% of
+bars undecided at settlement; 15m only ~26%. Book presence is otherwise identical
+(~52% up-ask / ~54% down-ask at tl 3-14 in BOTH durations) — so it is the margin
+distribution, not liquidity per se. Probed for shorter: **no 1m or 3m markets
+exist**; 5m is the floor. Duration question CLOSED — we are already optimal.
+
+### ⚠️ TWO SIM BUGS, both caught only by the CONTROL (bug ledger #13, #14)
+
+The 5m control is known-profitable live. Any harness scoring it NEGATIVE is broken.
+
+* **#13 — wrong strike.** Used spot-at-open as the settlement reference. The real
+  strike is **TWAP at bar open** (`twapedge.py:566`, `rtds_state.twap_at(SYM, ws)`),
+  i.e. mean over [ws-62, ws-3]. Symptom: control read 87.8% win at ask 0.980 ⇒
+  **-2.40% ROI**, contradicting live. Also: the strike window lies BEFORE the bar,
+  so a per-bar keyed series cannot see it — build ONE continuous per-coin series.
+* **#14 — single-snapshot sampling.** Took `bk[-1]` (one snapshot) instead of
+  scanning the whole tl window as the live loop does. A single snap carries an ask
+  on a given side only ~52% of the time, so this fabricated `ask_none` at 97% and
+  reported 15m as untradeable for the WRONG reason. Always scan the window.
+
+After both fixes the control is positive AND monotone in the margin gate
+(79.4%/+2.67% at >=1bps -> 100%/+16.28% at >=3bps), which is the signature of a
+sound harness — the gate ordering is a free validity check, use it.
