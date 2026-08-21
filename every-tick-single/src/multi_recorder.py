@@ -22,14 +22,38 @@ import websockets
 
 from config import BAR_SECONDS, COIN, POLYMARKET_WS, log
 from core.binance_ws import binance_state, run_binance_ws
+from core.rtds import rtds_state, run_rtds
 from core.gamma import (fetch_market_for_window, get_up_down_tokens,
                         grid_window_start, next_window_start, window_slug)
 from ws_recorder import RotatingWriter, _seed_history
 
 AHEAD = int(os.getenv("MREC_AHEAD", "3"))
 SNAP_SECS = max(20, int(float(os.getenv("SNAPSHOT_MS", "100")))) / 1000.0
+# RTDS symbol for this coin, e.g. "btc/usd".
+RTDS_SYM = os.getenv("POLYMARKET_RTDS_SYMBOL", f"{COIN}/usd")
+# ⚠️ MUST be twap_SIXTY. rtds.run_rtds() DEFAULTS to twap_thirty, which is the
+# WRONG stream — all coins settle TWAP-60 (the live vacmaker derives this same
+# topic from PM_TE_TWAP_WINDOW=60). Subscribing to the default would have
+# recorded a settlement reference these markets do not use.
+RTDS_TOPICS = ("crypto_prices_chainlink", "crypto_prices_twap_sixty")
+
+
+def _rtds_latest(book):
+    """(ts, value) of the newest tick for our symbol, or (None, None).
+    ⚠️ rtds.ingest does NOT normalise case, so match case-insensitively."""
+    d = book.get(RTDS_SYM)
+    if not d:
+        low = RTDS_SYM.lower()
+        for k, v in book.items():
+            if k.lower() == low:
+                d = v
+                break
+    if not d:
+        return None, None
+    ts = max(d)
+    return int(ts), d[ts]
 # distinguish archives by bar length: btc-mrec (5m), btc-mrec1h, btc-mrec1d
-_SUFFIX = {3600: "1h", 86400: "1d"}.get(BAR_SECONDS, "")
+_SUFFIX = {3600: "1h", 14400: "4h", 86400: "1d"}.get(BAR_SECONDS, "")
 
 
 class Mkt:
@@ -205,6 +229,8 @@ class MultiRecorder:
                 now = time.time()
                 cur_ws = grid_window_start(now)
                 spot = binance_state.current_price
+                cl_t, cl_v = _rtds_latest(rtds_state.point)
+                _, tw_v = _rtds_latest(rtds_state.twap)
                 for w, m in sorted(self.mkts.items()):
                     role = m.role(now, cur_ws)
                     bo = binance_state.bar_open_at(w) if now >= w else None
@@ -216,6 +242,17 @@ class MultiRecorder:
                         "t": round(now, 3), "coin": COIN, "ws": w, "ev": "SNAP",
                         "slug": m.slug, "role": role, "tl": round(m.end - now, 2),
                         "spot": spot, "lead_bps": None if lead is None else round(lead, 2),
+                        # ⭐ CHAINLINK settlement stream (added 2026-08-21).
+                        # These markets SETTLE on this, not Binance spot, and
+                        # the two diverge exactly on near-ties — which is where
+                        # the TWAP-recon edge trades. Backtesting the recon on
+                        # `lead_bps` is INVALID: the proxy scores the live 5m
+                        # vacmaker at -$232 while it actually profits
+                        # (ledger #19: 2-3x pessimistic on flip rate).
+                        # RTDS is 1Hz, we snap at 10Hz, so cl_ts repeats ~10x —
+                        # dedupe on it offline to rebuild the exact 1Hz series
+                        # and reconstruct any TWAP window.
+                        "cl": cl_v, "cl_ts": cl_t, "tw": tw_v,
                         "ub": ub, "ubs": round(ubs, 1), "ua": ua, "uas": round(uas, 1),
                         "db": db, "dbs": round(dbs, 1), "da": da, "das": round(das, 1),
                         "vol": round(m.vol_notl, 2), "volsh": round(m.vol_sh, 1),
@@ -227,7 +264,8 @@ class MultiRecorder:
     async def run(self):
         log.info("multi_recorder coin=%s ahead=%d snap=%.0fms", COIN, AHEAD, SNAP_SECS * 1000)
         _seed_history()
-        await asyncio.gather(run_binance_ws(), self.discover_loop(),
+        await asyncio.gather(run_binance_ws(), run_rtds(RTDS_TOPICS),
+                             self.discover_loop(),
                              self.resolve_loop(), self.ws_loop(), self.snap_loop())
 
 
