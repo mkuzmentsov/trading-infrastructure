@@ -1478,3 +1478,103 @@ Baseline to compare: +$84.81 net over 08-18..08-22 (~$19/day). Revert = set
 **⚠️ INFRA RISK FOUND: `src/twapedge.py` and `src/poolfarm.py` were UNTRACKED** —
 the live strategy source existed only on the laptop + in the containers (pod md5
 == local md5, e148df87...). No secrets in either. Now committed.
+
+**§39 — 08-22 18:35 Kyiv: blind-window BUG FIXED + integrating the
+other session's unconditional-delay deploy.** At 17:48K another
+session deployed de22700 (user-authored): the tl 21-30 early lane is
+now OFF unconditionally (pmTeWhaleVolDelayVol 10 → 0.01) — measured on
+whale-era venue truth, that band lost −$74.51 at 95.6% win (win +$0.23
+vs loss −$7.17; broad, not tail — ex-worst-3 still −$19.87), and
+ambient vol separated accuracy by ~0 (my §35-38 vol framing was the
+weaker cut of the same disease). SIX MINUTES after that deploy, eth
+laddered 3 early clips (tl 29.8/25.8/24.7) into a macro bar and lost
+−$18.40 — because `_ambient_vol()` returns None for ~4 bars after any
+restart and the gate required `vol is not None`, silently re-opening
+the early lane after EVERY restart (same hole as doge 08-20 23:10K).
+Fixed (dbc45e8): unknown vol now DELAYS — `vol is None or vol >=
+thresh`; PF_TE_WHALE_DELAY logs vol:null for warmup holds. Redeployed
+all 7 at 18:31K, post-deploy verification clean (0 runtime errors,
+vol_delay_vol=0.01 echoed on all pods) — and this rollout's own
+warmup was protected by the fix itself. NOTE for future edits: with
+the delay unconditional, whale_loop early fires are now impossible in
+ANY state; the early-lane cells in §35-38 tables are historical.
+
+**§40 — 08-22 20:15 Kyiv: late-lane anatomy (313 fills since gate
+deploy) — every candidate cut REFUTED, losses are the cheap-lane
+premium.** All late-lane (tl≤20 after a DELAY) fills joined to
+settles: 313 fills, 306W-7L, **+$88.71**. By fill price: [0.93,1.0)
+= 256 fills **256-0** +58.71 (dear late = perfect, market agrees with
+the recon); [0.85,0.93) = 30 fills 29-1 +18.19; all 7 losses live
+below 0.85 — but those buckets are still NET POSITIVE (+11.81) because
+cheap wins pay 0.25-0.48/share (xrp +11.26 etc.). Ask-collapse ≥15c
+(delay-ask → fill-px, the #2/#6/#7 signature): n=7, 4W-3L, −0.47 —
+zero-EV, not a cuttable edge. Conclusion: cutting cheap or collapsed
+late fills would forfeit more than it saves; the 7 losses ARE the
+premium for the cheap-lane wins. Late lane needs no gate. (Contrast
+with the early lane, now OFF per de22700: there the SAME dear fills
+were −EV because entry preceded the information.)
+
+---
+
+## §38 — "BUY THE DIP" TESTED AND REJECTED (2026-08-23)
+
+User asked: build a strategy that buys the dip anticipating the bar closes the
+other way — several vacmaker bars looked like this. Answer: **the bars are real,
+the strategy is not.** Do not build it.
+
+**Framing first (this is why a naive version would be lethal):** this is NOT a
+contrarian/reversal bet. The claim can only ever be "TWAP arithmetic says X wins,
+the market has mispriced X cheap". The dip is the MARKET'S error, never a
+prediction that price bounces. Buying cheap *because it is cheap* has no edge —
+cheap is usually correct.
+
+**Live record (ask<=0.90, 247 clips, ~11 days) — monotone in tl:**
+
+| band | n | win | PnL | ROI | breakeven win% |
+|---|---|---|---|---|---|
+| tl<=12 | 20 | 100% | +$39.71 | **+29.22%** | 77.4% |
+| tl 13-20 | 51 | 86.3% | +$37.32 | +10.39% | 77.3% |
+| tl 21-30 | 80 | 78.8% | -$27.41 | -5.10% | 80.9% |
+| tl>30 | 96 | 74.0% | -$4.27 | -0.64% | 59.0% |
+
+(All tl>30 rows and every ±$20-39 swing are 08-12 btc = LEGACY pre-v3 bot.)
+The 20/20 looks spectacular but is unremarkable: P(20/20)=0.36 at a 95% win rate,
+0.67 at 98%. It is the ordinary recon being right, not a separate "dip" edge.
+
+**Archive test (14,190 bars, 6 coins). A cheap ask means the OPPOSITE thing
+depending on the margin:**
+
+| ask band | gate>=1bps | >=3bps | >=5bps |
+|---|---|---|---|
+| <=0.55 | +21.9% (n=231) | +71.6% (n=45) | +99.6% (n=14) |
+| 0.55-0.75 | -6.5% (n=93) | +12.4% (n=23) | +37.9% (n=2) |
+| 0.75-0.90 | -5.0% (n=125) | -0.5% (n=29) | +8.3% (n=10) |
+| >0.98 | -0.1% (n=745) | -0.03% (n=443) | +0.14% (n=321) |
+
+⭐ **With a MARGINAL estimate a cheap ask means MY ESTIMATE IS WRONG; only with a
+DECISIVE estimate does it mean the market is wrong.** At tl<=12 the 0.75-0.90 band
+wins just 79.2% where the curve predicts ~98% — that gap IS the estimation error.
+
+**Significance:** only `>=3bps & <=0.55` is significant (n=45, 22 wins vs 12.8
+expected, z=+3.03, p=0.0024 — and ~20 cells were tested, so it only just survives
+Bonferroni 0.05/20=0.0025). Every 0.55-0.90 cell is noise (p>0.4). The loose
+`>=1bps & <=0.55` cell (+21.9%) is p=0.098 = NOISE.
+
+**⛔ AND THE SURVIVOR DIES ON ROBUSTNESS.** Per-day breakdown of the qualifying
+events: `08-07 0/3 · 08-08 0/4 · 08-11 0/2 · 08-12 1/6 · **08-13 13/18** · 08-16 1/1`.
+**13 of 15 wins are ONE DAY.** Ex-08-13: **2/16 (12.5%) vs ~23% breakeven = losing.**
+The events are also mostly asks of **0.001-0.01 at tl=3s** — tenth-of-a-cent lottery
+tickets on the side the market has already settled against, i.e. exactly the
+cheap-tail overshoot that [[thierrax1-leaderboard]] already refuted.
+
+**VERDICT: no dedicated dip lane.** `PM_TE_MIN_ASK=0.55` should STAY — the only
+"significant" cell lives below it and is one day of noise. The genuine version of
+this idea is already deployed: the ordinary recon firing LATE with a decisive
+margin, which is what §37's unconditional delay now forces. Cheap entries get
+pushed into the tl<=20 lane automatically.
+
+⚠️ **Re-test only when Chainlink accumulates.** The archive carries Binance only
+(0.46 bps margin error, §36) and cheap bars ARE near-ties — precisely where that
+error corrupts the side call. The archive therefore CANNOT settle the cheap bands
+either way; the day-concentration is what rejects it, not the proxy. With ~3-4
+weeks of recorded `cl` this becomes answerable properly.
