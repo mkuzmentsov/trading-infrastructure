@@ -1362,3 +1362,72 @@ an individual clip. It makes BULK presign cheap: a 13-price x 2-token ladder is
 ~26 signatures ~= 212 ms today vs ~2 ms with coincurve — which matters only if
 presigning ever runs late in a bar. The 2026-07 baseline's "EIP-712 sign 10ms
 warm" is explained by this same fallback.
+
+---
+
+## §36 — BINANCE-LEAD: the relay is the only exploitable asymmetry left (2026-08-22)
+
+### ⚠️ CORRECTION to §32/§33 — the Binance proxy is ~4x BETTER than I claimed
+
+§32/§33 said "53.4% of bars cannot be labelled by the proxy" from a **1.83 bps**
+residual. That number was the residual of **endpoint RETURNS** and is the wrong
+statistic: both the strike AND the final TWAP are 59-tick AVERAGES, so per-tick
+noise largely cancels. Measured directly against real Chainlink (18.5h, 60,349
+1Hz ticks, btc):
+
+* debiased per-tick residual C(t) vs B(t): **std 1.053 bps**
+* residual autocorrelation 0.507 @1s -> 0.083 @5s -> 0.026 @10s (near-white
+  beyond ~5s, so averaging genuinely does cancel it)
+* ⭐ **per-bar margin reconstruction error: std 0.460 bps** (mean|e| 0.359, p90 0.726)
+* ⭐ **side disagreement Binance vs Chainlink: 5/193 bars = 2.6%**
+* bars with |margin| below the reconstruction error: **3.1%** (this window;
+  ~10-15% using the archive's flatter margin distribution — NOT 53%)
+
+⇒ Offline research on the Binance-only archive is far more valid than §32 stated.
+The `cl` capture is still right (it removes the last doubt), but do not discount
+archive results as unlabelable.
+
+### Relay delay, measured from real cl_ts
+
+`wall_t - cl_ts`: **p10 1.62s, p50 2.21s, p90 2.99s, p99 45.15s**. The bot's own
+`rtds_lat` ewma (1.62s) is really the p10 — typical delay is **2.21s**, and there
+are genuine multi-second feed gaps in the tail.
+
+### The asymmetry: Binance ~0.14s vs Chainlink relay ~2.21s
+
+Every competing bot on RTDS eats the same 2.2s. Binance WS reconstructs the same
+decision to 0.46 bps ⇒ **we can compute settlement ~2.07s before the RTDS field.**
+
+Measured value of freshness (`/tmp/freshsim.py` pattern — same price source, ONLY
+the info horizon differs, so the delay effect is isolated):
+
+| coin | gate | FRESH win% | DELAYED win% |
+|---|---|---|---|
+| btc | >=1 / >=2 bps | 91.0 / 95.9 | 90.6 / 93.2 |
+| eth | >=1 / >=2 bps | 89.7 / 92.0 | 89.1 / 90.6 |
+| sol | >=1 / >=2 bps | 91.5 / 94.6 | 90.4 / 94.4 |
+
+**Fresh wins all 6/6 comparisons** (sign test p~0.016); pooled at gate>=2bps
+**94.2% vs 93.0% (+1.2pp)**. ROI is noisy in BOTH directions (a few high-price
+outcomes dominate) — judge this on win rate, not ROI.
+
+⚠️ **What this sim CANNOT show: the race.** The archive records offers that
+EXISTED, not whether a faster competitor would have taken them first. The real
+prize of a 2.07s lead is lifting mispriced offers before the RTDS field sees the
+justification — exactly the tl<=12 lane (§33). That benefit is unquantified here
+and would need a live A/B.
+
+### On "use AI/ML" — assessed and rejected, with reasons
+
+There is nothing for a model to learn:
+* The target is **deterministic arithmetic**, not a random variable — at tl=14s
+  the side is already fixed (1 error in 864 bars, §33). A predictor cannot beat
+  99.88% on a quantity that is simply an average of ticks that already exist.
+* The one genuinely stochastic part — WHICH bars offer a cheap mispriced entry —
+  was tested and is **unpredictable**: news/macro hour (perm p=0.840), whole-bar
+  vol (p=0.101), late-reversal structure (p=0.47-0.99). No learnable signal.
+* Cross-coin/multi-asset features cannot help either: they would predict the last
+  ~11 ticks, whose total influence on the TWAP is ~0.024 bps.
+
+⇒ ML would be fitting noise on top of an already-solved arithmetic problem. The
+remaining levers are ENGINEERING (timing §33.1, freshness above), not modelling.
