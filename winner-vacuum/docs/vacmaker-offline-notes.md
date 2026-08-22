@@ -1279,3 +1279,86 @@ The 5m control is known-profitable live. Any harness scoring it NEGATIVE is brok
 After both fixes the control is positive AND monotone in the margin gate
 (79.4%/+2.67% at >=1bps -> 100%/+16.28% at >=3bps), which is the signature of a
 sound harness — the gate ordering is a free validity check, use it.
+
+**§38 — 08-22 03:10 Kyiv: FIRST FULL GATED DAY (08-21) = +$37.10,
+fleet 203-6, balance $130.78 (> pre-chop $127.74 — the −$51 chop-day
+fully recovered in one day).** Per-coin: bnb −15.50 (42-3; all 3
+losses = the single 01:05 UTC boundary-tail bar §37), btc +19.76
+(33-0), doge +9.15 (21-0), eth +6.68 (25-1), hype +9.41 (26-0), sol
+−1.95 (22-1), xrp +9.55 (34-1). Regime: vol 10-90 nearly all day —
+the exact regime that produced −$51 on 08-20 pre-gate. Cumulative
+DELAY ledger since deploy (31h): 209 delays → 98 late-fires (~97W-1L,
+the one loss = xrp est-decay §23 entry), 103 decays-to-no-fire (mostly
+dear-ask forfeits worth pennies each), 7 saves (~$40 of avoided
+wrong-side losses incl hype −4.4bps@0.76 and btc @0.80). The A/B
+verdict at day 1 is unambiguous: the delay converts the early lane's
+flip risk into (a) late entries that keep winning and (b) decays that
+are cheap where wrong and free where the ask was dear. Open watch
+items unchanged: doge (20 forfeits/0 saves) and sol (19/0) per-coin
+exemption review on the WEEK ledger, not before; late-loss residue
+(est decays to just above late thresh) accepted.
+
+---
+
+## §35 — LATENCY: Kyiv laptop vs Helsinki pod, measured 2026-08-22
+
+Tool: **`winner-vacuum/tools/latcmp.py`** (read-only, no creds/orders — safe
+anywhere, unlike `tools/latprobe.py` which places real probe orders). Run the
+SAME file both ends: `python3 winner-vacuum/tools/latcmp.py [cold|warm|cpu|all]`
+and `kubectl exec -i -n every-tick-single <pod> -- python3 - < ...latcmp.py`.
+
+Vantage points verified: pod on `hetzner-k3s-cluster-pool-workers-finland-worker1`,
+egress `204.168.145.107` = Hetzner **Helsinki, Finland**; laptop egress
+`62.244.51.144` = Lucky Net, **Kyiv, Ukraine**.
+
+**NETWORK — pod wins everywhere:**
+
+| metric | Kyiv laptop | Helsinki pod | pod better by |
+|---|---|---|---|
+| CLOB **warm** p50 | 62.1 ms | **44.9 ms** | 17.2 ms |
+| CLOB **warm** p90 | 72.1 ms | **50.0 ms** | 22.1 ms |
+| CLOB **warm** p99 | 106.5 ms | **92.3 ms** | 14.2 ms |
+| CLOB cold p50 | 107.7 ms | 90.4 ms | 17.3 ms |
+| TLS handshake p50 | 29.8 ms | 10.3 ms | 19.5 ms |
+| gamma warm p50 | 12.7 ms | 7.4 ms | 5.3 ms |
+| RTDS host p50 / p90 | 123.6 / 192.8 ms | 100.0 / 107.6 ms | 23.6 / 85 ms |
+
+(Warm p50 44.9ms matches the 2026-07 Helsinki baseline of ~50ms — stable.)
+
+**CPU — laptop wins, decisively:**
+
+| metric | Kyiv laptop | Helsinki pod |
+|---|---|---|
+| sha256 200k iters | 53.4 ms | 335.0 ms (**6.3x slower**) |
+| secp256k1 sign | 0.07 ms | 8.16 ms (**117x slower**) |
+
+⭐ **HOW TO READ IT.** The dominant term is NEITHER: the bot's own recorded
+`rtds_lat` p50 = **1.62 SECONDS** (Polymarket's relay), ~95x the location gap and
+identical from anywhere. So **location cannot buy signal accuracy** — you cannot
+compute a better TWAP from Helsinki. What the 17-22 ms buys is the **RACE to lift
+a mispriced offer**: every bot sees the same tick at the same time, so the round
+trip decides who fills. That is exactly the tl<=12 lane (§33) where he holds
+2,583 clips to our 138.
+
+**Jitter matters more than the median** for a T-14s strategy — tail latency is what
+drops fills: RTDS laptop 123.6 -> 192.8 (69 ms spread) vs pod 100.0 -> 107.6
+(7.6 ms). The pod is ~9x more consistent.
+
+**Kyiv is NOT geoblocked** (CLOB /time and /markets both 200 from the laptop), so
+the laptop is viable for emergency MANUAL intervention — just not competitive
+execution. Contrast the known-blocked list in [[latency-execution]] (US/DE/UK/FR/
+BE/NL/PL/SG give 403 on POST /order).
+
+### ⚠️ ACTIONABLE: the pod is missing `coincurve`
+
+The 117x signing gap is **not CPU — it is a missing native library.** The pod has
+no `coincurve`, so `eth_keys` falls back to `NativeECCBackend` (pure Python):
+8.16 ms/signature vs 0.07 ms with the laptop's `CoinCurveECCBackend`. Adding
+`coincurve` to the generic-crypto-image is a free ~117x win on signing.
+
+**Honest impact bound: this is NOT on the fire path.** `execution/fastclient.py`
+presigns at bar start and `fire_presigned()` only POSTs, so it will NOT speed up
+an individual clip. It makes BULK presign cheap: a 13-price x 2-token ladder is
+~26 signatures ~= 212 ms today vs ~2 ms with coincurve — which matters only if
+presigning ever runs late in a bar. The 2026-07 baseline's "EIP-712 sign 10ms
+warm" is explained by this same fallback.
