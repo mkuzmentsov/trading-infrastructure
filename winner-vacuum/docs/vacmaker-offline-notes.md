@@ -1431,3 +1431,50 @@ There is nothing for a model to learn:
 
 ⇒ ML would be fitting noise on top of an already-solved arithmetic problem. The
 remaining levers are ENGINEERING (timing §33.1, freshness above), not modelling.
+
+---
+
+## §37 — TIMING FIX LIVE: the vol CONDITION removed, the DELAY kept (2026-08-22 14:48 UTC)
+
+**⚠️ CORRECTION to §33.** §33 said "we put 16% of clips beyond tl=30 and the 31-62
+band loses money". That measured the LEGACY era. Split by day, ALL tl>30 clips are
+08-15..08-17 (81.8% / 61.5% / 35.0%) and **ZERO from 08-18 onward** — v3 whale mode
+went live 08-17 14:45. The tl>30 lanes were already gone; option §33.1-3 was moot.
+Confirmed in code: `whale_loop` is gated (3,30], `eval_loop` <=EVAL_TL(28),
+`lock_loop` 2.5-5s, `snipe_loop` post-close. Nothing can fire at tl=53.
+
+**The REAL picture, current era only (08-18+, 1,369 clips, venue truth):**
+
+| band | US clips | win | ROI | US PnL | HIM win | HIM ROI |
+|---|---|---|---|---|---|---|
+| tl<=6 | 18 (1.3%) | 100% | +12.68% | +$17.50 | 99.2% | +0.70% |
+| tl 7-12 | 112 (8.2%) | 100% | +4.71% | +$39.19 | 99.0% | +0.33% |
+| tl 13-20 | 421 (30.8%) | 98.3% | +3.29% | +$102.63 | 98.7% | +0.13% |
+| **tl 21-30** | **818 (59.8%)** | **95.6%** | **-1.22%** | **-$74.51** | 99.0% | +0.41% |
+
+⭐ **60% of our volume sat in the ONLY band that loses.** Other three = +$159.32.
+Loss is BROAD not tail: ex-worst-3-bars still -$19.87; 36 losing clips cost
+-$258.03 while 782 winners made only +$183.52 (**~30:1 payoff asymmetry — win
+COUNT is a useless metric here**). Inside the band only >=0.98 survives:
+px<0.94 -$30.91, px 0.94-0.98 -$49.37, px>=0.98 **+$5.77**. Per coin the sub-0.98
+slice is negative in **5/7** (bnb -43, sol -32, eth -33; doge +10, hype +20 run
+counter — NOT carved out, selecting coins on 4.5d is overfitting).
+
+**DEPLOYED (user-approved): `pmTeWhaleVolDelayVol` 10 -> 0.01 on all 7 pods**,
+`VOL_DELAY_TL` unchanged at 20. Rationale: ambient vol separates accuracy by ~0
+while margin separates by up to 14pp (§33), so conditioning the delay on vol was
+gating on noise — the CONDITION is removed, the DELAY kept. It is a **delay, not a
+skip** (`twapedge.py:1087` `continue`s the 0.4s scan, so the clip fires once
+tl<=20), so volume is deferred rather than dropped. Note `THRESH_SLOPE=0.035`
+already ramps the gate (0.5bps at tl<=14 -> 1.06 at tl=30) and was ALREADY live
+across this data — 1.06 bps is simply too loose for a band the curve puts at 90.6%.
+
+**EXPECT: fewer clips, fewer absolute wins, FEWER losses, higher win rate, better
+PnL.** Do not read a drop in win count as regression — that is the mechanism.
+Baseline to compare: +$84.81 net over 08-18..08-22 (~$19/day). Revert = set
+`pmTeWhaleVolDelayVol` back to `"10"` and redeploy. Next lever if wanted:
+`PM_TE_THRESH_SLOPE` 0.035 -> ~0.09.
+
+**⚠️ INFRA RISK FOUND: `src/twapedge.py` and `src/poolfarm.py` were UNTRACKED** —
+the live strategy source existed only on the laptop + in the containers (pod md5
+== local md5, e148df87...). No secrets in either. Now committed.

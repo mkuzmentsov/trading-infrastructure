@@ -1,0 +1,56 @@
+# sol-vacmaker LIVE — TWAP-taker lane (VACMAKER.md; wallet 0xefdf6abc…).
+# ONE strategy, per-coin operating point picked by harvest (docs/vacmaker-
+# offline-notes.md). sol = late "whale cell": eval_tl 14s, coverage ~0.81
+# at entry (floor 0.7; rule: floor < (62-tl)/59 or the bot never fires),
+# band 0.55-0.99. Early tls measured NEGATIVE on sol (tl35 harvest: 2 misses
+# on buyable bars erased 15 wins). Renamed from sol3 2026-08-15 (user:
+# no version suffixes); prior sol3 events → data/sol3-final-20260815.jsonl.
+# ⚠ deploy.sh live applies crypto.secret.yaml LAST — its caps override the
+# ones below (currently $5/order $50/day there; unification pending).
+botName: sol-vacmaker
+
+bot:
+  coin: sol
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "8"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "28"
+  pmTeLiveInflightUsd: "20"
+  pmTeLiveSize: "9"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.99"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.5"
+  pmTeWhaleStart: "30"
+  # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
+  # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
+  # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
+  # vol separates accuracy by ~0 (margin separates by up to 14pp), so gating
+  # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
+  # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
+  pmTeWhaleVolDelayVol: "0.01"
+  pmTeWhaleLadderUsd: "16"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0.99"
+  pmTeSnipeLiveUsd: "8"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "90"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: sol/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi

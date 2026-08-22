@@ -1,0 +1,54 @@
+# bnb-vacmaker LIVE — TWAP-taker lane (VACMAKER.md; wallet 0xefdf6abc…).
+# ONE strategy, per-coin operating point picked by harvest (docs/vacmaker-
+# offline-notes.md). bnb = early cell: eval_tl 40s, coverage ~0.37 at entry
+# (floor 0.25; rule: floor < (62-tl)/59 or the bot never fires), band
+# 0.55-0.98. Harvest 11/11 buyable correct; 08-15 live 11W/0L. Known cost:
+# FAK no-fills when the seen ask vanishes in the ~0.6s post path (2-3/day).
+# This file mirrors deployed helm values.
+botName: bnb-vacmaker
+
+bot:
+  coin: bnb
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "8"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "28"
+  pmTeLiveInflightUsd: "25"
+  pmTeLiveSize: "9"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.98"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.5"
+  pmTeWhaleStart: "30"
+  # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
+  # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
+  # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
+  # vol separates accuracy by ~0 (margin separates by up to 14pp), so gating
+  # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
+  # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
+  pmTeWhaleVolDelayVol: "0.01"
+  pmTeWhaleLadderUsd: "16"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0.99"
+  pmTeSnipeLiveUsd: "8"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "90"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: bnb/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi

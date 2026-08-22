@@ -1,0 +1,58 @@
+# eth-vacmaker LIVE — TWAP-taker lane (VACMAKER.md; wallet 0xefdf6abc…).
+# ONE strategy, per-coin operating point picked by harvest (docs/vacmaker-
+# offline-notes.md). eth = the star early cell: eval_tl 50s, coverage ~0.20
+# at entry (floor 0.12; rule: floor < (62-tl)/59 or the bot never fires),
+# band 0.55-0.98. eth's partial-window reads persist (26W/0L across the
+# harvest + 08-15 live incl. sub-0.90 cheap entries) — this is coin
+# behavior, NOT transferable: same cell measured negative on sol/doge.
+# ⚠ eth stale-book incident 08-15: PM WS went event-starved 4h (heartbeat
+# events=2, quote age 150s) → 6 FAKs killed on phantom asks, sim "wins"
+# were fiction. If eth goes quiet, CHECK THE HEARTBEAT EVENT RATE FIRST;
+# fix = pod restart. This file mirrors deployed helm values.
+botName: eth-vacmaker
+
+bot:
+  coin: eth
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "8"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "28"
+  pmTeLiveInflightUsd: "25"
+  pmTeLiveSize: "9"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.98"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.5"
+  pmTeWhaleStart: "30"
+  # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
+  # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
+  # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
+  # vol separates accuracy by ~0 (margin separates by up to 14pp), so gating
+  # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
+  # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
+  pmTeWhaleVolDelayVol: "0.01"
+  pmTeWhaleLadderUsd: "16"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0.99"
+  pmTeSnipeLiveUsd: "8"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "90"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: eth/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi
