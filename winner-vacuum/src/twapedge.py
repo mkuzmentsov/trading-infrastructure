@@ -1086,14 +1086,19 @@ class TwapEdge:
                 continue
             if WHALE_VOL_DELAY_VOL > 0 and tl > WHALE_VOL_DELAY_TL:
                 vol = self._ambient_vol()
-                if vol is not None and vol >= WHALE_VOL_DELAY_VOL:
+                # vol is None for ~4 bars after a restart; an unknown regime
+                # must DELAY, not fire — the None leak let eth ladder 3 early
+                # clips 6 min after the 08-22 redeploy (−$18.40) and doge lose
+                # a bar on 08-20. Delay is the deployed default; only a
+                # measured vol BELOW the threshold may re-open the early lane.
+                if vol is None or vol >= WHALE_VOL_DELAY_VOL:
                     # this tick would have fired — record the first blocked
                     # fire per bar so the delayed-vs-fired A/B stays measurable
                     if not bar.whale_delayed:
                         bar.whale_delayed = True
                         _event("PF_TE_WHALE_DELAY", bar=bar.ws, side=side,
-                               ask=ask, est_bps=round(tw, 3),
-                               tl=round(tl, 1), vol=round(vol, 2))
+                               ask=ask, est_bps=round(tw, 3), tl=round(tl, 1),
+                               vol=None if vol is None else round(vol, 2))
                     continue
             bar.whale_last = now
             await asyncio.to_thread(self._whale_fire, bar, side, ask,
