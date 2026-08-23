@@ -12,6 +12,7 @@ declaring them missing.** (user directive 2026-08-13)
 | Resting BIDS on 5m (pairs, rewards, any exec) | ⛔ DEAD (re-confirmed 08-17 WITH the $1M rewards counted) | in-band 50sh two-sided: singles −$1,300/d vs rewards+rebates+pairs ≈ +$700/d, all 7 coins; velocity/level gates CANNOT dodge the toxic fill (43/48 loser-singles fill at flat lead-velocity) | [strat-rewfarm](strat-rewfarm.md) |
 | 15m in-band reward-farm | ⛔ negative (08-17) | btc −$205/d, eth −$130/d at 50sh; 3-4× better than 5m but the wall stands | [strat-rewfarm](strat-rewfarm.md) |
 | **4h reward-farm (rewfarm)** | 🟡 PILOT — paper btc+xrp since 08-17 23:33 | 4h in-band field ~EMPTY → 50sh two-sided ≈ 50-77% of alt pools ($333/d) & 5-15% of btc ($1,667/d); oscillation completes pairs (1h mechanism); AUG-ONLY program | [strat-rewfarm](strat-rewfarm.md) |
+| **Mean-reversion bot: buy the losing side for the occasional reversion** | ⛔ CLOSED 08-23, §42 — the biggest test ever run here (376k obs, 28.4k bars, 19d, 7 coins, NO estimator) | the dog is over-priced at EVERY price and EVERY moment: −15.7% of stake pooled (n=119,408; true win 15.14% vs a 0.1795 ask), every coin negative, 18/19 days negative; conditioning on the crush or on a violent move makes it WORSE (the intra-bar path is momentum); scalping the retrace −13…−22%; the best cell anywhere is −3.8%. Fair 0.1514 vs ask 0.1795 vs bid 0.1486 ⇒ even a PERFECT maker fill earns +1.8% gross, erased by the −0.47c resting wall | [strat-reversion](strat-reversion.md) |
 | **"Buy the dip" / the opposite of vacmaker (buy the cheap side, hold to redemption)** | ⛔ nothing to deploy (08-23, §41) | the lane is ALREADY live (`MIN_ASK=0.55`) and IS the profit centre (ask 0.75-0.90 = +3.98% ROI, +$34.54 of the fleet's +$50.85); going below 0.55 is unreachable — a displayed ask <=0.75 fills **11%** of the time and the fills are the WRONG ones (71% side-correct vs **100%** on the bars we hammered 11x and never filled); selling instead of redeeming gives up 24.9c/sh | [strat-dipbuy](strat-dipbuy.md) |
 | Buying the mid-bar "favorite" on dips (maker) | ⛔ refuted 08-17 | 507 fills, 63% win, −6.2¢/sh — \|lead\|≥1bps is already priced into the mid | [strat-rewfarm](strat-rewfarm.md) §2 |
 | 15m batch pairs | ⛔ stopped | live mix pair +$2.50 vs residual −$5.51; completion too low | [strat-poolfarm-15m](strat-poolfarm-15m.md) |
@@ -168,7 +169,7 @@ DIRECTORY `data/mrec/<coin>-mrec15m/`. A wrong glob = silent zero
 [strat-poolfarm-15m](strat-poolfarm-15m.md) · [strat-preopen](strat-preopen.md) ·
 [strat-rewfarm](strat-rewfarm.md) ·
 [strat-ask-ladders](strat-ask-ladders.md) · [strat-mm-flip](strat-mm-flip.md) ·
-[strat-taker-rebates](strat-taker-rebates.md) · [strat-openmm-5m](strat-openmm-5m.md) · [strat-dipbuy](strat-dipbuy.md) · ⭐[maker-program-2026-08](maker-program-2026-08.md) (COMPLETE RECORD) · [../MINTSALVAGE.md](../MINTSALVAGE.md) ·
+[strat-taker-rebates](strat-taker-rebates.md) · [strat-openmm-5m](strat-openmm-5m.md) · [strat-dipbuy](strat-dipbuy.md) · [strat-reversion](strat-reversion.md) · ⭐[maker-program-2026-08](maker-program-2026-08.md) (COMPLETE RECORD) · [../MINTSALVAGE.md](../MINTSALVAGE.md) ·
 [../TWAPEDGE.md](../TWAPEDGE.md) · [../RESEARCH-LOG.md](../RESEARCH-LOG.md) (chronological ledger)
 
 ## 7. Program accounting

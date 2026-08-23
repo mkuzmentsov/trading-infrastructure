@@ -1633,3 +1633,43 @@ the $15/day halt, so it needs a user risk decision, not a research one.
 **0.86** (mean give-up 24.9¢/sh vs redemption) — the wide book that creates the
 entry never closes before the bell — and redemption returns capital ~2 min
 after close anyway.
+
+## §42 — THE MEAN-REVERSION BOT: CLOSED ON PRICE, NOT ON EXECUTION (2026-08-23 ~18:0x Kyiv)
+
+User: ignore the running bots, build the opposite of vacmaker — buy the dip and
+collect the occasional reversion. Full write-up: **[strat-reversion.md](strat-reversion.md)**,
+tool `tools/revcal.py`. Nothing deployed.
+
+**The test** (why it settles the question): local archive 07-30→08-17, 7 coins,
+**28,422 bars / 376,002 (bar × time) observations** on a 20-point grid from
+T−270 to T−3. Book prices are the venue's, `RES` is the venue's own label ⇒
+**no estimator, no proxy, no fill model, no fee assumed** (gross results).
+
+**The answer:** the losing side is over-priced everywhere. Pooled over the
+tradeable region (dog 0.05-0.35, tl 30-180, n=**119,408**): true win rate
+**15.14%** [14.94, 15.34] against a mean ask of **0.1795** = **−15.7% of stake**.
+Every coin negative (eth −8.4 … hype −58.9), **18 of 19 days** negative.
+
+⭐ **The premium is a function of TIME, not of price**: −25…−60% of stake in the
+settlement window, decaying to −1…−6% (≈ the vig) by T−240. §27 measured the
+worst region of the curve and §29 one cell of it; this is the whole surface.
+
+**Every steelman fails too:**
+- the literal dip (bucket by how far the dog just fell, ~150 cells): none
+  positive, deeper drops usually WORSE than shallow ones;
+- violence (dog after a ≥3-5× median move against it): worse still — the
+  intra-bar path is momentum, matching the July underlying study;
+- scalp instead of hold (exit at the first bid ≥ entry+3/5/10c): **−13…−22%**,
+  only 13-31% of dogs ever retrace far enough;
+- best cell anywhere (tl≥180, dog 0.08-0.22, n=20,782): **−3.8%**, train/test
+  stable, −9.6% with the code's assumed taker fee.
+
+**The closing arithmetic:** fair **0.1514** | ask **0.1795** (+18.6%) | bid
+**0.1486** (−1.8%). A taker needs 3c of price to come to him; a *perfect* maker
+fill at the dog bid earns **+1.8% gross**, which the measured −0.47c/fill
+resting adverse selection erases. The reversion premium is smaller than the
+spread you must cross to reach it.
+
+**Together with §41 the "buy cheap" family is closed from both ends:** the cheap
+side we are RIGHT about is unfillable (11% match rate), and the cheap side we
+CAN fill is the side we are wrong about.
