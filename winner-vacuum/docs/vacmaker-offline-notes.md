@@ -1578,3 +1578,58 @@ pushed into the tl<=20 lane automatically.
 error corrupts the side call. The archive therefore CANNOT settle the cheap bands
 either way; the day-concentration is what rejects it, not the proxy. With ~3-4
 weeks of recorded `cl` this becomes answerable properly.
+
+## §41 — THE DIP LANE ON CHAINLINK TRUTH + THE TAKER-SIDE WALL (2026-08-23 17:0x Kyiv)
+
+(§39/§40 are reserved by the babysit session — 08-22 blind-window fix and the
+08-22 late-lane replay, both logged in RESEARCH-LOG.)
+
+User asked to investigate deploying "the opposite of vacmaker" — a dip-buy bot
+that takes the cheap side and sells / holds to redemption. Full write-up:
+**[strat-dipbuy.md](strat-dipbuy.md)**. Tools added: `tools/dipcl.py`
+(Chainlink-truth sim, the re-test §38 deferred) and `tools/fillphys.py`
+(live fill physics from the pods' logs). No code deployed, no bot touched.
+
+Three findings, in order of importance:
+
+1. ⭐⭐ **TAKER-SIDE ADVERSE SELECTION, MEASURED.** Per bar, of the cheap asks
+   the whale loop went for: bars we filled ≤0.75 were side-correct **71.4%**
+   (n=42); bars we hammered a mean of **11.5 times and never filled** were
+   side-correct **100%** (n=22). Same shape at 0.75-0.90 (89.7% vs 100%).
+   FAK match rate falls with price: >0.98 **75%**, 0.95-0.98 44%, 0.75-0.90
+   50%, **0.55-0.75 11.2%** (295 attempts) — with `LIVE_ERR`=0, price above
+   the seen ask, and 9sh against 40-50sh displayed. The cheap offer that is
+   still there when our order lands is the one we are wrong about.
+   *This is the maker program's resting-order wall, on the taker side.*
+   ⚠️ ledger #16 applies to the 71.4-vs-100 comparison: a bar only collects 11
+   attempts while the signal keeps holding, and a holding signal wins, so the
+   100% is an upper bound. Unconditioned and sufficient on their own: the 11.2%
+   match rate, and cheap fills earning +2.1% live where the sim says +15.8%.
+   The archive-side test (win rate split by whether the ask survived 1s) agrees
+   in 0.55-0.90 (77.8 vs 100, 80.0 vs 91.7) but is n≈10/cell = inconclusive.
+2. ⭐ **The book is one book: `ua ≡ 1−db`, `uas ≡ dbs` in 100% of rows** (btc
+   31,534 · eth 30,553 · doge 31,893). Buying UP at 0.60 IS hitting a DOWN bid
+   at 0.40 — a cheap ask is an informed maker's bid, pulled the instant our
+   signal becomes visible. (Symmetrically: our 0.99 fills exist because the §27
+   1¢-lottery bidders do NOT pull.) Offline sims that treat a displayed cheap
+   ask as takeable overstate that band's ROI ~7× — bug ledger #23.
+3. **§38's answer holds, and the Chainlink re-test it asked for is now done**
+   (2,603 bars, V1 recon-vs-RES 99.54%, placebo −89.7%): ROI rises monotonically
+   as the ask falls (0.40-0.55 → +75.6% ROI, p=0.0003), i.e. the mispricing is
+   REAL in the data and merely unreachable. Supply ≈17 decisive cheap bars/day
+   fleet-wide, 23 of 30 events on one high-vol day.
+
+**What this says about the live fleet (do not lose this):** the cheap band is
+where the money is — `ask 0.55-0.90 & tl≤20` is n=70, **88.6%** win vs 79.1%
+breakeven, **+11.24% ROI**, P(binom)=0.029, leave-one-day-out +9.3…+14.9% on
+all 5 days, 5/7 coins positive. It is ~14 clips/day ≈ +$10/day and it is
+**already deployed** — it is what `MIN_ASK=0.55` + the §37 delay buy. The
+>0.98 sink is 68% of the stake for +0.21%. The one open lever is sizing that
+cell above its single 8-9sh clip (`WHALE_LADDER_MIN_ASK=0.94` caps it today);
+§39.5 in the strategy doc has the risk math — one 16sh loss is −$12.8 against
+the $15/day halt, so it needs a user risk decision, not a research one.
+
+**Sell vs hold:** hold. On winning cheap entries the best bid at T−3 is p50
+**0.86** (mean give-up 24.9¢/sh vs redemption) — the wide book that creates the
+entry never closes before the bell — and redemption returns capital ~2 min
+after close anyway.

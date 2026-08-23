@@ -185,6 +185,22 @@ if the verdict changed. A sim whose result isn't written down didn't happen.
     all-bars accuracy overstates a taker strategy by ~5pp in the weak cell.
     Always cut EV on the fills-possible subset.
 
+## Bug #23 — a displayed cheap ask is NOT takeable (the binary book is ONE book)
+
+2026-08-23, §41. `ua ≡ 1 − db` and `uas ≡ dbs` in **100%** of recorder rows
+(btc 31,534 · eth 30,553 · doge 31,893) — the UP ask IS the complement of the
+DOWN bid. So "buy the dip at 0.60" means hitting a resting DOWN bid at 0.40,
+i.e. taking the other side of an informed maker who pulls the moment the move
+that creates our signal is visible. Live proof: FAK match rate **11.2%** at a
+seen ask of 0.55–0.75 (295 attempts, `LIVE_ERR`=0, price paid ABOVE the seen
+ask, 9sh against 40–50sh displayed) vs **75%** at >0.98. Any sim that books a
+fill because the snapshot showed an ask overstates the cheap bands ~7×
+(simulated +15.8% ROI for 0.55–0.75 vs +2.1% live).
+**Prevention:** price-band results must be discounted by the band's MEASURED
+live match rate before they are called an edge; `tools/fillphys.py` prints it.
+Corollary for the >0.98 lane: those fills exist because the §27 1¢-lottery
+bidders on the loser side do NOT pull.
+
 ## Bug #13 — the STRIKE is the TWAP at bar open, not the spot at bar open
 
 5m/15m markets settle by comparing the final TWAP-60 to a strike that is itself
