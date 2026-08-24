@@ -14,7 +14,7 @@ bot:
   coin: xrp
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "15"
+  liveMaxDailyLossUsd: "999"
   liveMaxOrderUsd: "8"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
