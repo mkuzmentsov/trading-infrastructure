@@ -146,7 +146,11 @@ def slim(m: dict) -> dict:
         "rewardsMaxSpread": _f(m.get("rewardsMaxSpread")),
         "orderMinSize": _f(m.get("orderMinSize"), 5.0),
         "resolutionSource": (m.get("resolutionSource") or "")[:200],
-        "description": (m.get("description") or "")[:600],
+        # Keep the FULL description. PM's operative narrowing clauses (the ones
+        # that make a market resolve against its plain-language title) almost
+        # always sit in paragraphs 3-6; a 600-char cut hid them on 13.5k of
+        # 14.8k markets and silently crippled the resolution-text scan.
+        "description": m.get("description") or "",
     }
 
 

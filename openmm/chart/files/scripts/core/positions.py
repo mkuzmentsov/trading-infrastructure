@@ -1,0 +1,163 @@
+"""
+In-memory position and open sell-order state.
+
+A "position" is a bought YES/NO token we haven't yet exited.
+A "sell order" is a limit GTC order placed to exit the position.
+A "pending buy" is a GTC limit buy order that hasn't been confirmed filled yet.
+
+Only one position is tracked at a time (one active market).
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class Position:
+    condition_id: str
+    token_id: str
+    direction: str           # "UP" or "DOWN"
+    shares: float            # fractional shares bought (Polymarket fills at 0.0001 precision)
+    entry_price: float       # size-weighted avg fill price
+    entry_time: float        # time.time() at fill
+    entry_edge: float = 0.0
+    entry_p_up: float = 0.5
+    entry_seconds_left: int = 0
+    entry_btc_price: float = 0.0
+    entry_bar_open: float = 0.0
+    peak_bid: float = 0.0
+
+    # Take-profit profit-lock state
+    take_profit_armed: bool = False   # True once TP has triggered at least once
+    take_profit_floor: float = 0.0    # minimum allowed exit price after TP arms (never below break-even)
+
+    # Sell-order state (filled in after we post a GTC limit sell)
+    sell_order_id: Optional[str] = None
+    sell_price: float = 0.0  # price we're offering
+    hold_to_expiry: bool = False  # True when position is too small to sell via limit order
+    exit_reason: str = ""
+    averaged: bool = False
+
+
+@dataclass
+class PendingBuy:
+    order_id: str
+    condition_id: str
+    token_id: str
+    direction: str       # "UP" or "DOWN"
+    shares: float
+    price: float
+    placed_at: float     # time.time() when placed
+    edge: float = 0.0
+    p_up: float = 0.5
+    seconds_left: int = 0
+
+
+@dataclass
+class PositionStore:
+    position: Optional[Position] = None
+    pending_buy: Optional[PendingBuy] = None
+    held_positions: list[Position] = field(default_factory=list)
+
+    def has_position(self) -> bool:
+        return self.position is not None
+
+    def has_pending_buy(self) -> bool:
+        return self.pending_buy is not None
+
+    def open(
+        self,
+        condition_id: str,
+        token_id: str,
+        direction: str,
+        shares: int,
+        entry_price: float,
+        entry_time: float,
+        entry_edge: float = 0.0,
+        entry_p_up: float = 0.5,
+        entry_seconds_left: int = 0,
+        entry_btc_price: float = 0.0,
+        entry_bar_open: float = 0.0,
+    ) -> None:
+        self.position = Position(
+            condition_id=condition_id,
+            token_id=token_id,
+            direction=direction,
+            shares=shares,
+            entry_price=entry_price,
+            entry_time=entry_time,
+            entry_edge=entry_edge,
+            entry_p_up=entry_p_up,
+            entry_seconds_left=entry_seconds_left,
+            entry_btc_price=entry_btc_price,
+            entry_bar_open=entry_bar_open,
+            peak_bid=entry_price,
+        )
+
+    def open_pending_buy(
+        self,
+        order_id: str,
+        condition_id: str,
+        token_id: str,
+        direction: str,
+        shares: int,
+        price: float,
+        edge: float = 0.0,
+        p_up: float = 0.5,
+        seconds_left: int = 0,
+    ) -> None:
+        self.pending_buy = PendingBuy(
+            order_id=order_id,
+            condition_id=condition_id,
+            token_id=token_id,
+            direction=direction,
+            shares=shares,
+            price=price,
+            placed_at=time.time(),
+            edge=edge,
+            p_up=p_up,
+            seconds_left=seconds_left,
+        )
+
+    def clear_pending_buy(self) -> None:
+        self.pending_buy = None
+
+    def close(self) -> None:
+        self.position = None
+
+    def park_current_position(self) -> None:
+        if self.position:
+            self.held_positions.append(self.position)
+            self.position = None
+
+    def attach_sell_order(self, order_id: str, price: float, reason: str = "") -> None:
+        if self.position:
+            self.position.sell_order_id = order_id
+            self.position.sell_price = price
+            self.position.exit_reason = reason
+
+    def clear_sell_order(self) -> None:
+        if self.position:
+            self.position.sell_order_id = None
+            self.position.sell_price = 0.0
+            self.position.exit_reason = ""
+
+    def pop_matching_position(self, condition_id: str, token_id: str = "") -> Optional[Position]:
+        if self.position and self.position.condition_id == condition_id:
+            if not token_id or self.position.token_id == token_id:
+                pos = self.position
+                self.position = None
+                return pos
+        for idx, held in enumerate(self.held_positions):
+            if held.condition_id != condition_id:
+                continue
+            if token_id and held.token_id != token_id:
+                continue
+            return self.held_positions.pop(idx)
+        return None
+
+
+# Singleton shared across modules
+pos_store = PositionStore()

@@ -1,0 +1,61 @@
+# btc-openmm — 5m two-sided MAKER pilot (winner-vacuum/docs/strat-openmm-5m.md §11).
+#
+# ⚠️ UNPROVEN. The sim's best config is +$167/day at t=+3.36 (6 coins, 19d, at
+# the REAL 190ms venue latency), but its neighbours run t=1.5-2.1, ~85% of PnL
+# is a directional residual (~$200/day std at size 50), and the reliable pair
+# engine is gone. EXPECTED PnL AT PILOT SIZE ≈ 0 ± noise.
+#
+# This run exists to measure the three things the sim structurally cannot:
+#   1. real fill rates (the sim assumed ~5% of in-band flow — bug ledger #11:
+#      doc-era fill rates NEVER transfer across a venue/regime change)
+#   2. real queue behaviour vs the calibrated 1.3-2.3s decay model
+#   3. WHETHER THE MAKER REBATE ACTUALLY CREDITS — load-bearing: without it the
+#      strategy is -$26/day. Watch PF_OM_REBATES (clob /rebates/current).
+#
+# Runs on its OWN account: signer 0xD17E…FD0a / vault 0xd632c1e1… ($168 free),
+# deliberately separate from the vacmaker fleet (0x7BbDaf… / 0xdB66d896…).
+#
+# Deploy:  cd <repo root> && source .dev-env-source
+#          cd openmm && ./deploy.sh btc paper     # plumbing
+#          cd openmm && ./deploy.sh btc live      # real money
+botName: btc-openmm
+
+bot:
+  coin: btc
+  entrypoint: openmm.py
+  # paper by default; the live credentials overlay flips these three
+  liveTrading: "false"
+  paperMode: "true"
+  dryRun: "true"
+  loopIntervalSecs: "300"
+  prediscoveryLeadSecs: "30"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+  # ── strategy operating point (researched; do not tune without data) ────────
+  pmOmSize: "5"            # venue orderMinSize; ~$2.50/order
+  pmOmBandLo: "0.44"       # coin-flip band: survivable AND max rebate (p(1-p))
+  pmOmBandHi: "0.56"
+  pmOmTlHi: "297"          # skip first ~3s (tl>297 is -0.405 c/sh: rotation sweep)
+  pmOmTlLo: "240"          # first minute only (+0.411 c/sh vs -0.297 mid-bar)
+  pmOmImb: "0.2"           # THE gate: -1.27 c/sh thin queue vs +2.64 thick
+  pmOmImbHyst: "0.15"
+  pmOmFv: "0.08"
+  pmOmPullBps: "0.1"
+  pmOmPullWin: "0.5"
+  pmOmMaxInvSh: "20"
+  pmOmLoop: "0.10"        # effective reaction = loop + ~91ms network
+  # anti-thrash — MEASURED (backtest/mm5m/minrest.py), not guessed:
+  # 1.0/0.5 -> +1.946 c/sh t=+3.36 ; 0/0 (thrash) -> +1.669 ; 1.5/1.0 -> +1.387
+  pmOmMinRest: "1.0"
+  pmOmCooldown: "0.5"
+
+  # ── hard safety caps ──────────────────────────────────────────────────────
+  quoteNotionalUsd: "2.5"
+  liveMaxOrderUsd: "3"
+  liveMaxDailyLossUsd: "10"    # realized daily loss -> cancel all + sticky halt
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+
+persistence:
+  enabled: true
+  size: 2Gi
