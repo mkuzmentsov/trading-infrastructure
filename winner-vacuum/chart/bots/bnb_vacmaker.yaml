@@ -28,6 +28,7 @@ bot:
   pmTeMinAsk: "0.55"
   pmTeMinCoverage: "0.5"
   pmTeWhaleStart: "30"
+  pmTeWhaleVolDelayTl: "14"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
   # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
   # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
