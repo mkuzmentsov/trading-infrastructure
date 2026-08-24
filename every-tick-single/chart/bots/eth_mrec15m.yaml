@@ -1,0 +1,25 @@
+# eth-mrec15m — 100ms multi-market recorder for the 15-MINUTE eth up/down
+# series (eth-updown-15m-<ts>). Same schema/roles as the 5m/1h mrec
+# (cur-until-RESOLVED + next-3 pre-open, slug-tagged rows, volume + prints);
+# archives named eth-mrec15m-*. Purpose: backtest dataset for poolfarm-15m
+# (pair-completion physics between 5m's 4% and 1h's 84%) + the maker rebate
+# (15m has rebateBps=10000; 1h has none). 2026-08-13.
+botName: eth-mrec15m
+bot:
+  entrypoint: "multi_recorder.py"
+  coin: "eth"
+  barSeconds: "900"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  snapshotMs: "100"
+  mrecAhead: "3"
+  rawLogDir: "/app/logs/raw"
+  retentionDays: "7"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
+  polymarketRtdsSymbol: "eth/usd"
+
+persistence:
+  enabled: true
+  size: 10Gi

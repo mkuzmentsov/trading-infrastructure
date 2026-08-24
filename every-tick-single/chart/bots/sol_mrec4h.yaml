@@ -1,0 +1,25 @@
+# sol-mrec4h — 100ms multi-market recorder for the 4-HOUR sol up/down series
+# (sol-updown-4h-<ts>, epoch-aligned 14400 grid). Same schema/roles as the
+# 5m/15m/1h mrec; archives named sol-mrec4h-*. Purpose: ground-truth dataset
+# for the rewfarm maker (4h markets carry Aug liquidity-rewards pools:
+# btc $1,666.67/day, sol/eth/hype/xrp $333.33/day; band 1.5c, min 50sh)
+# — no historical 4h book data existed before this. 2026-08-17.
+botName: sol-mrec4h
+bot:
+  entrypoint: "multi_recorder.py"
+  coin: "sol"
+  barSeconds: "14400"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  snapshotMs: "100"
+  mrecAhead: "3"
+  rawLogDir: "/app/logs/raw"
+  retentionDays: "7"
+  binanceWsUrl: "wss://stream.binance.com:9443/ws/solusdt@aggTrade"
+  polymarketRtdsSymbol: "sol/usd"
+
+persistence:
+  enabled: true
+  size: 5Gi
