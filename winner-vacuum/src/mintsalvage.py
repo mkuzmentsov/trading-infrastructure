@@ -110,6 +110,34 @@ def _in_session(now: float) -> bool:
 
 def lead_floor_now(now: float) -> float:
     return max(LEAD_FLOOR_BPS, SESSION_FLOOR_BPS) if _in_session(now) else LEAD_FLOOR_BPS
+
+
+# HALT WINDOW (user, 2026-08-05, after the sol -$99 reversal). The 10bps
+# session floor was NOT enough: sol reversed at lead -12.2bps, z=2.27 (1.6x
+# its requirement), floor=10 -- every gate passed and it still flipped. That
+# bar erased 2.8 days of gains. Every reversal this fleet has taken landed in
+# this window, so stop trading it outright rather than tightening further.
+# Empty string disables. Times are UTC; 12:30-16:00 UTC = 15:30-19:00 Kyiv.
+HALT_WINDOW_UTC = os.getenv("PM_HALT_WINDOW_UTC", "12:30-16:00").strip()
+# "" = every day (default). "12345" = Mon-Fri only (isoweekday digits).
+HALT_DAYS = os.getenv("PM_HALT_DAYS", "").strip()
+
+
+def _in_halt(now: float) -> bool:
+    if not HALT_WINDOW_UTC or "-" not in HALT_WINDOW_UTC:
+        return False
+    try:
+        a, b = HALT_WINDOW_UTC.split("-", 1)
+        ah, am = (int(x) for x in a.split(":"))
+        bh, bm = (int(x) for x in b.split(":"))
+    except Exception:
+        return False
+    t = time.gmtime(now)
+    if HALT_DAYS and str(t.tm_wday + 1) not in HALT_DAYS:
+        return False
+    m = t.tm_hour * 60 + t.tm_min
+    lo, hi = ah * 60 + am, bh * 60 + bm
+    return (lo <= m < hi) if lo <= hi else (m >= lo or m < hi)
 # Block sales into a COLLAPSING lead: measured (42k samples, |lead|>=7 gate)
 # flip rate by the lead's move over the 10s before placement --
 #   collapsing < -3bps: 1.69% (-$0.69/fill)   fading -3..0: 0.69%
@@ -319,6 +347,7 @@ class MintSalvage:
         self.day_pnl: dict[str, float] = {}
         self.halted = False
         self.mint_tries: dict[int, int] = {}
+        self.halt_logged: set[int] = set()   # log PF_HALT_WINDOW once per bar
 
     def _save(self):
         try:
@@ -549,6 +578,16 @@ class MintSalvage:
         if bar.salv_oid or bar.aborted or tl <= 0:
             return
         if lead is None:
+            return
+        # Halt window: block NEW mints and NEW sells. Orders already resting
+        # are still watchdogged by the branch above, so nothing is abandoned
+        # mid-bar; a pair minted before the window still settles normally.
+        if _in_halt(now):
+            if bar.ws not in self.halt_logged:
+                self.halt_logged.add(bar.ws)
+                _event("PF_HALT_WINDOW", bar=bar.ws, window=HALT_WINDOW_UTC,
+                       days=HALT_DAYS or "all", lead_bps=round(lead, 1),
+                       tl=round(tl, 1))
             return
         # gated mint: the bar is approaching the sell rule -- split now so the
         # inventory exists when (if) the full gate opens a few seconds later

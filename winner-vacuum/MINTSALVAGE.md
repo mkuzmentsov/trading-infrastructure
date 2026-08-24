@@ -121,10 +121,27 @@ Flip rate by placement moment, 10 bps floor:
 | 10 s | 0.12% | +0.0088 | +$0.154 |
 | 5 s | **0.06%** | +0.0094 | **+$0.165** |
 
-Selling later is nearly free: fills are *instant matches against a standing
+~~Selling later is nearly free: fills are *instant matches against a standing
 bid* (every live fill returned `matched=True` at placement), so resting longer
-buys nothing — only exposure. **Deployed 2026-08-04 01:20: window narrowed
-from 15–45 s to ≤12 s.**
+buys nothing — only exposure.~~ **RETRACTED 2026-08-05 — see below.** Deployed
+2026-08-04 01:20 on this reasoning, window narrowed 15–45 s → ≤12 s; it
+produced a full day of zero fills and was reverted.
+
+**What the claim got wrong** (264 placements, 20 h live, scored by matching
+`PF_SALV_PLACE matched=` to the bar's `PF_SETTLE salv_fill`):
+
+| at placement | n | filled |
+|---|---|---|
+| `matched=True` (instant cross) | 57 | **100%** |
+| `matched=False` (rested) | 207 | **10%** |
+
+**27% of all fills came from RESTING orders.** The original claim was an
+artefact of only ever inspecting fills that had already matched instantly —
+survivorship in the log-reading, not in the market. Resting time is not free
+optionality to be traded away for a lower flip rate; it is a quarter of the
+revenue. Combined with §5 item 1 (late placements find `best_bid = 0`), the
+15–45 s window earns its keep twice: it catches the instant crosses *and* gives
+the other 27% time to fill.
 
 The residual question is whether the 1¢ bid population is thinner in the last
 10 seconds than at t−40 s. Live data cannot answer it yet (fills observed at
@@ -196,6 +213,51 @@ Re-examine only if reversals recur at 10 bps.
   −$42.59, exiting is −$49 at a 43.6% post-decay flip rate. Only viable with
   an exit above ~55–60¢, i.e. reacting within seconds of the first decay tick.
 
+## 6b. ⛔ THE FINDING THAT ENDS THE PROGRAM (2026-08-06)
+
+**Every backtest in this document measured a population we cannot trade.**
+
+Splitting gate-passing bars (|lead|>=8bps) by whether a counterparty existed
+-- i.e. whether a 1c bid was resting on the corpse at placement time:
+
+| at t-35s | n | flips | rate |
+|---|---|---|---|
+| **FILLABLE** (a bid exists) | 620 | 8 | **1.29%** |
+| no bid -> no trade possible | 1420 | 3 | 0.21% |
+
+**6.1x.** The same split at t-45s gives 3.7x, at t-30s 7.3x. Bars are safe
+*because* nobody will take the other side; the moment someone will, the flip
+rate crosses the 1% break-even.
+
+This reconciles every open discrepancy at once:
+
+- Model said 0.54% (all gate-passing bars). Live ran 2.3% (3 flips / ~130
+  fills). Fillable-conditioned backtest says 1.29%. Live and fillable agree;
+  the 0.54% was never achievable.
+- The zero-fill day (§5 item 1, §7b) was the same effect from the other side:
+  t-20s bars show 0 flips in 239 samples *and* 0 fills. We found the safe
+  population and discovered it is safe because it is untradeable.
+- The session-floor rationale (§5 item 5) and the hour slices in §4b are
+  computed on the unfillable-inclusive population and are therefore void.
+
+EV at 1.29% = `0.01 - 0.0129` = **-$0.0029/share = -$0.29 per $100 bar**,
+about -$26/day at our fill rate. Realised: +$35.64 peak (05 Aug 15:59 Kyiv)
+-> -$220 vs run start after three reversals (sol -$99, bnb -$49.50, xrp -$92).
+
+**Limits, stated honestly:** 8/620 gives a 95% CI of 0.40-2.18%, which still
+touches profitability. Pooling with live (~11/750 = 1.47%) gives ~0.6-2.3%.
+Not proof beyond doubt -- but the mechanism is principled, not data-mined,
+and two independent measurements land on the same side.
+
+**What does NOT fix it:** floors, windows, z-tiers, volatility filters,
+session halts, per-coin calibration. All of them select on the lead; none
+changes who is willing to be our counterparty. Rejected hypotheses tested
+2026-08-06: flips do NOT cluster by session hour (pooled 0.54%, the three
+live reversal hours measured 1.37%/0.00%/0.00% historically); late-bar
+volatility DOES drive flips (0% calm -> 9.76% at >2x spike, monotone over
+2,027 bars) but is NOT predictable from pre-sale volatility (flat across
+buckets; skipping high-ratio bars leaves the flip rate at 0.55%).
+
 ## 7. Honest position
 
 At $50 × six coins with the current gates, modelled expectation is roughly
@@ -236,3 +298,73 @@ the two lead to opposite fixes.
 3. **Per-coin flip/fill table** from live data once ~500 placements exist.
 4. **15m/1h series pilot** — same code, `BAR_SECONDS` differs; the gas
    arithmetic alone justifies it.
+
+---
+
+## 7. POST-TWAP REVALIDATION + RESTART (2026-08-13, appended per docs discipline)
+
+Everything above predates the 2026-08-07 TWAP settlement switch. Revalidated
+on 7 days of post-TWAP mrec data (2,018 btc 5m bars) before restarting:
+
+**Demand side ALIVE (the decisive check):** corpse-BUY flow on the losing
+token at ≤5¢ in the salvage window t−45..−15s = **375,328 sh/day**, present
+in 83% of bars; 2.88M shares printed at exactly 1¢ over the week. Revenue
+ceiling ~$4.5k/day/coin — our droplet-share thesis intact. (Caveat: unified
+book print-mirroring could overstate this ≤2×; ample either way.)
+
+**Risk side IMPROVED — flip calibration by sale moment × |lead| band:**
+t−45s: 6-8bps 1.73% (3/173), **≥8bps 0/271 (0.00%)**; t−30/−20/−15s: 0
+flips in all 1,373 samples. TWAP averaging makes leads stickier than the
+pre-switch point-close (was 0.53% @45s/10bps). The 8bps floor stands
+validated; 95% upper bound at ≥8bps pooled ≈ 0.3%.
+
+**Corrected economics at small scale** (the honest math — an earlier
++$10-20/day estimate wrongly used the MINT rate as the placement rate):
+leads ≥8bps ≈ 13% of bars → ~35-40 placements/day btc; quiet-session fills
+12-17%, US session 57-82%. btc-only at $35 bars ≈ breakeven with the US
+session halted, **+$2-5/day with it enabled**. Scaling is coins, not size
+(6 coins ≈ $420 in flight — future capital decision).
+
+**RESTART (user-approved config, live 2026-08-13 ~19:47 Kyiv, helm rev 35+):**
+btc-only, pmMintUsd **35**, pmMintGateBps **6** (was 4 — cuts ~10× gas waste
+of minting bars that never reach the 8bps sale gate), pmLeadFloorBps 8,
+session floor 10 (12:30-16:00 UTC) KEPT, **pmHaltWindowUtc=off** (user
+removed the 2026-08-05 Kyiv-window halt — calibration shows 0/271 flips
+≥8bps incl. that session; NOTE: helm `--set-string ...=""` does NOT override
+a `default` in the template — use the literal `off`, the parser disables on
+any dash-less string), liveMaxDailyLossUsd 40, liveMaxOrderUsd 5. Fleet
+purged same evening per user: ALL other trader bots removed (9 twapedge +
+4 poolfarm releases); running = mintsalvage + btc-sweeper (redemptions) +
+10 recorders. Signer gas 0x7BbD..3AD3: **172.03 POL** (~months at ~$0.01/
+mint; track burn in scratchpad gas_track.txt). Monitoring: persistent
+problem-monitor (fills/settles/reversals/halts/gas+RPC errors) + 30-min
+quiet cron (reports only on trades/errors/gas anomalies). Known-benign:
+one "Could not create api key" 400 at startup (client derives existing key).
+
+---
+
+## 8. POST-TWAP LIVE RESULT: STOPPED 2026-08-14 ~11:30 Kyiv — the edge is dead
+
+16h live (btc, $35 bars, gate 6, floor 8, no halt window): 47 mints, 27
+salvage placements, **0 fills**, all settles $0 (breakeven by construction),
+~7.7 POL gas (~$1.1). p(0/27 | doc-era fill rates) ≈ 1-4%.
+
+**Root cause (measured, 7d recorder data): the TWAP switch killed the fill
+path.** Our 1¢ loser-ask ≡ joining the 0.99 winner-bid queue. Post-TWAP the
+outcome is knowable minutes early, so the 0.99-vacuum fleets wall the level
+long before our t−45s placement: standing queue at t−45 on decided bars =
+**median 942sh, p75 4,566sh** (n=503); the ~1,200sh/bar of 1¢ executions is
+consumed by the wall — a late 35sh ask never reaches flow. Pre-TWAP fills
+existed BECAUSE ambiguity kept that queue thin until the final seconds.
+
+**Early placement doesn't rescue it:** flip rates at ≥8bps are 4.76% @t−90
+and 2.41% @t−120 (one flip = −$35 vs +$0.35 max win → ruinous). Only ≥15bps
+is flip-free early (0/79 pooled t−90/−120) but that's ~4 bars/day → ≤$1.5/day
+gross − $1-2/day gas ≈ breakeven with tail risk. Not worth code or capital.
+
+**Revival conditions (all required):** (a) a mechanism to be FRONT of the
+0.99 queue (earlier + bigger + faster than the vacuum fleets — capital and
+infra we don't have), or (b) a return of late-flip ambiguity (venue rule
+change), or (c) gasless minting via partner relayer key + multi-coin scale
+making the ≥15bps-early variant's ~$1/day/coin × N worth it. Otherwise:
+CLOSED. The Aug-2-5 profitable era was a pre-TWAP artifact.

@@ -1,0 +1,68 @@
+# eth-poolfarm1h — 1h two-sided MAKER pair engine with BATCHED buys.
+# Added 2026-08-20 alongside btc. eth is the ONLY other liquid hourly book
+# (measured: $2,079/day vol, 2c spread). sol/xrp/doge/bnb are NOT viable —
+# $13-695/day and 3-11c spreads, so a pair would never complete and an
+# unpaired leg could not be exited. Do not add them.
+#
+# WHY THIS AND NOT A NEW BOT: poolfarm.py already IS this strategy, and it is
+# the code that produced the live-proven 1h result (7/7 pairs, +$1/bar,
+# docs/strat-poolfarm-1h.md). It carries every safety mechanism the from-scratch
+# 5m bot lacked and had to learn the hard way (6 live bugs in 2 days):
+#   PAIR_CEIL (no pair may cost >= $1)   MAX_INV_SH (inventory cap)
+#   BATCH_SH  (imbalance throttle)       sticky per-UTC-day halt
+#   hold-to-redemption (no exit round-trips)   resolve loop
+#
+# WHY 1h: the loss driver at 5m was the UNPAIRED leg (53% of shares). Pair
+# completion is mechanical in bar length — 5m 63% -> 15m 72% -> 1h 84% — and
+# BATCH_SH caps the unhedged exposure on top (poolfarm's own backtest: worst
+# bar -$29 @ size 50 -> -$4 @ 5). Latency also stops mattering over an hour.
+# NOTE: the aggregate 1h MAKER TERRAIN is negative (-0.254 c/sh, measured
+# 2026-08-20). This strategy does not rely on it — a pair bought below par pays
+# 1-a-b regardless of who wins. The terrain only taxes the RESIDUAL leg.
+#
+# Account: 0xd632c1e1… ($114.69 after the 5m pilot lost -32%). Sized small.
+# Deploy: cd winner-vacuum && BOT_CREDS=../every-tick-single/chart/bots/openmm.secret.yaml \
+#         ./deploy.sh btc live poolfarm1h
+botName: eth-poolfarm1h
+
+bot:
+  coin: eth
+  entrypoint: poolfarm.py
+  barSeconds: "3600"           # 1h markets (ET name-based slugs)
+  liveTrading: "false"         # the credentials overlay flips this
+  paperMode: "true"
+  dryRun: "true"
+  loopIntervalSecs: "3600"
+  prediscoveryLeadSecs: "60"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+  # ── pair engine, batched ──────────────────────────────────────────────────
+  pmMmSize: "10"               # total per side per bar
+  pmMmBatchSh: "5"             # venue min; max unhedged exposure ~= $2.50
+  pmMmEdgeC: "1.5"             # buy 1.5c below each side's mid -> pair ~0.97
+  pmMmPairCeil: "0.985"        # never complete a pair costing >= $1
+  pmMmMaxInvSh: "20"           # tightened from 30: bounds a runaway bar even
+                               # when inv is stale (the only cap that does)
+  pmMmMidLo: "0.12"            # stand down once the bar is decided
+  pmMmMidHi: "0.88"
+  pmMmQuitTl: "60"             # no quoting in the final minute
+  pmMmWarmup: "10"
+  # 45s, not 8s (2026-08-21): over a 1h bar the bot churned 62 placements in a
+  # single bar, far outrunning fill detection — so `inv` went stale and the
+  # BATCH throttle read a false imbalance, letting one side reach 21 vs 5
+  # (16 unhedged) even after the reconcile fixes. Fewer, slower quotes let
+  # detection keep up. At 1h a 45s re-quote still gives ~80 chances per bar.
+  pmMmMinRest: "45"
+  pmMmNoChase: "true"          # chasing was 54% of poolfarm's -$111 loss
+  pmMmRecenterC: "1.0"
+
+  # ── hard safety caps (account is down 32%; keep this small) ───────────────
+  quoteNotionalUsd: "5"
+  liveMaxOrderUsd: "6"
+  liveMaxDailyLossUsd: "8"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+
+persistence:
+  enabled: true
+  size: 2Gi

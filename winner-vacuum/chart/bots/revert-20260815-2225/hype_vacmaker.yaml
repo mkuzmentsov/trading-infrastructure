@@ -1,0 +1,51 @@
+# hype-vacmaker LIVE — TWAP-taker lane (VACMAKER.md; wallet 0xefdf6abc…).
+# ONE strategy, per-coin operating point picked by harvest (docs/vacmaker-
+# offline-notes.md). hype = late "whale cell": eval_tl 14s, coverage ~0.81
+# at entry (floor 0.7; rule: floor < (62-tl)/59 or the bot never fires),
+# band 0.55-0.99. hype has the WORST estimate accuracy of the 7 coins
+# (87.6% offline) — the tl40 cell took the fleet's first two losses on
+# coverage-0.33 partial reads (2026-08-15, −$11.86) and was REMOVED; T-14
+# high-coverage is the only hype cell allowed. First whale-cell trade won
+# (5sh@0.98 +$0.10). Renamed from hype3 (user: no version suffixes); prior
+# events → data/hype3-final-20260815.jsonl, tl40 history →
+# data/hype-tl40-final-20260815.jsonl.
+# ⚠ deploy.sh live applies crypto.secret.yaml LAST — its caps override the
+# ones below (currently $5/order $50/day there; unification pending).
+botName: hype-vacmaker
+
+bot:
+  coin: hype
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "5"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "14"
+  pmTeLiveInflightUsd: "20"
+  pmTeLiveSize: "9"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.99"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.7"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0"
+  pmTeSnipeLiveUsd: "0"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "120"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: hype/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi

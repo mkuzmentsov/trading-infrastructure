@@ -1673,3 +1673,42 @@ spread you must cross to reach it.
 **Together with §41 the "buy cheap" family is closed from both ends:** the cheap
 side we are RIGHT about is unfillable (11% match rate), and the cheap side we
 CAN fill is the side we are wrong about.
+
+**§41 — 08-23 17:50 Kyiv: full loss autopsy (user request after the
+sol 14:00 UTC bar) — no robust prevention exists; the cuts are all
+chop-day proxies.** Full gate-era late lane: 467 clips, 450W-17L,
++$80.69. The 15 unconditional-era losses (last 26h, −$104.41 vs
++$71.48 wins in that window) tag as: 5 ask-collapse, 3 thin-est,
+2 flip-side, 1 strong-est flip, plus plain flips. Every candidate cut
+tested on the FULL era with day-wise attribution: ask-collapse ≥15c
+NET +6.78 but sign-flips by day {08-20 −10.9, 08-21 −5.0, 08-22
++12.3, 08-23 +10.4}; flip-side −6.62; |est|<0.7 −14.42; |est|<1.0
+−29.96; px<0.85 −7.40; px<0.85∧est<1.5 −3.41. The structure is
+uniform: EVERY cut is negative on trend days (08-20/21) and positive
+on chop days (08-22/23) — they are all proxies for "don't trade chop,"
+which is not identifiable ex-ante (§32's mode-dependence, third
+confirmation). Conclusion: the 3.6% loss rate is the price of a lane
+running 96.4% at ~0.85-0.99 asks; prevention levers that actually
+exist: (a) per-coin $15 halts (capped bnb+eth today — working), (b)
+smaller ladder budget (cuts per-bar tail but era marginal clips are
++EV), (c) manual pause on chop days if the operator judges the regime.
+No mechanical gate survives the full era. NO code change.
+
+**§42 — 08-24 20:50 Kyiv: loss-elimination re-run on 2.5× data (user
+request) — still no; two NEW hypotheses tested and refuted.** Late
+lane full era: 710 clips 684W-26L +79.67. New tests: (a)
+COUNTER-TREND cut (bet side vs last-3 settles; motivated by doge's 3
+DOWN-vs-UP loss bars today): kills 15L but 333W → NET −26.73, only
+positive on 08-24 itself — chop-day proxy again; the recon's job IS
+catching reversals. (b) LADDER 2nd+ clips: 297 clips 293W-4L +32.25 —
+cutting the ladder loses. Re-tests: est<1.0 −26.19, px<0.85 −15.61
+(both worse than §41); ask-collapse ≥15c the lone cumulative positive
+(+8.31, 7L/9W, n=16) but LOO-negative on both trend days — still not
+deployable. Per-coin era: btc +28.05 (83-2), xrp +22.88, hype +17.60,
+sol +3.44, eth +1.87, doge −23.48 (103-10), bnb −24.52 (109-6, tail-
+bar-driven). doge's 8.8% loss rate vs fleet 4.8% is p≈2-3% pre-
+selection but ~15-20% after 7-coin multiple comparisons — watchlist,
+not verdict. REGIME NOTE: late-lane losses/day rising 1→6→11→8 as
+chop persists; era profit came from the 08-21/22 trend days and the
+current regime runs the fleet ≈ breakeven. Levers unchanged: clip
+size, coin selection (doge first candidate), manual pause. No deploy.

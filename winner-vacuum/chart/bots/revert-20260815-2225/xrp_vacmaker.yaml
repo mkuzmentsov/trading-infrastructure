@@ -1,0 +1,48 @@
+# xrp-vacmaker LIVE — TWAP-taker lane (VACMAKER.md; wallet 0xefdf6abc…).
+# ONE strategy, per-coin operating point picked by harvest (docs/vacmaker-
+# offline-notes.md). xrp = late "whale cell": eval_tl 14s, coverage ~0.81
+# at entry (floor 0.7; rule: floor < (62-tl)/59 or the bot never fires),
+# band 0.55-0.99. At tl20 xrp had ZERO buyable supply all day; the tl50
+# probe (xrp2) went 8/8 +$2.16 — eth-like cell is the fallback candidate if
+# T-14 stays supply-starved. Renamed from xrp3 2026-08-15 (user: no version
+# suffixes); prior xrp3 events → data/xrp3-final-20260815.jsonl.
+# ⚠ deploy.sh live applies crypto.secret.yaml LAST — its caps override the
+# ones below (currently $5/order $50/day there; unification pending).
+botName: xrp-vacmaker
+
+bot:
+  coin: xrp
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "5"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "14"
+  pmTeLiveInflightUsd: "20"
+  pmTeLiveSize: "9"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.99"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.7"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0"
+  pmTeSnipeLiveUsd: "0"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "120"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: xrp/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi

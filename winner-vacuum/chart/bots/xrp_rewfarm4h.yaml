@@ -1,0 +1,39 @@
+# xrp-rewfarm4h — 4h-series liquidity-rewards farmer (Aug-2026 $1M program).
+# Thesis (2026-08-17 session, docs/strat-rewfarm.md): the 5m/15m in-band
+# maker is measured dead (informed-flow singles ~10x rewards), but 4h bars
+# oscillate -> pairs complete (1h live-proven +$1/bar), pools: btc $1,667/d,
+# alts $333/d, and the in-band 4h field is nearly EMPTY (50sh two-sided at
+# 0.5c inside = 50-77%% share on alts, ~5-10%% on btc). Quote AT 0.5c inside
+# the 1.5c band (quadratic weight 0.44 — the old far-edge 1.5c quoting
+# scored ~0 and was why poolfarm earned only $4.67/day). Slow-chase
+# re-centering; PAIR_CEIL locks completed pairs <0.985; stand down last
+# 15min (decided endgame); warmup 90s (reward config attaches ~50s late,
+# poller-verified). PAPER first; live needs user go + crypto.secret overlay.
+botName: xrp-rewfarm4h
+
+bot:
+  coin: xrp
+  entrypoint: poolfarm.py
+  barSeconds: "14400"
+  paperMode: "true"
+  dryRun: "true"
+  liveTrading: "false"
+  loopIntervalSecs: "300"
+  polymarketRtdsSymbol: xrp/usd
+  prediscoveryLeadSecs: "30"
+  # maker economics
+  pmMmSize: "50"          # reward min-size floor
+  pmMmEdgeC: "0.5"        # quote 0.5c inside the mid (w=0.44), NOT band edge
+  pmMmRecenterC: "1.0"
+  pmMmMinRest: "8"
+  pmMmNoChase: "false"    # 4h bars drift; slow-chase + PAIR_CEIL handles whipsaw
+  pmMmPairCeil: "0.985"
+  pmMmMidLo: "0.12"
+  pmMmMidHi: "0.88"
+  pmMmQuitTl: "900"       # stand down final 15 min
+  pmMmWarmup: "90"        # config lag ~50s after open
+  pmMmMaxInvSh: "100"
+  pmMmBatchSh: "50"
+  # live caps (apply when the live overlay is added)
+  liveMaxOrderUsd: "40"
+  liveMaxDailyLossUsd: "12"
