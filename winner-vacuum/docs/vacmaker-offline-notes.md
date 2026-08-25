@@ -1712,3 +1712,79 @@ not verdict. REGIME NOTE: late-lane losses/day rising 1→6→11→8 as
 chop persists; era profit came from the 08-21/22 trend days and the
 current regime runs the fleet ≈ breakeven. Levers unchanged: clip
 size, coin selection (doge first candidate), manual pause. No deploy.
+
+**§43 — 08-24 22:00 Kyiv: mean-reversion predictor (user request,
+AI/pure-math) — trained, and the result is a clean NEGATIVE with one
+sharp insight: THE ASK IS THE PREDICTOR.** Dataset: 27,613 bars from
+local mrec (07-30→08-17, 6 coins, 100ms books); decision point T−20s;
+features = lead at T−20/60/120/180, momentum, curvature, lead/noise
+ratio, sign consistency, book (ask/size/spread); label = leading side
+lost (mean-revert). Time-split 70/30, permutation null clean (0.50).
+Results: gboost OOS AUC 0.994 — but 80% of importance is the ASK;
+ask ALONE scores AUC 0.956; path-only features 0.632; and WITHIN ask
+buckets path features are DEAD (AUC 0.44-0.55 = coin flip). The full
+model economically ties a plain ask-floor rule at matched n (−575 vs
+−585). Verdict: the crowd's quote at T−20 already contains everything
+the price path knows about reversal risk — there is no trainable edge
+beyond the price, confirming [[market-efficiency-proof]] and
+[[structure-hunt-exhausted]] with a 25k-bar ML pass. Practical
+takeaways: (1) the ask at fire time IS a calibrated flip probability —
+our live economics work only because the TWAP-60 recon adds
+settle-mechanics information the crowd's quote lacks; (2) any "skip
+predicted flips" rule collapses to "skip cheap asks," refuted live in
+§40/§42. No deploy. Artifacts: scratchpad ds_*.csv + train_revert*.py.
+
+**§44 — 08-24 23:15 Kyiv: wallet 0x1ba852 profiled → fire-window A/B
+DEPLOYED (doge+bnb tl≤14 vs fleet tl≤20).** The wallet: 12 days,
+3,603 buys, $38.6k turnover, NET +$569 (~+$47/day); median px 0.990
+(p25=p75 — a pure 0.99 machine), median clip $12.9, tl p50=12s
+(p25=8s), zero sells, same 5m updown universe, loss days accepted
+(−64, −68). It out-earns 0xefdf (~2× turnover, later timing). Our own
+era by fire-tl: 17-20.5 = 442-18 (96.1%) +56.18; 14-17 = 132-6
+(95.7%) −0.47; 10-14 = 86-2 (97.7%) +12.37; 5-10 = 23-0 +11.51 — the
+early half of the late window carries nearly all losses AND most
+volume; whether its fills survive to T−14 = the §33 availability
+question, unanswerable offline. A/B live since 23:10K: doge+bnb
+pmTeWhaleVolDelayTl=14 (verified in PF_TE_START), 5 controls at 20.
+Judge on: fills/day, win rate, net/day vs controls over ≥3 days.
+
+**§45 — 08-26 01:10 Kyiv: "how to get more +33 wins" investigated
+(96h × 4 coins, 100ms books, lead-conditioned).** Three zones:
+(1) STANDING asks <0.30 on the recon side late = POISON: 613
+bar-sides, 4% win vs 15% breakeven, EV −$1,758@$8 — the §38 "cheap ask
+means MY estimate is wrong" at 613-sample strength. MIN_ASK=0.55 stays.
+(2) ask [0.30,0.55) at DECISIVE lead (≥2bps): 39 bar-sides, 87% win vs
+43% breakeven, snapshot-EV +$237/96h — the one uncaptured +EV seam,
+currently blocked by MIN_ASK. HARD CAVEAT: [[taker-side-adverse-
+selection]] measured live that snapshot sims overstate cheap-band
+capture ~7× (fills ~11%, adversely selected) → realistic ≈ +$5-10/day
+fleet-wide, unprovable offline. Probe design if user wants it: bounded
+lane est≥2bps, tl≤20, ask∈[0.30,0.55), $4-8 clip, 1/bar, 2 coins.
+NOT deployed — §38's "keep MIN_ASK=0.55" is a documented user decision.
+(3) The btc +33.76 TYPE (flash sweep-through: seen ask 0.99, fill
+0.19) is NOT a standing-ask trade — price improvement on our FAK
+during a 100ms dislocation. Already captured automatically; the walls
+are tiny (p50 ≈ $11 at the level — we took essentially the whole btc
+wall). No size lever there; frequency is regime-given. Summary: the
+gift wins can't be farmed harder without opening the trap zone; the
+only expandable edge is the [0.30,0.55) probe, expected modest.
+
+**§46 — 08-26 01:50 Kyiv: §45's [0.30,0.55) "gold seam" RETRACTED —
+hindsight bias caught by independent audit, refuted by first-touch
+replay. NO deploy; MIN_ASK=0.55 re-confirmed.** Audit agent findings
+(all verified): (a) min-over-window bucketing is hindsight — bars
+whose dip BOUNCED land in "gold," bars that transited the band to
+0.01 land in "trap," but a live first-touch buyer buys both at ~0.5;
+(b) 44% of the 96h gold cell was ONE 25-min 4-coin correlated episode
+(books pinned ~0.50 during a macro move); (c) EV was priced at the
+exact minimum print (entry hindsight); (d) my "trap <0.30" framing
+was also a composition error (91% of that bucket is 0.01-asks). The
+decisive PATH-LEVEL first-touch replay (buy FIRST touch of the band,
+|lead|≥2, tl(3,20], at that snap's ask; 7d × 6 coins): 392 triggers,
+200W = 51.0% vs 46% breakeven, EV −$61.86 — BEFORE the measured 7×
+adverse-selection haircut. Day split: +454 on the 08-19 trend night,
+−70..−183 every chop day (4th mode-dependence confirmation). User's
+stated worry ("min-ask cut forces buying losing pairs") = exactly
+correct. Method lesson for the ledger: NEVER bucket by a min/max
+statistic chosen within the outcome window — replay first-touch paths
+(sim-validity bug #13 candidate).

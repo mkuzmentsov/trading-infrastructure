@@ -222,3 +222,13 @@ scoring it negative is broken — and after fixing, a correct harness is MONOTON
 the margin gate (79.4%/+2.67% at >=1bps -> 100%/+16.28% at >=3bps). Gate-ordering
 monotonicity is a free correctness test; if it is not monotone, doubt the harness.
 
+
+**Bug #13 (2026-08-26, §46): min/max-over-outcome-window bucketing is
+hindsight.** Scoring bars by the minimum ask they reached inside the
+window silently conditions on the path's future (a dip that bounced vs
+one that kept falling). Symptom: spectacular win rates in a "cheap"
+bucket that first-touch replay collapses to breakeven (87% → 51%).
+Rule: any entry-price study must be replayed as FIRST-TOUCH on the
+100ms path, at the touched price, one trigger per bar — never on
+per-bar extremes. Also re-check for single correlated episodes
+(same-timestamp multi-coin rows are ONE event).
