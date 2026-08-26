@@ -1788,3 +1788,19 @@ stated worry ("min-ask cut forces buying losing pairs") = exactly
 correct. Method lesson for the ledger: NEVER bucket by a min/max
 statistic chosen within the outcome window — replay first-touch paths
 (sim-validity bug #13 candidate).
+
+**§47 — 08-26 08:00 Kyiv: the [0.30,0.55) seam CLOSED for good —
+54-variant path grid, all variants are 2-event fingerprints.** Grid:
+lead∈{2,3,5} × tl≤{20,12,8} × persistence∈{0.1s,1s,2s} × knife-guard,
+first-touch replay, size-capped economics, 8 days × 6 coins. Every
+variant positive in-sample BUT day-split kills all: baseline
+first-touch +122.61 total = +461.98 on 08-19 alone, −339.37 ex-08-19
+(5 of 8 days negative); best variant (2s-standing, tl≤8, 89% win,
++740.90) = 110/177 triggers on 08-19 + 29 on the 08-26 macro morning
+= 93% of EV from two correlated episodes; ordinary days 1-10 −44.
+FIFTH mode-dependence confirmation. Also reconciled §46's sign
+mismatch: parallel-append CSV interleaving dropped rows (lesson: one
+output file per worker). Adverse selection would shrink live capture
+further. VERDICT: MIN_ASK=0.55 permanent; the band's upside arrives
+only via FAK price improvement on event days (the +33.76 clip WAS the
+08-26 event). Direction exhausted.
