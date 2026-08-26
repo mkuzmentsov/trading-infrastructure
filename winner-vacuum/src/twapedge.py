@@ -129,6 +129,18 @@ WHALE_LADDER_MIN_ASK = float(os.getenv("PM_TE_WHALE_LADDER_MIN_ASK", "0.94"))
 # a restart) and when VOL_DELAY_VOL=0.
 WHALE_VOL_DELAY_VOL = float(os.getenv("PM_TE_WHALE_VOL_DELAY_VOL", "10"))
 WHALE_VOL_DELAY_TL = float(os.getenv("PM_TE_WHALE_VOL_DELAY_TL", "20"))
+# ── dislocation capture (2026-08-26, notes §48): venue trade census on
+# 08-25 shows the final-30s cheap-print pool nets +$5.3k/day ONLY inside
+# [0.55,0.90) — sub-0.55 is breakeven-to-furnace (net −$10k), so the band
+# stays. Our capture was 0.1%; the throttles are reaction time and the
+# per-bar ladder stopping mid-dislocation. Levers: WHALE_SCAN_S (loop
+# cadence), and a separate DISLOC ladder budget — a fill that actually
+# LANDS at avg_px <= DISLOC_PX is objective evidence of a dislocation
+# (not a prediction), and rides its own budget so the bar can keep
+# sweeping. DISLOC_LADDER_USD=0 disables (default).
+WHALE_SCAN_S = float(os.getenv("PM_TE_WHALE_SCAN_S", "0.4"))
+DISLOC_PX = float(os.getenv("PM_TE_DISLOC_PX", "0.85"))
+DISLOC_LADDER_USD = float(os.getenv("PM_TE_DISLOC_LADDER_USD", "0"))
 # ── post-close winner snipe: once the settlement tick lands (~T+1.5s relay)
 # the outcome is an identity, not an estimate (ties resolve UP). Any ask on
 # the winner below SNIPE_CAP after that moment is free money left by holders
@@ -224,7 +236,7 @@ class Bar:
                  "close_px", "live", "gtry", "maker_oid", "maker_side",
                  "maker_token", "maker_sh", "maker_fill0", "maker_cost0",
                  "maker_px", "whale", "whale_spent", "whale_last",
-                 "whale_delayed")
+                 "whale_delayed", "disloc_spent")
 
     def __init__(self, ws: int):
         self.ws = ws
@@ -247,6 +259,7 @@ class Bar:
         self.whale_spent = 0.0           # $ committed on this bar's ladder
         self.whale_last = 0.0            # last fire timestamp (cooldown)
         self.whale_delayed = False       # vol-delay counterfactual logged
+        self.disloc_spent = 0.0          # $ of cheap (<=DISLOC_PX) fills
 
 
 class TwapEdge:
@@ -1049,7 +1062,7 @@ class TwapEdge:
         if WHALE_START <= 0 or not _real:
             return
         while True:
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(WHALE_SCAN_S)
             if self.clob is None:
                 continue
             now = time.time()
@@ -1135,9 +1148,18 @@ class TwapEdge:
             _event("PF_TE_LIVE_ERR", bar=bar.ws, err=str(exc)[:160])
             return
         cost = (avg_px or px) * (filled or 0.0)
+        disloc = False
         if filled:
             self.live_inflight += cost
-            bar.whale_spent += cost
+            # a fill that LANDS at <= DISLOC_PX is a dislocation in progress:
+            # charge it to the separate disloc budget (up to its cap) so the
+            # bar can keep sweeping instead of exhausting the normal ladder
+            if (avg_px is not None and avg_px <= DISLOC_PX
+                    and bar.disloc_spent + cost <= DISLOC_LADDER_USD):
+                bar.disloc_spent += cost
+                disloc = True
+            else:
+                bar.whale_spent += cost
             bar.whale.append(dict(side=side, filled=filled, cost=cost,
                                   avg_px=avg_px))
         _event("PF_TE_WHALE_ORDER", bar=bar.ws, side=side, seen_ask=ask,
@@ -1145,6 +1167,7 @@ class TwapEdge:
                avg_px=avg_px, filled=filled, cost=round(cost, 4),
                est_bps=est, tl=tl, clip=len(bar.whale),
                spent=round(bar.whale_spent, 2),
+               disloc=disloc, dspent=round(bar.disloc_spent, 2),
                ms=int((time.time() - t0) * 1000))
 
     async def prewarm_loop(self):
@@ -1221,6 +1244,8 @@ class TwapEdge:
                thresh_slope=THRESH_SLOPE, thresh_anchor=THRESH_ANCHOR,
                vol_delay_vol=WHALE_VOL_DELAY_VOL,
                vol_delay_tl=WHALE_VOL_DELAY_TL,
+               scan_s=WHALE_SCAN_S, disloc_px=DISLOC_PX,
+               disloc_ladder=DISLOC_LADDER_USD,
                eval_tl=EVAL_TL, paper=not _real, live=_real,
                live_size=LIVE_SIZE if _real else None)
         if _real:
