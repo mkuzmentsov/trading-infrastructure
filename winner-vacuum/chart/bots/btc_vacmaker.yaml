@@ -13,7 +13,7 @@ bot:
   coin: btc
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "999"
+  liveMaxDailyLossUsd: "15"
   liveMaxOrderUsd: "8"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
