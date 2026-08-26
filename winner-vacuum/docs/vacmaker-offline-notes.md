@@ -1804,3 +1804,49 @@ output file per worker). Adverse selection would shrink live capture
 further. VERDICT: MIN_ASK=0.55 permanent; the band's upside arrives
 only via FAK price improvement on event days (the +33.76 clip WAS the
 08-26 event). Direction exhausted.
+
+**§48 — 08-26 09:30 Kyiv: DISLOCATION CAPTURE — venue trade census +
+pilot deployed (eth+xrp).** User reframe: the event windfalls ARE the
+income; investigate capture. Data fix: book snaps miss sub-100ms
+sweeps → used data-api /trades (takerOnly=false; NB ~2-3h indexing
+lag, so census ran on 08-25). Census (final-30s winner-side BUY
+prints <0.90, 4 coins, 21h): $40.4k bought, $20.6k profit captured by
+buyers — but the LOSER-side mirror burns $25.6k → pool NET −$5.0k/day
+overall, and the net splits perfectly by price: [0,0.3) −$9.6k
+(the furnace), [0.3,0.55) −$0.8k, [0.55,0.9) **+$5.3k/day NET** —
+the venue's own flow independently confirms MIN_ASK=0.55. We captured
+$23 (0.1%). Takers: fragmented (top net +$803; 216 positive vs 714
+negative wallets); the profitable ones are TAKERS (maker share 0-8%);
+archetypes: ultra-selective late snipers (0xe1fc803f: 29 trades,
+median px 0.72, median T−6s = OUR lane, deeper) and mid-bar
+cheap-side buyers (different game). PILOT (eth+xrp, verified): scan
+0.4→0.15s, cooldown 1.0→0.5s, and a DISLOC LADDER — fills landing
+≤0.85 (own-execution evidence, not prediction) ride a separate $16
+budget so dislocation bars keep sweeping (the btc +33.76 bar would
+not have consumed ladder). Worst case ~$40/bar at ≤0.85 era-positive
+prices, day-capped by restored $15 halts. Judge vs 5 controls on
+cheap-fill count + $/day. Backlog: real-time trades channel in
+recorders (research currently rides delayed data-api).
+
+**§49 — 08-26 21:20 Kyiv: @twap-sniper (0xefdf) deep study —
+position-PnL +$209.69/5.5d (~$38/day, 99.3%, 243 clips/day, avg px
+0.978), matching his UI +$987/month; consensus-lane clone REFUTED
+offline.** Decomposition: 63% of his volume = tl 20-31s at 0.985-0.99
+(+$133.62, 99.2%) — NOT our old recon early lane (contested asks) but
+market-consensus near-locks; him-only bars (est under our threshold)
++$113.07; on shared bars he out-earns us 15× (+96.62 vs +6.18, dear
+entries vs our contested ones). First-touch validation of the clone
+(1,714 triggers, 7d, fav ask 0.985-0.99, tl 3-30): 98.13% vs 99.0%
+BE = −$17/day; recon-agreement filter doesn't save it (98.21%); NO
+sub-cell positive (|lead| 2-5 = exact breakeven; |lead|≥5 worst −57 —
+macro flips); incremental bars we skip = −$1.7/day. His realized
+99.8% in-band vs book-implied 98.1% = fill-selection reality
+(asks about to flip get pulled before his FAK lands → his fills skew
+to stable locks) — an execution artifact we cannot clone as a rule
+and cannot validate offline. CONCLUSION: his stability = 2× our
+turnover in the dear band riding that fill-selection, at ~1.6% ROI on
+turnover — per-clip our est-gated dear-late lane (256-0) is BETTER;
+the honest growth lever for us is CLIP SIZE on our existing 99%+
+lanes (e.g., $8→$12 ≈ +50% on the late lane's +$80.69 era at same win
+rates; worst 2-clip loss −$23 vs $15 halt), a bankroll decision for
+the user, not a new lane. No deploy.
