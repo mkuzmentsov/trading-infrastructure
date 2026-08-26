@@ -16,15 +16,15 @@ bot:
   dryRun: "false"
   entrypoint: twapedge.py
   liveMaxDailyLossUsd: "15"
-  liveMaxOrderUsd: "8"
+  liveMaxOrderUsd: "12"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
   liveTrading: "true"
   loopIntervalSecs: "300"
   paperMode: "false"
   pmTeEvalTl: "28"
-  pmTeLiveInflightUsd: "25"
-  pmTeLiveSize: "9"
+  pmTeLiveInflightUsd: "30"
+  pmTeLiveSize: "13"
   pmTeLockLiveUsd: "0"
   pmTeMakerCancelBps: "1.0"
   pmTeMakerRestPx: "0"
@@ -34,7 +34,7 @@ bot:
   pmTeWhaleStart: "30"
   pmTeWhaleScanS: "0.15"
   pmTeWhaleCooldownS: "0.5"
-  pmTeDislocLadderUsd: "16"
+  pmTeDislocLadderUsd: "24"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
   # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
   # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
@@ -42,10 +42,10 @@ bot:
   # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
   # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
   pmTeWhaleVolDelayVol: "0.01"
-  pmTeWhaleLadderUsd: "16"
+  pmTeWhaleLadderUsd: "24"
   pmTeSize: "8"
   pmTeSnipeCap: "0.99"
-  pmTeSnipeLiveUsd: "8"
+  pmTeSnipeLiveUsd: "12"
   pmTeSnipeSize: "12"
   pmTeSnipeWindowS: "90"
   pmTeThreshBps: "0.5"
