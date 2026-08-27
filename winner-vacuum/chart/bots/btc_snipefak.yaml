@@ -1,0 +1,53 @@
+# btc-snipefak — CONTROL bot for the snipe A/B (2026-08-27, notes §52).
+# Runs ONLY the old post-close taker snipe (FAK at ask <= 0.99) alongside
+# btc-vacmaker's new SNIPE_REST maker bid, per user request ("run the
+# previous version along the new version - 2 bots"). Era record of this
+# lane: 0/205 fills ('no orders found to match'); this bot is the live
+# control for that finding.
+# LANE ISOLATION — every other live lane is OFF:
+#   pmTeWhaleStart "0"    -> whale_loop returns immediately (and disloc with it)
+#   pmTeThreshBps "9999"  -> eval lane can never fire (WHALE_START<=0 would
+#                            otherwise RE-ENABLE the old eval-lane live taker!)
+#   pmTeLockLiveUsd "0"   -> lockbuy paper-only
+#   pmTeMakerRestPx "0"   -> maker rest off
+# Snipe knobs mirror btc-vacmaker exactly, minus pmTeSnipeRest.
+botName: btc-snipefak
+
+bot:
+  coin: btc
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveMaxOrderUsd: "12"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "300"
+  paperMode: "false"
+  pmTeEvalTl: "28"
+  pmTeLiveInflightUsd: "30"
+  pmTeLiveSize: "13"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.98"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.5"
+  pmTeWhaleStart: "0"
+  pmTeWhaleLadderUsd: "0"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0.99"
+  pmTeSnipeLiveUsd: "12"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "90"
+  pmTeThreshBps: "9999"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: btc/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi
