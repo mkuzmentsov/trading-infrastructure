@@ -1920,3 +1920,28 @@ Expected pilot economics at $12: ~$0.12/fill-bar — the pilot tests
 MECHANICS (does a T+2 GTC post, does it fill behind incumbent queue);
 if fills come, the lane scales linearly with capital at zero outcome
 risk. Watch: PF_TE_SNIPE_REST / PF_TE_SNIPE_ORDER mode=rest.
+
+**§53 — 08-28 ~01:15 Kyiv: whale bnb drill-down — his +3.0% bnb ROI is
+NOT a transferable rule; do NOT copy the volume.** Motivation: 72h
+lane study showed bnb is his best coin (+$67.72, 79 bars) and our
+worst era coin. Per-bar merge (his activity vs our PF_TE events, 72h):
+overlap 8 bars — both win, same ROI rate, he just stakes 3-4x more;
+his-only 71 bars (46 of them in our DELAY set) all winners, 87% of his
+entries at exactly 0.99, first entry median tl≈21. The decisive test —
+first-touch replay on bnb mrec ground truth (7d, 2,018 RES bars, 8sh
+clips, taker fee):
+  - naive clone (fav ask ≤0.99, tl 15-30, any price): 323 bars, 91.0%
+    win, **−2.69% ROI (−$64.80)** — the blind lane LOSES on bnb too;
+    losses concentrate at cheap first-touches (0.59-0.96, tl≈30).
+  - his actual profile (floor 0.97): 276 bars, 98.6% win, **+0.43% ROI
+    (+$9.37/7d ≈ $1.3/day)** — the §32 "≥0.98 sink" replicated
+    per-coin (+0.43% vs +0.12% pooled).
+  - his 71/71 win streak: P = 0.986^71 ≈ 37% — pure base-rate luck,
+    zero evidence of extra skill; at 0.99 one loss erases ~25 wins.
+Verdict: his bnb profit = near-breakeven high-price carry × big stake
+× a lossless 72h window. Our est-threshold skip forgoes ~$1-2/day/coin
+of low-quality carry and avoids the −2.7% naive tail. §37 already
+harvests the good half. NO deploy. (Loss-reaction side-finding, same
+study: after his 6 losing bars he sits out 2-94 bars and returns ~30%
+smaller — consistent with gate self-suppression in chop, n too small
+to call it policy; our own post-loss cooldown test stays REFUTED.)

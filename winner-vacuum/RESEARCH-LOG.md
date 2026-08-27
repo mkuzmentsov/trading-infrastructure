@@ -649,3 +649,15 @@ maker). Deployed btc pilot PM_TE_SNIPE_REST=1 (GTC post-only bid 0.99×$12 at
 T+2 on known winner, ≥1bps margin, cancel at T+88, verified readback) + gamma
 strike backfill in snipe_loop (kills the no_strike skip class). Other 6 coins
 unchanged (FAK path intact behind flag).
+
+2026-08-27 22:15K — user: run old snipe next to new one. Deployed btc-snipefak
+(control): snipe-only bot with the era FAK path (whale off via whaleStart 0,
+eval lane unreachable via thresh 9999 — NB whaleStart<=0 alone would re-enable
+the old eval-lane live taker; lock/maker off). A/B now live on btc: vacmaker
+rest-bid vs snipefak FAK, same $12/0.99/90s knobs. Commit 02ff96f.
+
+2026-08-28 01:15K — §53 whale bnb drill-down: his bnb volume = 0.97-0.99
+favourite carry at tl 15-30. First-touch mrec replay (7d): naive clone −2.69%
+ROI; 0.97-floor +0.43% (~$1.3/day @8sh). His 71/71 window = base-rate luck
+(P≈37% at 98.6%). NOT copied; no deploy. Per-coin 72h: his greens bnb/eth/
+doge/xrp, reds btc/hype/sol — same chop hurting us hurts him.
