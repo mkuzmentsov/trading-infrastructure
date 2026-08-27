@@ -969,11 +969,44 @@ class TwapEdge:
         if sh < 5 or sh * SNIPE_CAP < 1.05:
             return
         from engine.clob import (cancel_order, get_order_filled,
-                                 get_order_proceeds, place_limit_order)
+                                 get_order_proceeds, post_signed_buy,
+                                 sign_buy_order)
         t0 = time.time()
-        oid = place_limit_order(self.clob, token, "BUY", sh, SNIPE_CAP)
-        _event("PF_TE_SNIPE_REST", bar=bar.ws, winner=winner, px=SNIPE_CAP,
-               req_sh=sh, order=oid, ms=int((time.time() - t0) * 1000))
+        # sign with the WS-tracked tick (sub-0.01 caps like 0.991 are legal
+        # only in the >0.96 tick regime; place_limit_order would validate
+        # against the client's stale 0.01 cache and reject). GTC without
+        # post-only: a crossing ask <= cap post-close basically never exists,
+        # and taking one is +EV anyway (winner below redemption).
+        # The 0.001 tick regime is PER-TOKEN and unlocks only once that token
+        # trades >0.96 (venue tick_size_change) — bar-dependent, and a token
+        # that sat below 0.96 until settle stays coarse even post-close
+        # (measured 08-27 21:45: venue 400 'price 0.991 breaks minimum tick
+        # size rule 0.01'). Try the queue-jump price first; on rejection
+        # (post_signed_buy swallows to oid=None) fall back to the 0.99 queue.
+        cap = SNIPE_CAP
+        tick = pm_state.tick_size.get(token, 0.01)
+        if cap > 1 - float(tick):
+            tick = 0.001
+        oid = fill0 = None
+        try:
+            signed = sign_buy_order(self.clob, token, sh, cap,
+                                    tick_size=tick)
+            oid, _m, _px, fill0 = post_signed_buy(self.clob, signed, "GTC")
+        except Exception as exc:
+            _event("PF_TE_SNIPE_ERR", bar=bar.ws, err=str(exc)[:160])
+        if not oid and cap > 0.99:
+            cap = 0.99
+            try:
+                signed = sign_buy_order(self.clob, token, sh, cap,
+                                        tick_size=0.01)
+                oid, _m, _px, fill0 = post_signed_buy(self.clob, signed,
+                                                      "GTC")
+            except Exception as exc:
+                _event("PF_TE_SNIPE_ERR", bar=bar.ws, err=str(exc)[:160])
+                return
+        _event("PF_TE_SNIPE_REST", bar=bar.ws, winner=winner, px=cap,
+               req_sh=sh, order=oid, fill0=fill0,
+               ms=int((time.time() - t0) * 1000))
         if not oid:
             return
         deadline = end + SNIPE_WINDOW_S - 2

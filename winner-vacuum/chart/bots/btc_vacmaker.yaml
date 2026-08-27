@@ -39,7 +39,12 @@ bot:
   pmTeWhaleVolDelayVol: "0.01"
   pmTeWhaleLadderUsd: "24"
   pmTeSize: "8"
-  pmTeSnipeCap: "0.99"
+  # 2026-08-28 queue fix: 0.991 jumps the whole 0.99 resting queue (price
+  # priority). Measured 08-27 21:30 UTC: 5 of our first 8 rested windows had
+  # 0.99 winner prints (24 prints incl a 253sh sweep) while our T+2 bid at
+  # 0.99 filled 0 — queue-dead behind incumbents. 0.1c of the 1c edge buys
+  # first position above that queue; flow that digs past 0.999 hits us first.
+  pmTeSnipeCap: "0.991"
   pmTeSnipeLiveUsd: "12"
   # 2026-08-27 SNIPE REST PILOT (btc only): the taker snipe went 0/205 for
   # the whole gate era — every FAK died 'no orders found to match' (no asks

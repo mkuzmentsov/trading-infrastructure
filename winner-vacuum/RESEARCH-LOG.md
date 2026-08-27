@@ -661,3 +661,9 @@ favourite carry at tl 15-30. First-touch mrec replay (7d): naive clone −2.69%
 ROI; 0.97-floor +0.43% (~$1.3/day @8sh). His 71/71 window = base-rate luck
 (P≈37% at 98.6%). NOT copied; no deploy. Per-coin 72h: his greens bnb/eth/
 doge/xrp, reds btc/hype/sol — same chop hurting us hurts him.
+
+2026-08-28 00:50K — §54: rest lane was queue-dead at 0.99 (5/8 windows had
+0.99 prints while we rested, 0 fills). Deployed 0.991 queue-jump w/ per-token
+tick fallback (venue: 0.001 regime unlocks only after the token trades >0.96
+pre-close). btc rev 18. Hourly: fleet day −37.9 (sol/xrp halted till 00:00
+UTC, greens +19.0), bal $126.02, pods clean.

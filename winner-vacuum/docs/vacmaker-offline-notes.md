@@ -1945,3 +1945,18 @@ harvests the good half. NO deploy. (Loss-reaction side-finding, same
 study: after his 6 losing bars he sits out 2-94 bars and returns ~30%
 smaller — consistent with gate self-suppression in chop, n too small
 to call it policy; our own post-loss cooldown test stays REFUTED.)
+
+**§54 — 08-28 ~00:50 Kyiv: rest-lane queue diagnosis + 0.991 queue
+jump (btc).** First 25 rest bids at 0.99: 0 fills. Tape check of our
+first 8 rested windows: 5 had winner-side 0.99 prints (24 prints incl
+a 253sh sweep) WHILE our T+2 bid rested — we are queue-dead behind
+incumbent 0.99 bids (price-time; theirs rest earlier). Fix: cap 0.991
+= price priority over the whole 0.99 queue for 0.1c of the 1c edge.
+Two deploy iterations to make it stick: (a) client rejected 0.991 —
+pm_state's stale 0.01 tick capped validation at 0.99 → pass fine tick
+explicitly; (b) venue 400 'breaks minimum tick size rule 0.01' — the
+0.001 regime is PER-TOKEN and only unlocks once that token trades
+>0.96 pre-close, so a winner that sat <=0.96 until settle stays
+coarse-tick even post-close. Final logic: try 0.991 (tick 0.001), on
+rejection fall back to a 0.99 bid (tick 0.01). rev 18. Fine-tick bars
+now beat the queue; coarse bars join it as before.
