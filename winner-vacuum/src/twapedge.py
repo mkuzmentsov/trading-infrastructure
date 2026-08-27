@@ -155,6 +155,16 @@ SNIPE_SIZE = float(os.getenv("PM_TE_SNIPE_SIZE", "200"))
 SNIPE_LIVE_USD = float(os.getenv("PM_TE_SNIPE_LIVE_USD", "10"))
 SNIPE_WINDOW_S = float(os.getenv("PM_TE_SNIPE_WINDOW_S", "45"))
 SNIPE_RETRY_S = float(os.getenv("PM_TE_SNIPE_RETRY_S", "1.0"))
+# rest mode (2026-08-27): the taker snipe went 0/205 across the whole gate
+# era — every FAK died 'no orders found to match' because post-close there
+# are no asks <= cap. The REAL post-close flow is winner-holders dumping
+# into resting BIDS at 0.99/0.999 (btc tape: ~$1.4k/day of such prints,
+# and the maker side pays no fee under the takerOnly schedule). 1 = rest a
+# GTC post-only bid at SNIPE_CAP on the known winner instead of FAK-hunting
+# asks. MIN_BPS: skip bars whose settlement margin is under this (a wrong
+# relay tick is the only way this lane can lose).
+SNIPE_REST = os.getenv("PM_TE_SNIPE_REST", "0") == "1"
+SNIPE_REST_MIN_BPS = float(os.getenv("PM_TE_SNIPE_REST_MIN_BPS", "1.0"))
 # ── lockbuy: endgame favourite-taker (the forensics-proven 99.6% lane).
 # Buy the TWAP-implied winner late in the bar when our measured accuracy
 # table says the estimate is effectively locked, paying up to the tier cap.
@@ -838,8 +848,22 @@ class TwapEdge:
                         or rtds_state.twap_at(SYM, end + 2))
                 fb = tick is not None
             strike = bar.strike
+            if strike is None and tick is not None and age > 3 \
+                    and now - bar.gtry > 20:
+                # strike fell in a relay hole and eval_loop stopped retrying
+                # when the bar rolled (171/2000 era bars died this way as
+                # SNIPE_SKIP no_strike). gamma has priceToBeat — or the prev
+                # bar's finalPrice via the chaining identity — by now.
+                bar.gtry = now
+                ptb, _ = await asyncio.to_thread(_reference, bar.ws)
+                if not ptb:
+                    _, ptb = await asyncio.to_thread(
+                        _reference, bar.ws - BAR_SECONDS)
+                if ptb:
+                    bar.strike = strike = float(ptb)
+                    _event("PF_TE_STRIKE_GAMMA", bar=bar.ws, strike=strike)
             if tick is None or strike is None:
-                if age > 10:
+                if age > (25 if SNIPE_REST else 10):
                     done.add(end)
                     # say WHICH is missing: "no_tick" alone sent me probing the
                     # RTDS feed (which turned out to be a clean contiguous 1Hz
@@ -859,6 +883,22 @@ class TwapEdge:
             # book must still be the ENDED market (grace keeps it subscribed)
             if pm_state.market_end_ts != end:
                 continue
+            move = (tick - strike) / strike * 1e4
+            if SNIPE_REST:
+                # maker flip: rest a bid on the known winner and let the
+                # post-close dumpers hit it. No visible ask required.
+                done.add(end)
+                if abs(move) < SNIPE_REST_MIN_BPS:
+                    _event("PF_TE_SNIPE_SKIP", bar=bar.ws,
+                           reason="rest_near_tie", move_bps=round(move, 3))
+                    continue
+                _event("PF_TE_SNIPE_PAPER", bar=bar.ws, winner=winner,
+                       move_bps=round(move, 3), ask=SNIPE_CAP, mode="rest",
+                       age=round(age, 2), paper=True)
+                if _real and self.clob is not None:
+                    await asyncio.to_thread(self._snipe_rest, bar, winner,
+                                            end)
+                continue
             ask = pm_state.up_ask if winner == "UP" else pm_state.down_ask
             asz = (pm_state.up_ask_size if winner == "UP"
                    else pm_state.down_ask_size)
@@ -867,7 +907,6 @@ class TwapEdge:
             done.add(end)
             if len(done) > 400:
                 done = {x for x in done if x > end - 7200}
-            move = (tick - strike) / strike * 1e4
             sh_p = min(SNIPE_SIZE, asz)
             fee = 0.07 * ask * (1 - ask)
             _event("PF_TE_SNIPE_PAPER", bar=bar.ws, winner=winner,
@@ -909,6 +948,51 @@ class TwapEdge:
         _event("PF_TE_SNIPE_ORDER", bar=bar.ws, winner=winner, cap=SNIPE_CAP,
                req_sh=sh, order=oid, matched=matched, avg_px=avg_px,
                filled=filled, cost=round(cost, 4), pnl=round(pnl, 4),
+               live_day_pnl=round(self.live_day_pnl.get(day, 0.0), 3),
+               ms=int((time.time() - t0) * 1000))
+
+    def _snipe_rest(self, bar: Bar, winner: str, end: int):
+        """SNIPE_REST lane: GTC post-only bid at SNIPE_CAP on the KNOWN
+        winner, left up for the grace window, then cancelled and read back
+        from the trade record (get_order_proceeds — get_order fabricates
+        size_matched on culled orders, 2026-07-25 incident). The outcome is
+        settled arithmetic at placement time, so a fill is riskless carry to
+        redemption; the maker side pays no fee (takerOnly schedule)."""
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
+            return
+        token = (pm_state.token_id_up if winner == "UP"
+                 else pm_state.token_id_down)
+        if not token:
+            return
+        sh = float(int(min(SNIPE_SIZE, SNIPE_LIVE_USD / SNIPE_CAP)))
+        if sh < 5 or sh * SNIPE_CAP < 1.05:
+            return
+        from engine.clob import (cancel_order, get_order_filled,
+                                 get_order_proceeds, place_limit_order)
+        t0 = time.time()
+        oid = place_limit_order(self.clob, token, "BUY", sh, SNIPE_CAP)
+        _event("PF_TE_SNIPE_REST", bar=bar.ws, winner=winner, px=SNIPE_CAP,
+               req_sh=sh, order=oid, ms=int((time.time() - t0) * 1000))
+        if not oid:
+            return
+        deadline = end + SNIPE_WINDOW_S - 2
+        while time.time() < deadline:
+            time.sleep(min(5.0, max(0.5, deadline - time.time())))
+            f = get_order_filled(self.clob, oid)   # early-exit hint only
+            if f is not None and f >= sh - 0.01:
+                break
+        cancel_order(self.clob, oid)
+        time.sleep(2)                              # let the record settle
+        fsh, usd = get_order_proceeds(self.clob, oid)
+        fsh = fsh or 0.0
+        usd = usd or 0.0
+        pnl = fsh * 1.0 - usd                      # redeems at $1, no fee
+        if fsh:
+            self.live_day_pnl[day] = self.live_day_pnl.get(day, 0.0) + pnl
+        _event("PF_TE_SNIPE_ORDER", bar=bar.ws, winner=winner, mode="rest",
+               cap=SNIPE_CAP, req_sh=sh, order=oid, matched=bool(fsh),
+               filled=round(fsh, 2), cost=round(usd, 4), pnl=round(pnl, 4),
                live_day_pnl=round(self.live_day_pnl.get(day, 0.0), 3),
                ms=int((time.time() - t0) * 1000))
 

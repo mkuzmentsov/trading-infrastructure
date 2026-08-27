@@ -41,6 +41,16 @@ bot:
   pmTeSize: "8"
   pmTeSnipeCap: "0.99"
   pmTeSnipeLiveUsd: "12"
+  # 2026-08-27 SNIPE REST PILOT (btc only): the taker snipe went 0/205 for
+  # the whole gate era — every FAK died 'no orders found to match' (no asks
+  # <= cap exist post-close; the venue error is swallowed inside
+  # post_signed_buy, so events showed order=null). The real post-close flow
+  # is winner-holders DUMPING into resting bids: btc tape 08-27 shows
+  # ~$103k/8h of winner shares printing at 0.99/0.999 into maker bids
+  # (~$1.4k/day of spread, fee-free for makers). Rest mode places a GTC
+  # post-only bid at snipeCap on the KNOWN winner at ~T+2s instead.
+  # Revert: drop pmTeSnipeRest.
+  pmTeSnipeRest: "1"
   pmTeSnipeSize: "12"
   pmTeSnipeWindowS: "90"
   pmTeThreshBps: "0.5"

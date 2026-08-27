@@ -623,3 +623,29 @@ rewfarm research stands (strat-rewfarm.md), revivable pre-Aug-31.
 2026-08-26 19:38 | babysit (post-gap) | day −7.76 recovering, bal $165.85 | 6 of 7 coins x-0 (eth 13-0); xrp 18-4 no new losses since morning | US morning clean | no bugs, no changes
 2026-08-26 20:07 | hourly babysit | day −7.60, bal $167.69 | 3 late-fires won (eth 3-clip @20-18.8 → 13-0, hype @8.0, xrp @19.9/19.2); pilot triple-fire cadence visible (eth 3 clips in 1.2s) | no bugs, no changes
 2026-08-26 21:20 | user: "study @twap-sniper, improve from his trades" | position-PnL join (1,334 buys × recorder RES): him +209.69/5.5d ≈$38/day 99.3%, 63% of volume = 0.985-0.99 @ tl 20-31 (+134); him-only bars +113; shared bars him 15× us | consensus-lane clone REFUTED first-touch (98.13% vs 99.0% BE, −$17/day; no positive sub-cell) — his extra 1.5pp = fill-selection reality, not a rule | recommendation to user: clip size $8→$12 on existing 99%+ lanes (+~50% net at same win rates), not a new lane | notes §49 | day-current: fleet −5.8, xrp 20-4 rest x-0, bal $167.69
+2026-08-26 21:06 | hourly babysit | day −5.14 (recovering), bal $168.30 | 5 late-fires won (sol 3-clip @19.9-7.7 + @8.5 → 10-0, eth 3-clip → 16-0, btc 7-0), 6 dear forfeits | 6 of 7 coins x-0 | no bugs, no changes
+2026-08-26 22:10 | user: "keep investigating / tell me what you need" | 15m transfer validation (954 bars): lock arithmetic transfers, 82% of bars pre-decided (favorite 0.995+), in-band asks scarce; late-lane economics ≈ +$5-8/day btc+eth at $8 clips, 100% win on T−20/30 in-band subsets (thin n) → 1-coin pilot candidate, user-gated | notes §50 | NEEDS LIST: (1) clip-size decision $8→$12, (2) 15m pilot yes/no, (3) capital for inflight caps, (4) trades-channel recorder (self-serve, queued), (5) 2-3 days for live pilots to mature
+2026-08-26 22:40 | user decisions: (1) clip $8→$12 GO — deployed fleet-wide (maxOrder 12, size 13sh, ladder 24, snipe 12, disloc 24, inflight 30; halts 15 unchanged; verified all pods, 0 errs); (2) 15m pilot NO-GO for now (§50 shelved, revivable); (3) capital GO — inflight caps raised | expected ≈+50% on the 99%+ lanes; watch: 2-clip loss now −$23 (halts fire post-settle), day-loss cadence unchanged
+2026-08-26 22:07 | hourly babysit | fresh $12-clip pods all healthy (no >$9 fills yet — quiet since roll), day −4.57, bal $168.82 | 6 of 7 coins x-0 (eth 17-0) | no bugs, no changes
+2026-08-26 23:07 | hourly babysit | first $12 clips landed: 7 fills >$9 across 5 coins, ALL WON (bnb 9-0, eth 19-0) | day −3.15, bal $170.15 | no bugs, no changes
+2026-08-27 00:07 | hourly babysit | day −2.47, bal $170.79 | $12 clips 8-0 so far (xrp's first sized fill won) | 6 of 7 coins x-0 | 3h to 08-26 close | no bugs, no changes
+2026-08-27 01:07 | hourly babysit | day +5.27 GREEN (xrp's −29 morning nearly absorbed), bal $178.07 era high | $12 clips 15-0 (btc +2.98 on one sized win, sol +3.30) | 6 of 7 coins x-0, eth 21-0 | no bugs, no changes
+2026-08-27 02:07 | hourly babysit | day +6.13, bal $178.89 (era high) | $12 clips 18-0 | 6 of 7 x-0, eth 21-0, xrp 28-4 clawing | 1h to 08-26 close | no bugs, no changes
+2026-08-27 03:10 | babysit — 08-26 CLOSE | fleet −5.13 (101-5): xrp's −29 morning cluster minus all-day recovery; btc +9.48 11-0, eth +5.78 21-0, hype +4.88 10-0 | sol took the first $12-SIZED loss (−11.9 bar, 14-1) — expected cost shape | era 6 full days: +79.56, bal peak $178.89 | $12 clips ex-that-loss 20-1 | no bugs, no changes
+2026-08-27 04:07 | hourly babysit | new day +1.11 (doge 3-0 with 4 sized clips), bal $169.37 | quiet open, no bugs, no changes
+2026-08-27 05:07 | hourly babysit | day +7.70 all-green (20-0 fleet; sol +3.02, hype +2.25; 17 sized clips today all won), bal $174.75 | no bugs, no changes
+2026-08-27 06:07 | hourly babysit | day +9.54 all-green (30-0 fleet; 30 sized clips all won; hype 8-0 +3.37), bal $177.71 | no bugs, no changes
+2026-08-27 07:07 | hourly babysit | day +11.86 all-green (40-0 fleet; hype 16-0 +5.09 with 14 sized clips), bal $178.63 | no bugs, no changes
+2026-08-27 19:09 | babysit resumed after ~12h gap | US-morning chop: sol HALTED −27.04 (7-3), xrp HALTED −20.40 (11-2) — restored $15 halts worked under $12 sizing (overshoot as modeled); other 5 coins +23.2 (hype 35-0 +11.85 best-ever, 29 sized clips) | fleet day −24.20, bal $140.88 | no bugs, no changes
+2026-08-27 20:07 | hourly babysit | chop day at $12 sizing: hype gave back its day (2 sized losses, 35-2, −11.67, will halt next attempt); sol/xrp halted from morning | fleet day −47.36, bal $118.33; clean 4 coins +11.75 | halts capping as designed; no bugs, no changes
+2026-08-27 21:07 | hourly babysit | day −45.38 (stabilized), bal $119.50 | hype clawing (37-2, +0.73/hr), eth 19-0 +7.79; sol/xrp halted, no new losses this hour | no bugs, no changes
+2026-08-27 21:50 | user: "more data — improve?" | first-clip era analysis: tl-window shift RE-TIMES risk, doesn't reduce it (17-20.5 firsts 94.28% ≈ 14-17 at 93.98%; deep buckets were survivorship) → tl≤14 A/B REVERTED (bnb+doge → 20, verified, 0 errs) | headline: 6 straight chop days decayed shallow-window edge to negative (day series +37→−25) — regime, not knob | era late lane 1145-45 +95.17; per-coin: btc/eth/hype positive, sol/bnb/doge/xrp negative | notes §51
+
+2026-08-27 22:05K — SNIPE AUTOPSY + MAKER FLIP PILOT (notes §52). Taker snipe
+was 0/205 era-wide: venue kills every FAK ('no orders found to match',
+swallowed by post_signed_buy). Tape census: post-close flow = holders dumping
+winners into resting BIDS (btc ~$1.4k/day of 0.99/0.999 spread, fee-free
+maker). Deployed btc pilot PM_TE_SNIPE_REST=1 (GTC post-only bid 0.99×$12 at
+T+2 on known winner, ≥1bps margin, cancel at T+88, verified readback) + gamma
+strike backfill in snipe_loop (kills the no_strike skip class). Other 6 coins
+unchanged (FAK path intact behind flag).

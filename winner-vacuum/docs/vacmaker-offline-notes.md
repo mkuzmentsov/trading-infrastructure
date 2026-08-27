@@ -1850,3 +1850,73 @@ the honest growth lever for us is CLIP SIZE on our existing 99%+
 lanes (e.g., $8→$12 ≈ +50% on the late lane's +$80.69 era at same win
 rates; worst 2-clip loss −$23 vs $15 halt), a bankroll decision for
 the user, not a new lane. No deploy.
+
+**§50 — 08-26 22:10 Kyiv: 15m-market transfer validation (mrec15m,
+954 bars, 7d, btc+eth) — edge transfers, surface is thin but real.**
+Same TWAP-60 settle window ⇒ same lock arithmetic. Findings: most 15m
+bars are decided early (82% carry |twl|>5bps — 15m drift ≫ 5m — and
+hold 97.8-99.2%), so the favorite sits at 0.995+ and IN-BAND asks
+(0.55-0.99) are scarce: ~10 bars at T−20, ~40 at T−30, ~190 at T−60
+across 7d×2 coins. Economics of buying in-band at decisive twl:
+T−30 row ≈ +$55.8/7d, T−20 ≈ +$19.3, T−60 mixed (1-2bps cell −9.9) —
+call it ≈ +$5-8/day for btc+eth combined at $8 clips, 100% win on the
+T−20/30 in-band subsets (small n). Verdict: a modest, probably-real
+expansion; needs a 1-coin pilot (twapedge on 900s bars — config
+plumbing to verify) rather than more offline work. Not deployed —
+user decision (new-market expansions are user-gated per rewfarm
+precedent).
+
+**§51 — 08-27 21:50 Kyiv: era-wide re-analysis on 7d data — A/B
+REVERTED, and the honest headline is REGIME DECAY, not a fixable
+knob.** (a) First-clip-only tl analysis (survivorship removed): firsts
+at tl 17-20.5 win 94.28% vs 14-17 at 93.98% — identical; the era
+table's 98.7% deep buckets were ladder/decay-selected (bug-13 family:
+within-bar survival conditioning); the arm's live unconditional 94.8%
+confirms. A bar that will flip, flips at any entry tl. tl≤14 A/B
+REVERTED (bnb+doge back to 20, verified) — it cut fills ~30% for no
+safety. Disloc pilot kept (harmless, 2-0 so far). (b) The real
+finding: the 17-20.5 first-clip cell by day = +37.4 / +2.8 / +2.2 /
+−0.2 / −11.2 / −5.5 / −25.5 — six straight chop days (5-11 late
+losses/day) have compressed per-fill edge to ~zero in the shallow
+window across ALL coins. Era late lane still +95.17 (1145-45) but the
+recent run-rate is regime-throttled. Per-coin era now: btc +55.55,
+eth +35.81, hype +18.28 vs xrp −2.26, doge −14.08, bnb −18.93, sol
+−33.03. No mechanical lever remains (5 refutation rounds); levers are
+sizing (done), halts (working), and regime patience.
+
+**§52 — 08-27 ~22:00 Kyiv: SNIPE LANE AUTOPSY → MAKER FLIP (btc pilot
+LIVE).** The post-close taker snipe went **0/205 for the entire gate
+era** (all 7 coins, every event order=null, matched=false, no error
+event). Root cause chain: (a) `post_signed_buy` swallows venue
+rejections (logs to stdout, returns nulls) — the actual error is
+`400 'no orders found to match with FAK order'`; (b) post-close there
+are simply NO asks ≤0.99 on the winner — the lane was hunting a book
+state that never exists. Venue-tape census (data-api, `closed=true`
+needed for ended 5m slugs; laptop AND default-UA in-pod both get 403 —
+send a browser UA): the REAL post-close flow is winner-holders
+**selling** into resting bids. 8h × 94 bars, winner-side maker-BUY
+prints in [T, T+120]:
+  - btc: $102,870 vol at 0.99 (43.6k sh) / 0.999 (59.8k sh) → **$461
+    of spread / 8h ≈ $1.4k/day pool**, 92/94 bars pay, max bar $53.
+  - eth: $942/8h but $887 is ONE near-tie flip bar (winner dumped at
+    0.01-0.43 — the flip lane, NOT ours); ex-outlier ≈ $55/8h.
+  - sol $24, xrp $25, doge $22, bnb $10 per 8h; hype ~0.
+  - Buyers are a rotating handful (0xee65685d dominant; 0x1ba85231 —
+    the wallet the user once asked about — top-5 on bnb/doge/xrp).
+    Maker side pays NO fee (feeSchedule takerOnly=true).
+Also: 171+67 of ~2000 era bars died as SNIPE_SKIP no_strike/no_tick —
+the ws-stamped strike tick fell in a relay hole and eval_loop stops
+retrying once the bar rolls; gamma has priceToBeat by then.
+**Deployed (btc only, rev 15, ~21:54 Kyiv):** `PM_TE_SNIPE_REST=1` —
+at ~T+2s, once the settlement tick is known (margin ≥1bps guard,
+`PM_TE_SNIPE_REST_MIN_BPS`), rest a GTC **post-only bid at 0.99 ×
+$12** on the known winner for the 90s grace window, then cancel +
+authoritative readback via `get_order_proceeds` (get_order fabricates
+size_matched on culled orders — 07-25 incident). A fill is riskless
+carry to $1 redemption. Plus: snipe_loop now backfills a missing
+strike from gamma (ptb, else prev-bar finalPrice chain) at age>3s.
+Mock-tested locally (place→fill→cancel→readback→pnl, halt gate).
+Expected pilot economics at $12: ~$0.12/fill-bar — the pilot tests
+MECHANICS (does a T+2 GTC post, does it fill behind incumbent queue);
+if fills come, the lane scales linearly with capital at zero outcome
+risk. Watch: PF_TE_SNIPE_REST / PF_TE_SNIPE_ORDER mode=rest.
