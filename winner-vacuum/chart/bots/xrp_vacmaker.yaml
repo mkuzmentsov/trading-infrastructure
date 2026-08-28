@@ -8,22 +8,23 @@
 # suffixes); prior xrp3 events → data/xrp3-final-20260815.jsonl.
 # ⚠ deploy.sh live applies crypto.secret.yaml LAST — its caps override the
 # ones below (currently $5/order $50/day there; unification pending).
+# 2026-08-29 SIZING TIERS (user-approved; notes S55): raise greens btc/eth/hype to $24 clip/$48 ladder/$60 inflight (halt $15 unchanged = doubled upside, same floor); bnb holds $12 (green 6/6 post-fix); starve sol/doge/xrp to $5/$10/$15 with halt $7 (floor scaled with upside). Overlay no longer carries liveMaxOrderUsd/liveMaxDailyLossUsd.
 botName: xrp-vacmaker
 
 bot:
   coin: xrp
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "15"
-  liveMaxOrderUsd: "12"
+  liveMaxDailyLossUsd: "7"
+  liveMaxOrderUsd: "5"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
   liveTrading: "true"
   loopIntervalSecs: "300"
   paperMode: "false"
   pmTeEvalTl: "28"
-  pmTeLiveInflightUsd: "30"
-  pmTeLiveSize: "13"
+  pmTeLiveInflightUsd: "15"
+  pmTeLiveSize: "5"
   pmTeLockLiveUsd: "0"
   pmTeMakerCancelBps: "1.0"
   pmTeMakerRestPx: "0"
@@ -41,7 +42,7 @@ bot:
   # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
   # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
   pmTeWhaleVolDelayVol: "0.01"
-  pmTeWhaleLadderUsd: "24"
+  pmTeWhaleLadderUsd: "10"
   pmTeSize: "8"
   pmTeSnipeCap: "0.99"
   pmTeSnipeLiveUsd: "12"

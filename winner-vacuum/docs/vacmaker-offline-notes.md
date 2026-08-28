@@ -1960,3 +1960,20 @@ explicitly; (b) venue 400 'breaks minimum tick size rule 0.01' — the
 coarse-tick even post-close. Final logic: try 0.991 (tick 0.001), on
 rejection fall back to a 0.99 bid (tick 0.01). rev 18. Fine-tick bars
 now beat the queue; coarse bars join it as before.
+
+**§55 — 08-29 ~03:15 Kyiv: SIZING TIERS LIVE (user-approved "yes, go"
+after $105 top-up → balance $282).** 9-day per-coin table (notes/chat
+08-29): btc +71.05 / hype +43.54 / eth +42.92 = the engines; bnb
+−30.60 but ALL pre-fix (green 6/6 since 08-24, +18.2); xrp +9.80
+mixed; doge −13.42 (7/9 green days, 2 halt days); sol −37.55 = the
+one structural loser. Tiers: btc/eth/hype $24 clip / $48 ladder / $60
+inflight / halt $15 (unchanged floor, doubled upside); bnb holds
+$12/$24/$30/$15; sol/doge/xrp starved $5/$10/$15/halt $7 (floor scaled
+with upside — keeping $15 halts on $5 clips would have worsened their
+ratio). Depth evidence for $24 (askdepth 08-28): >=13sh on 62-85% of
+trigger bars, >=26sh on 42-74%; FAK is dollar-capped so a $24 clip can
+never fill less than a $12 one. $48+ deferred (>=52sh only 12-63%).
+⚠ overlay change: liveMaxOrderUsd/liveMaxDailyLossUsd REMOVED from
+crypto.secret.yaml — per-bot yamls are now authoritative for both.
+All 7 redeployed + restarted; per-pod env verified (24/15/26/48/60 ×3,
+12/15/13/24/30 ×1, 5/7/5/10/15 ×3); 0 runtime errors post-deploy.

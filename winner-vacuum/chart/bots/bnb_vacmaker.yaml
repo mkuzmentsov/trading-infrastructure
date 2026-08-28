@@ -5,6 +5,7 @@
 # 0.55-0.98. Harvest 11/11 buyable correct; 08-15 live 11W/0L. Known cost:
 # FAK no-fills when the seen ask vanishes in the ~0.6s post path (2-3/day).
 # This file mirrors deployed helm values.
+# 2026-08-29 SIZING TIERS (user-approved; notes S55): raise greens btc/eth/hype to $24 clip/$48 ladder/$60 inflight (halt $15 unchanged = doubled upside, same floor); bnb holds $12 (green 6/6 post-fix); starve sol/doge/xrp to $5/$10/$15 with halt $7 (floor scaled with upside). Overlay no longer carries liveMaxOrderUsd/liveMaxDailyLossUsd.
 botName: bnb-vacmaker
 
 bot:

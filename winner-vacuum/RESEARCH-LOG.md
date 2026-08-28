@@ -667,3 +667,8 @@ doge/xrp, reds btc/hype/sol — same chop hurting us hurts him.
 tick fallback (venue: 0.001 regime unlocks only after the token trades >0.96
 pre-close). btc rev 18. Hourly: fleet day −37.9 (sol/xrp halted till 00:00
 UTC, greens +19.0), bal $126.02, pods clean.
+
+2026-08-29 03:15K — §55 sizing tiers live: btc/eth/hype $24/$48/$60 (halt 15),
+bnb hold $12, sol/doge/xrp starved $5/$10/$15 (halt 7). Overlay no longer
+carries order/halt caps. Balance $282 after user +$105 deposit. Tight watch
+armed for first sized fills, then hourly cadence.
