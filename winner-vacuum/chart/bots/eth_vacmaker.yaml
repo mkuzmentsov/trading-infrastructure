@@ -9,14 +9,14 @@
 # events=2, quote age 150s) → 6 FAKs killed on phantom asks, sim "wins"
 # were fiction. If eth goes quiet, CHECK THE HEARTBEAT EVENT RATE FIRST;
 # fix = pod restart. This file mirrors deployed helm values.
-# 2026-08-29 SIZING TIERS (user-approved; notes S55): raise greens btc/eth/hype to $24 clip/$48 ladder/$60 inflight (halt $15 unchanged = doubled upside, same floor); bnb holds $12 (green 6/6 post-fix); starve sol/doge/xrp to $5/$10/$15 with halt $7 (floor scaled with upside). Overlay no longer carries liveMaxOrderUsd/liveMaxDailyLossUsd.
+# 2026-08-29 SIZING TIERS (user-approved; notes S55): raise greens btc/eth/hype to $24 clip/$48 ladder/$60 inflight (halt $30 = same 2-losses-and-out policy per dollar as the proven $12/$15 era); bnb holds $12 (green 6/6 post-fix); starve sol/doge/xrp to $5/$10/$15 with halt $7 (floor scaled with upside). Overlay no longer carries liveMaxOrderUsd/liveMaxDailyLossUsd.
 botName: eth-vacmaker
 
 bot:
   coin: eth
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "15"
+  liveMaxDailyLossUsd: "30"
   liveMaxOrderUsd: "24"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"

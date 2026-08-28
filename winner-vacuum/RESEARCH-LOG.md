@@ -672,3 +672,9 @@ UTC, greens +19.0), bal $126.02, pods clean.
 bnb hold $12, sol/doge/xrp starved $5/$10/$15 (halt 7). Overlay no longer
 carries order/halt caps. Balance $282 after user +$105 deposit. Tight watch
 armed for first sized fills, then hourly cadence.
+
+2026-08-29 ~03:40K — halt correction (user: "go"): $24 tier halt $15→$30 so
+the proven 2-losses-and-out policy scales with clip size (at $24 a single
+~$14 loss bar would have 1-loss-halted the day, forfeiting the measured
+post-loss winners). Fleet worst case now $126 (45% of $282); worst real
+fleet day ever −$50. Verified in-pod: btc/eth/hype order=24 halt=30, 0 errs.
