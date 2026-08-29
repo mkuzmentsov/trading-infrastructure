@@ -232,3 +232,17 @@ Rule: any entry-price study must be replayed as FIRST-TOUCH on the
 100ms path, at the touched price, one trigger per bar — never on
 per-bar extremes. Also re-check for single correlated episodes
 (same-timestamp multi-coin rows are ONE event).
+
+## Bug #24 — settlement-mechanics ERAS inside one archive (2026-08-29, openlag)
+
+The local mrec archive (07-30→08-17) spans THREE resolution regimes (venue
+changelog): point-price settle <Aug 7; TWAP-30 Aug 7–14; TWAP-60 ≥Aug 14.
+A TWAP-60 strike recon applied to point-era bars manufactured fake
+"displacement" signals (spot never diverges from a strike that IS the spot)
+— win% 40-50% on ≥5bps "triggers", i.e. pure vig burn, which first read as
+"signal decays" day structure. Symptom to watch: a day-split whose sign
+flips at a known venue-change date. Rule: any strike/settlement study must
+hard-split by era and only the current-era slice counts; the mismatched
+era doubles as a free negative control (it must come out dead — ours did).
+Corollary: archive data before Aug 7 is unusable for ANY settlement-window
+question (the mechanism didn't exist).
