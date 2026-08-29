@@ -159,6 +159,21 @@ displacement before the fire window:
 3. Pre-open fill physics (archive era) stays true OOS-adjacent: pre-open
    taker flow is real; the constraint is price, not fillability.
 
+## LIVE PROBE (deployed 2026-08-29, user "Proceed")
+
+`src/openlag.py`, releases `{btc,eth,sol}-openlag-every-tick-single`
+(chart/bots/<coin>_openlag.yaml). NOT an income lane — a measurement probe:
+- fire window [ws−10, ws−3] on the NEXT bar's market, side = sign(z),
+  z = (latest Chainlink tick / forming strike − 1)·1e4 / σ5m(Binance klines);
+  guards: ≥35 of ~59 strike ticks arrived, tick age ≤8s, σ ≥1bps.
+- $5 FAK clip (max 2 attempts), ask band [0.30, 0.72], sticky $7/UTC-day halt
+  persisted to /app/logs/openlag_halt.json (survives restarts).
+- **OL_EVAL fires every bar** (signal snapshot regardless of gate) — builds
+  the live calibration dataset; OL_TRIGGER/OL_ORDER give the pre-open FAK
+  match rate (the number offline cannot produce); OL_SETTLE + OL_HALT close
+  the loop. Judge after ~1 week on: match rate by ask band, EV/clip vs the
+  offline −2..+3c band, trigger rate (~4/day/coin expected).
+
 ## Standing re-check (the only open action)
 `winner-vacuum/tools/openlag/` holds the frozen pipeline:
 `extract_cl.py <coin> <mrec_dir> <out.csv>` per coin (needs raw archive
