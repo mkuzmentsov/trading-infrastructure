@@ -1,4 +1,4 @@
-# Bar-open strike displacement (taker) — "openlag". Post-open: DEAD. Pre-open final-seconds: OPEN SEAM (data-starved).
+# Bar-open strike displacement (taker) — "openlag". Post-open: DEAD. Pre-open seam: EXISTED mid-Aug, PRICED AWAY by the current market (OOS 08-22→29). Re-check monthly.
 
 Started 2026-08-29 (user mandate: "completely new strategy, 5m crypto only,
 don't touch existing bots, gather data as needed"). Session scratchpad:
@@ -113,17 +113,62 @@ real Chainlink strikes, 7 coins incl hype) — running in-pod
 above. If it confirms: this is the strongest new-lane candidate since the
 vacmaker.
 
-## Next steps (in order)
-1. **Data**: cl-era pod pull (08-22→08-29, all 7 coins incl hype, real
-   `cl`/`tw` fields) — running 2026-08-29; archive keeps growing daily,
-   revisit at ≥10 TWAP-60 days.
-2. Re-run (B) on cl-truth strikes with vol-normalized z, cluster-dedupe
-   (per-ws), stratified permutation null, per-coin split.
-3. If it survives: measure pre-open fill physics BEFORE sizing — a $5-8
-   probe lane (needs user sign-off) or passive measurement of pre-open
-   prints vs displayed asks in mrec (`trd` on next1 rows — data exists).
-4. Only then think about an executor (FAST_EXEC presign; fire at ws−3..ws−1
-   on z-gate; strike from live rtds TWAP-60 stream like vacmaker).
+## ⭐ THE OOS VERDICT (2026-08-29 ~14:30K) — the seam was REAL and is now PRICED
+
+Judge dataset: 14,056 bars, 08-22→08-29 (8 days), 7 coins, REAL Chainlink
+strikes (`cl`/`cl_ts` 1Hz ticks pulled to the local archive — full raw drain
+completed, `data/mrec/<coin>/` now also covers 08-22→08-29). Fully disjoint
+from every in-sample number above. Scripts: `seam_cl.py`, `seam_cl2.py`
+(basis-clean variants), `seam_mid.py`, `seam_early.py` in the session
+scratchpad and mirrored to `winner-vacuum/tools/openlag/`.
+
+**What replicated:** the INFORMATION. Trigger win rates hold (70-90%) and beat
+the same-ask base rate in every test (stratified nulls z=+2.0…+8.4). The
+locked-strike signal is real, permanently.
+
+**What did not:** the PRICE. Pre-open asks on displaced bars now average
+0.68-0.76 (archive era: 0.54-0.62) — the pre-open book prices the
+displacement before the fire window:
+- |z|≥1.2 at ws−3: **−2.4 to −3.1c/sh** (basis-clean variants A/B; archive
+  +14c). Stale-book subset (ask≤0.62) nearly extinct: n=7 in 8 days.
+- moderate band z∈[0.45,1.2): +1.0c/sh pooled (n=906) — informational, not
+  economic; the positive residue concentrates at asks 0.5x (+8c) = exactly
+  the band with the 11% live match rate ([[taker-side-adverse-selection]]).
+- fire EARLIER: ws−10 mildly positive everywhere (+2.7…+4.1c/sh, p=0.02,
+  5/8 days) decaying to ~0 by ws−3; ws−30 dead (partial strike, win 52-56%).
+  The leftover is a few cents at ws−10 — under any fill haircut ≈ 0.
+- Timing of death: between 08-17 and 08-22 — coincides with the venue's
+  crypto taker-delay cut 250ms→50ms (08-17) and/or competitor adaptation.
+  The archive proves the exploitable state EXISTED for ≥10 days; it can
+  recur (new coin listings, competitor exits, venue changes) → cheap
+  standing re-check, not a dead-forever verdict.
+
+**Adjacent findings (same dataset, keep):**
+1. ⭐ **T+2 winner detection from relay ticks is 99.98% correct** (2 wrong
+   in 12,281) under guards: ≥40 of ~59 settlement ticks arrived AND
+   |margin|≥1bps. Unguarded: 99.33%; all big-margin "errors" are relay-hole
+   bars (nstrike/nfinal 1-24). Directly validates the live snipe-rest
+   min-bps guard; any post-close logic MUST carry a tick-completeness
+   check, not just a margin check.
+2. **Candidate B (post-close flip-harvest taker) = SMALL, skip.** Winner-ask
+   ≤0.90 displays on 2.5% of bars (~44/day fleet) but the print census
+   bounds ACTUAL capture at ~$80-170/day for all participants combined
+   (taker-buys of the winner <0.90 post-close), vs the $315/day
+   sell-into-bid ≥0.99 pool the snipe-rest pilot already targets. The
+   displayed-vs-captured gap (~10×) is bug-#23 fill physics again.
+3. Pre-open fill physics (archive era) stays true OOS-adjacent: pre-open
+   taker flow is real; the constraint is price, not fillability.
+
+## Standing re-check (the only open action)
+`winner-vacuum/tools/openlag/` holds the frozen pipeline:
+`extract_cl.py <coin> <mrec_dir> <out.csv>` per coin (needs raw archive
+current — pull with the parallel per-coin cat+verify pattern), then
+`seam_cl2.py` in the CSV dir. Judge on: |z|≥1.2 pre3 EV/sh, the avgask
+column (the tell: ~0.54 = stale book is back, ~0.72 = still priced), and
+the stratified-null p. Takes ~10 min. Worth re-running ~monthly or after
+any venue mechanics change (fees, taker delay, tick size, new coins).
+Deployment bar if it reopens: the archive-era battery of this file §
+"Validation battery" + a $5-clip live probe for pre-open FAK match rate.
 
 ## Venue docs sweep, same session (2026-08-29)
 - **50ms crypto taker delay** (Aug 17 changelog, down from 250ms) — a
