@@ -1977,3 +1977,29 @@ never fill less than a $12 one. $48+ deferred (>=52sh only 12-63%).
 crypto.secret.yaml — per-bot yamls are now authoritative for both.
 All 7 redeployed + restarted; per-pod env verified (24/15/26/48/60 ×3,
 12/15/13/24/30 ×1, 5/7/5/10/15 ×3); 0 runtime errors post-deploy.
+
+**§56 — 08-29 ~20:45 Kyiv: REST-LANE VERDICT — structurally queue-gated,
+0/165; the tick regime splits the lane into two cells and we lose both.**
+Today's 14 indexed rested windows (US session): 46 winner-side prints at
+exactly 0.99 (incl 200/164/143/107sh sweeps) — the pool is alive at the
+08-27 scale. But the split is mechanical:
+  - FINE-tick bars (winner traded >0.96 pre-close, 0.991 bid legal):
+    flow gets absorbed at 0.995/0.999 ABOVE us — 0 of today's ≤0.99
+    prints happened on our 0.991 bars. The queue-jump jumps a queue
+    the flow never reaches.
+  - COARSE-tick bars (winner ≤0.96 until settle): 0.99 is the top
+    permitted bid level, ALL 46 prints landed there — and 0.991 is
+    illegal (venue tick rule), so only TIME priority matters, and the
+    incumbents' standing bids are hours earlier than our T+2 GTC.
+    0 fills across every window with flow.
+Even the whale captures only ~156sh/48h (~0.3% of the pool, ~$0.78/day)
+— the incumbents (0xee65685d et al) own it with standing bids. Getting
+time priority requires resting 0.99 through the bar = exactly the
+pre-close flip exposure that killed the maker program ([[maker-resting-
+order-wall]]: acquisition-price wall) and v3 pre-close (btc PAUSED
+08-02). RECOMMENDATION: close the rest pilot (SNIPE_REST off) AND the
+dead FAK lane (0/205 era + 0 since), decommission btc-snipefak
+(control confirmed the null twice) — pending user OK since snipefak
+was user-requested. The post-close pool stays documented as
+structurally owned; do not reopen without a time-priority mechanism
+that does not recreate the maker wall.
