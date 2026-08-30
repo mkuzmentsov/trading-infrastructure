@@ -31,6 +31,12 @@ bot:
   pmTeMinAsk: "0.55"
   pmTeMinCoverage: "0.5"
   pmTeWhaleStart: "30"
+  # 08-30 disloc fleet-wide (user go; era top-15 bars: cheap entries <=0.85
+  # made $3.55/bar vs $0.28 for >0.95; #1 bar = btc 0.19 -> +$33.76):
+  # separate $24/bar budget for <=0.85 fills + 0.15s dislocation scan.
+  pmTeWhaleScanS: "0.15"
+  pmTeWhaleCooldownS: "0.5"
+  pmTeDislocLadderUsd: "24"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
   # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
   # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient

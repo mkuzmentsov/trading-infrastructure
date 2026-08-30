@@ -697,3 +697,8 @@ Excl the single hype bar the fleet was +27.3 — the tier structure worked:
 2026-08-30 10:00K — §57 halt cooldown episodes live all 7 (1h resume, fresh
 budget per episode; user request after whale counterfactual: +1.16%, 0 loss
 bars in recovered post-halt windows). liveHaltCooldownS "3600"; 0 = legacy.
+
+2026-08-30 10:40K — disloc ladder FLEET-WIDE (user go; was eth/xrp pilot 2-0).
+Basis: era top-15 winners dominated by cheap entries (<=0.85 band $3.55/bar
+vs $0.28 for >0.95; #1 = btc 0.19 -> +$33.76 = 39% of era net). All 7 now:
+pmTeDislocLadderUsd 24, scan 0.15s. Verified in-pod, 0 errors.
