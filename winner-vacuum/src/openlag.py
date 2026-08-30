@@ -127,6 +127,7 @@ def outcome_up(ws: int):
 class Openlag:
     def __init__(self) -> None:
         self.clob = None
+        self.strikes: list[tuple[int, float]] = []   # (ws, strike) per bar
         self.next_ws = 0
         self.tokens: dict | None = None      # {"up":id,"down":id,"cid":...}
         self.fired: set[int] = set()
@@ -186,20 +187,38 @@ class Openlag:
             await asyncio.sleep(2.0)
 
     # ── signal ───────────────────────────────────────────────────────────
+    def _sigma_fallback(self) -> float | None:
+        """sigma5m from own strike history (hype has no Binance spot; also
+        covers Binance outages). Needs >=9 consecutive strikes (~45 min)."""
+        h = self.strikes[-13:]
+        rets = [math.log(h[i][1] / h[i - 1][1]) * 1e4 for i in range(1, len(h))
+                if h[i][0] - h[i - 1][0] == 300 and h[i - 1][1] > 0]
+        if len(rets) < 8:
+            return None
+        mu = sum(rets) / len(rets)
+        return (sum((x - mu) ** 2 for x in rets) / len(rets)) ** 0.5
+
     def _signal(self, nxt: int):
         wm = rtds_state.window_mean(SYM, nxt - 62, nxt - 3)
         if not wm:
             return None, "no_strike", {}
         strike, obs, total = wm
+        if not self.strikes or self.strikes[-1][0] != nxt:
+            self.strikes.append((nxt, strike))
+            del self.strikes[:-20]
         latest = rtds_state.latest(SYM)
         if not latest:
             return None, "no_tick", {}
         tick_ts, cl = latest
         age = time.time() - tick_ts
         sig = _sigma5m_bps()
+        src_sig = "binance"
+        if not sig:
+            sig = self._sigma_fallback()
+            src_sig = "strikes"
         info = {"strike": round(strike, 6), "obs": obs, "cl": cl,
                 "tick_age": round(age, 1),
-                "sigma": round(sig, 2) if sig else None}
+                "sigma": round(sig, 2) if sig else None, "sig_src": src_sig}
         if obs < MIN_TICKS:
             return None, "few_ticks", info
         if age > MAX_TICK_AGE:

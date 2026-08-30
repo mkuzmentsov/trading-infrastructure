@@ -1,0 +1,29 @@
+# doge-openlag — pre-open locked-strike taker PROBE (strat-openlag.md).
+# Fleet expansion 2026-08-30 (user: "run the same on rest of the coins").
+# $5 clips, |z|>=1.2, fire [ws-10, ws-3], ask band [0.30, 0.72], sticky $7/day halt.
+botName: doge-openlag
+
+bot:
+  coin: doge
+  entrypoint: openlag.py
+  dryRun: "false"
+  liveTrading: "true"
+  paperMode: "false"
+  liveMaxOrderUsd: "5"
+  liveMaxDailyLossUsd: "7"
+  olZMin: "1.2"
+  olFireStart: "10"
+  olFireEnd: "3"
+  olClipUsd: "5"
+  olMaxAsk: "0.72"
+  olMinAsk: "0.30"
+  olMinTicks: "35"
+  olMinSigmaBps: "1.0"
+  olMaxTickAge: "8"
+  olAttempts: "2"
+  polymarketRtdsSymbol: doge/usd
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 1Gi
