@@ -724,3 +724,11 @@ Same wave: §59 brake 0.05 + risk-persist fleet-wide (xrp round-trip PROVED
 live: recent_moves survived the restart — vol blind-window closed), snipe
 caps zeroed everywhere. Verified in-pod ×7, 0 errors. Worst-case/coin/day
 now ~1 bad laddered bar −$48 per 1h episode, halt 30.
+
+2026-08-30 20:00K — §60: (a) btc 15m PILOT LIVE (btc-vacmaker15m, BAR=900,
+$12/$24/halt15 + full §57-59 stack; found btc-updown-15m markets cleanly);
+(b) generic-crypto-image 0.2 with COINCURVE built+pushed, fleet on it —
+in-pod signing now 0.5ms/sign (was ~100-300ms pure-Python, 117x gap closed);
+(c) risk-persistence proved on ALL 7 through the image roll (restored=1
+everywhere, 0 errors). Analytics leads closed: 04-08 UTC hole = 3-bar
+artifact (ex-3 +18.52); tl 20-25 cell = boundary skin (51/52 at tl≈20).

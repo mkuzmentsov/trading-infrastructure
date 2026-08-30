@@ -7,7 +7,7 @@ image:
   # generic-crypto-image adds the ML stack (pandas/scikit-learn/lightgbm) on top
   # of the old pm-btc-bot deps, so the cur+2 direction models load in-process.
   repository: mkuzmentsov/generic-crypto-image
-  tag: "0.1"
+  tag: "0.2"
   pullPolicy: IfNotPresent
 
 bot:

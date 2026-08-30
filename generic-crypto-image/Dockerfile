@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir \
     requests==2.32.3 \
     # ── on-chain (redemptions / relayer) ─────────────────────────────────────
     eth-account \
+    coincurve \
     eth-abi \
     eth-keys \
     eth-utils \
