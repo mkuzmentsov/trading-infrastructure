@@ -16,6 +16,8 @@ bot:
   dryRun: "false"
   entrypoint: twapedge.py
   liveMaxDailyLossUsd: "7"
+  # 08-30 user: halts pause 1h then resume w/ fresh budget (episodes; 0=day)
+  liveHaltCooldownS: "3600"
   liveMaxOrderUsd: "5"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"

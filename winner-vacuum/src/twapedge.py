@@ -35,7 +35,8 @@ import os
 import time
 import urllib.request
 
-from config import (BAR_SECONDS, DRY_RUN, LIVE_MAX_DAILY_LOSS_USD,
+from config import (BAR_SECONDS, DRY_RUN, LIVE_HALT_COOLDOWN_S,
+                    LIVE_MAX_DAILY_LOSS_USD,
                     LIVE_MAX_ORDER_USD, LIVE_TRADING,
                     TRAINING_EVENT_LOG_PATH, log)
 from core.gamma import grid_window_start, window_slug
@@ -281,9 +282,38 @@ class TwapEdge:
         self.clob = None
         self.live_day_pnl: dict[str, float] = {}
         self.live_halted = False
+        self.halt_until = 0.0             # cooldown gate (epoch)
+        self.halt_base: dict[str, float] = {}    # day -> pnl at last trip
+        self.halt_episodes: dict[str, int] = {}
         self.live_inflight = 0.0          # USD in unresolved live positions
         self.recent_moves: list = []      # |bar move bps|, last VOL_BARS bars
         self.presigned: dict = {}         # token_id -> signed cap-limit BUY
+
+    def _risk_halted(self) -> bool:
+        """Loss halt with cooldown EPISODES (user 2026-08-30: 1h, not the
+        rest of the day). Trips each time the UTC day's realized pnl drops
+        another LIVE_MAX_DAILY_LOSS_USD below the previous trip level; live
+        orders pause LIVE_HALT_COOLDOWN_S, then resume on a fresh budget.
+        LIVE_HALT_COOLDOWN_S <= 0 keeps the legacy until-midnight halt."""
+        now = time.time()
+        if now < self.halt_until:
+            return True
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        dp = self.live_day_pnl.get(day, 0.0)
+        if dp - self.halt_base.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
+            ep = self.halt_episodes.get(day, 0) + 1
+            self.halt_episodes[day] = ep
+            self.halt_base[day] = dp
+            if LIVE_HALT_COOLDOWN_S > 0:
+                self.halt_until = now + LIVE_HALT_COOLDOWN_S
+            else:
+                self.halt_until = now - (now % 86400) + 86400
+            self.live_halted = True
+            _event("PF_TE_LIVE_HALT", day=day, day_pnl=round(dp, 2),
+                   episode=ep, cooldown_s=int(self.halt_until - now))
+            return True
+        self.live_halted = False
+        return False
 
     def _ambient_vol(self):
         """Mean |move| of the last VOL_BARS settled bars; None until warm."""
@@ -306,13 +336,8 @@ class TwapEdge:
     # ── live order (the paper sim above stays untouched as the benchmark) ───
     async def _live_fire(self, bar: Bar, side: str, ask: float, asz: float):
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
-            if not self.live_halted:
-                self.live_halted = True
-                _event("PF_TE_LIVE_HALT", day=day,
-                       day_pnl=round(self.live_day_pnl.get(day, 0.0), 2))
+        if self._risk_halted():
             return
-        self.live_halted = False
         # retry-FAK: a kill costs nothing, so after one we re-read book and
         # estimate and take again while BOTH still qualify (same side, over
         # threshold, over the coverage floor, ask in band). Every attempt is
@@ -426,13 +451,8 @@ class TwapEdge:
     # ── vacuum-maker: rest a post-only bid on the implied winner ───────────
     def _maker_rest(self, bar: Bar, side: str, est_bps: float):
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
-            if not self.live_halted:
-                self.live_halted = True
-                _event("PF_TE_LIVE_HALT", day=day,
-                       day_pnl=round(self.live_day_pnl.get(day, 0.0), 2))
+        if self._risk_halted():
             return
-        self.live_halted = False
         token_pre = (pm_state.token_id_up if side == "UP"
                      else pm_state.token_id_down)
         tick_pre = float(pm_state.tick_size.get(token_pre, 0.01) or 0.01)
@@ -918,7 +938,7 @@ class TwapEdge:
 
     def _snipe_fire(self, bar: Bar, winner: str, end: int):
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
+        if self._risk_halted():
             return
         token = (pm_state.token_id_up if winner == "UP"
                  else pm_state.token_id_down)
@@ -959,7 +979,7 @@ class TwapEdge:
         settled arithmetic at placement time, so a fill is riskless carry to
         redemption; the maker side pays no fee (takerOnly schedule)."""
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
+        if self._risk_halted():
             return
         token = (pm_state.token_id_up if winner == "UP"
                  else pm_state.token_id_down)
@@ -1086,7 +1106,7 @@ class TwapEdge:
 
     def _lock_fire(self, bar: Bar, side: str, cap: float, seen_ask: float):
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
+        if self._risk_halted():
             return
         token = (pm_state.token_id_up if side == "UP"
                  else pm_state.token_id_down)
@@ -1237,13 +1257,8 @@ class TwapEdge:
     def _whale_fire(self, bar: Bar, side: str, ask: float, est: float,
                     tl: float):
         day = time.strftime("%Y-%m-%d", time.gmtime())
-        if self.live_day_pnl.get(day, 0.0) <= -LIVE_MAX_DAILY_LOSS_USD:
-            if not self.live_halted:
-                self.live_halted = True
-                _event("PF_TE_LIVE_HALT", day=day,
-                       day_pnl=round(self.live_day_pnl.get(day, 0.0), 2))
+        if self._risk_halted():
             return
-        self.live_halted = False
         sh = float(int(min(LIVE_SIZE, LIVE_MAX_ORDER_USD / max(ask, 0.01))))
         if sh < 5 or sh * ask < 1.05:
             return

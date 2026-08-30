@@ -2003,3 +2003,20 @@ dead FAK lane (0/205 era + 0 since), decommission btc-snipefak
 was user-requested. The post-close pool stays documented as
 structurally owned; do not reopen without a time-priority mechanism
 that does not recreate the maker wall.
+
+**§57 — 08-30 ~10:00 Kyiv: HALT COOLDOWN EPISODES LIVE (all 7; user:
+"instead of full day, make halt for 1h").** Evidence (whale
+counterfactual over our 12 historical halt windows, halt+1h→midnight,
+his same-lane trades vs resolution): 8 recovered windows = +$60.44 on
+$5,218 (+1.16%), ZERO losing bars post-halt+1h (~530 trades); 4
+windows he traded nothing (chop keeps the gate silent anyway) — the
+day-halt was forfeiting safe hours. Design: `_risk_halted()` episodes
+— each time day pnl drops another LIVE_MAX_DAILY_LOSS_USD below the
+last trip level → pause LIVE_HALT_COOLDOWN_S (3600 live) → resume on
+a fresh budget. PF_TE_LIVE_HALT now carries episode + cooldown_s.
+`LIVE_HALT_COOLDOWN_S<=0` = legacy until-midnight (default). Worst
+day/coin is no longer hard-capped (episode chain), realistically
+~2-3 episodes: $24 tier ≈ −$60-90 tail vs −$48 before. User first
+asked for NO halts at all; settled on 1h episodes mid-deploy. All六
+sites centralized into _risk_halted (mock-tested: trip/cool/resume/
+ep2/legacy). Deployed all 7, env verified 30|15|7 / 3600, 0 errors.
