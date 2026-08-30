@@ -686,3 +686,9 @@ tick bars: flow absorbed at 0.995+ above our 0.991. Coarse bars: all 46 of
 today's 0.99 prints, but 0.991 illegal there (tick rule) and incumbents own
 time priority. Whale himself gets only ~0.3% of this pool. Recommend closing
 both snipe lanes + snipefak (awaiting user OK).
+
+2026-08-30 03:40K — DAY CLOSE 08-29 (sized-tier day 1): fleet −20.44 (133-4).
+btc +8.19, eth +7.31, doge +4.85, xrp +4.01, bnb +1.95, sol −8.04 (2 flips,
+$7 halt capped it), hype −38.71 (one decisive-flip double-clip bar, $30 halt).
+Excl the single hype bar the fleet was +27.3 — the tier structure worked:
+5 lossless coins, both reds stopped at their floors. Balance $232.20.
