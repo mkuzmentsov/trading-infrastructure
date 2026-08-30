@@ -38,6 +38,10 @@ bot:
   # 08-30 §58 mid-band first-clip skip (eth exempt - band +$60 there)
   pmTeFirstSkipLo: "0.90"
   pmTeFirstSkipHi: "0.98"
+  # 08-30 §59 PILOT (user "try on xrp"): toxic-fill ladder brake @5%
+  # (era net +$12.28) + risk-state persistence across restarts.
+  pmTeToxicBrake: "0.05"
+  pmTeRiskPersist: "1"
   pmTeWhaleCooldownS: "0.5"
   pmTeDislocLadderUsd: "24"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.

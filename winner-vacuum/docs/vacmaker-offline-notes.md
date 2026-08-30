@@ -2039,3 +2039,24 @@ ex-worst-day −$102.91, ex-3-worst-BARS −$42.72 — broad, but 08-27
 this is trend-regime loading, the 6th confirmation of mode dependence.
 NOT deployed. Next test if pursued: split by daily drift sign +
 vol-conditional mechanism (grind-up vs dump-bar microstructure).
+
+**§59 — 08-30 ~16:10 Kyiv: A/B/C shipped (user "a,b,c OK, try on xrp").**
+A) TOXIC-FILL LADDER BRAKE (xrp pilot, PM_TE_TOXIC_BRAKE=0.05): a clip
+filling ≥5% below its displayed ask marks the bar toxic → no further
+clips that bar (filled clip keeps its windfall). Era replay: improvement
+≥5% clips run 17.8-25% bar-loss rate vs 2.3% baseline; brake@5% net
++$12.28 era (saves $21.73 pile-on losses, forfeits $9.45 winner
+continuation); @3% washes out (+$0.11), @10% +$8.81 — 5% is the knee.
+Emits PF_TE_TOXIC_BRAKE. Class members to date: eth 08-28 (0.80),
+doge 08-28 (0.30), hype 08-30 (0.40, −$57 bar).
+B) SNIPE LANES CLOSED on btc (pmTeSnipeCap "0") + btc-snipefak
+uninstalled (§56 queue-gated verdict; rest 0/165, FAK 0/205+). TODO:
+zero the残 FAK caps on the other 6 at their next natural redeploy.
+C) RISK-STATE PERSISTENCE (xrp pilot, PM_TE_RISK_PERSIST=1):
+live_day_pnl / halt_until / halt_base / halt_episodes / recent_moves
+survive restarts via /app/logs/risk-state.json (PVC), saved on every
+settle + halt trip, restored at boot. Kills the deploy blind-window
+class (doge 08-20, eth 08-28 counter reset). Fleet-wide after xrp
+proves a restart round-trip. Mock tests: brake math, persist
+round-trip, halt_until preservation. In-pod verified: xrp brake=0.05
+persist=1, btc snipecap=0, snipefak gone, 0 errors.

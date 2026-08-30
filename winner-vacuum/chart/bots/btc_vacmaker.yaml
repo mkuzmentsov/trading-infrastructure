@@ -56,7 +56,8 @@ bot:
   # 0.99 winner prints (24 prints incl a 253sh sweep) while our T+2 bid at
   # 0.99 filled 0 — queue-dead behind incumbents. 0.1c of the 1c edge buys
   # first position above that queue; flow that digs past 0.999 hits us first.
-  pmTeSnipeCap: "0.991"
+  # 08-30 §56 CLOSE (user ok): snipe lanes structurally queue-gated; cap 0 disables
+  pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"
   # 2026-08-27 SNIPE REST PILOT (btc only): the taker snipe went 0/205 for
   # the whole gate era — every FAK died 'no orders found to match' (no asks

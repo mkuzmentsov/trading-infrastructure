@@ -708,3 +708,8 @@ coins (eth exempt, band +$60 there); LOO-robust −$122/era cell. UP/DOWN
 asymmetry NOT deployed (08-27 inversion = trend loading). Commit + verify
 0.90-0.98|0-0 in-pod, 0 errors.
 2026-08-30 ~14:40K | OPENLAG FLEET EXPANSION to 7 coins (user: "run the same on rest of the coins") | +xrp/doge/bnb/hype; code: sigma5m strike-history FALLBACK added (hype has no Binance spot → ~65min warmup; also covers Binance outages; OL_EVAL now logs sig_src) | hype PVC-less (node volume-attach limit, mom-pods precedent — halt not sticky across restarts there) | btc/eth/sol upgraded to the same code (day-pnl counters reset on restart — halt counts from 0 for the rest of 08-30) | first live cycle earlier: btc DOWN z=-1.42→-1.58, attempt1 ask 0.67 PULLED (first live adverse-selection datum), attempt2 FILLED 5.6sh@0.65 → WON +$1.96; eth same bar skipped ask_band 0.76 (the OOS "priced" story live) | ⚠️ re-hit the kubectl-context trap mid-session (relative source → dead EKS, reads only) | monitor v2: 7 coins, 2-strike no-pod rule (v1 false-alarmed on API hiccups)
+
+2026-08-30 16:10K — §59: toxic-fill brake @5% + risk-state persistence LIVE
+on xrp (pilot); btc snipe lanes closed + snipefak uninstalled (§56). Era
+replay for brake: net +$12.28 (5% = knee of the curve). Fleet-wide rollout
+of A+C after xrp restart round-trip proof.

@@ -148,6 +148,17 @@ WHALE_SCAN_S = float(os.getenv("PM_TE_WHALE_SCAN_S", "0.4"))
 # is gated. 0/0 disables.
 FIRST_SKIP_LO = float(os.getenv("PM_TE_FIRST_SKIP_LO", "0"))
 FIRST_SKIP_HI = float(os.getenv("PM_TE_FIRST_SKIP_HI", "0"))
+# Toxic-fill ladder brake (§59): a clip filling >= this fraction below
+# the displayed ask means the quote was stale into a dump (avg 0.40 on
+# a 0.98 ask, hype 08-30 -$57 bar). Stop laddering THAT BAR only; the
+# filled clip keeps its windfall upside. Era replay @5%: saves $21.73,
+# forfeits $9.45, net +$12.28. 0 disables.
+TOXIC_BRAKE = float(os.getenv("PM_TE_TOXIC_BRAKE", "0"))
+# Risk-state persistence across restarts (§59): live_day_pnl, halt
+# state and recent_moves survive redeploys (doge 08-20 blind-window
+# loss; eth 08-28 counter reset). 0 disables.
+RISK_PERSIST = os.getenv("PM_TE_RISK_PERSIST", "0") == "1"
+RISK_STATE_PATH = "/app/logs/risk-state.json"
 DISLOC_PX = float(os.getenv("PM_TE_DISLOC_PX", "0.85"))
 DISLOC_LADDER_USD = float(os.getenv("PM_TE_DISLOC_LADDER_USD", "0"))
 # ── post-close winner snipe: once the settlement tick lands (~T+1.5s relay)
@@ -255,7 +266,7 @@ class Bar:
                  "close_px", "live", "gtry", "maker_oid", "maker_side",
                  "maker_token", "maker_sh", "maker_fill0", "maker_cost0",
                  "maker_px", "whale", "whale_spent", "whale_last",
-                 "whale_delayed", "disloc_spent")
+                 "whale_delayed", "disloc_spent", "toxic")
 
     def __init__(self, ws: int):
         self.ws = ws
@@ -279,6 +290,7 @@ class Bar:
         self.whale_last = 0.0            # last fire timestamp (cooldown)
         self.whale_delayed = False       # vol-delay counterfactual logged
         self.disloc_spent = 0.0          # $ of cheap (<=DISLOC_PX) fills
+        self.toxic = False               # ladder brake tripped (§59)
 
 
 class TwapEdge:
@@ -296,6 +308,20 @@ class TwapEdge:
         self.live_inflight = 0.0          # USD in unresolved live positions
         self.recent_moves: list = []      # |bar move bps|, last VOL_BARS bars
         self.presigned: dict = {}         # token_id -> signed cap-limit BUY
+        if RISK_PERSIST:
+            try:
+                with open(RISK_STATE_PATH) as fh:
+                    st = json.load(fh)
+                self.live_day_pnl = st.get("live_day_pnl", {})
+                self.halt_until = st.get("halt_until", 0.0)
+                self.halt_base = st.get("halt_base", {})
+                self.halt_episodes = st.get("halt_episodes", {})
+                self.recent_moves = st.get("recent_moves", [])
+                log.info("risk-state restored: %s", st)
+            except FileNotFoundError:
+                pass
+            except Exception as exc:
+                log.warning("risk-state load failed: %s", exc)
 
     def _risk_halted(self) -> bool:
         """Loss halt with cooldown EPISODES (user 2026-08-30: 1h, not the
@@ -319,9 +345,25 @@ class TwapEdge:
             self.live_halted = True
             _event("PF_TE_LIVE_HALT", day=day, day_pnl=round(dp, 2),
                    episode=ep, cooldown_s=int(self.halt_until - now))
+            self._save_risk()
             return True
         self.live_halted = False
         return False
+
+    def _save_risk(self):
+        if not RISK_PERSIST:
+            return
+        try:
+            tmp = RISK_STATE_PATH + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(dict(live_day_pnl=self.live_day_pnl,
+                               halt_until=self.halt_until,
+                               halt_base=self.halt_base,
+                               halt_episodes=self.halt_episodes,
+                               recent_moves=self.recent_moves[-60:]), fh)
+            os.replace(tmp, RISK_STATE_PATH)
+        except Exception as exc:
+            log.warning("risk-state save failed: %s", exc)
 
     def _ambient_vol(self):
         """Mean |move| of the last VOL_BARS settled bars; None until warm."""
@@ -788,6 +830,7 @@ class TwapEdge:
         # ambient-vol tracker for the dynamic ask cap
         if bar.close_px is not None and bar.strike:
             self.recent_moves.append(abs(_bps(bar.close_px, bar.strike)))
+            self._save_risk()
             del self.recent_moves[:-VOL_BARS]
         r1 = rtds_state.window_mean(SYM, end - (W + 2), end - 3)
         r2 = rtds_state.window_mean(SYM, end - (W - 1), end)
@@ -809,6 +852,7 @@ class TwapEdge:
             self.live_inflight = max(0.0, self.live_inflight - lv["cost"])
             day = time.strftime("%Y-%m-%d", time.gmtime())
             self.live_day_pnl[day] = self.live_day_pnl.get(day, 0.0) + lpnl
+            self._save_risk()
             _event("PF_TE_LIVE_SETTLE", bar=bar.ws, side=lv["side"], won=won,
                    filled=round(lv["filled"], 2), cost=round(lv["cost"], 4),
                    payout=round(payout, 4), pnl=round(lpnl, 4),
@@ -820,6 +864,7 @@ class TwapEdge:
             self.live_inflight = max(0.0, self.live_inflight - cl["cost"])
             day = time.strftime("%Y-%m-%d", time.gmtime())
             self.live_day_pnl[day] = self.live_day_pnl.get(day, 0.0) + lpnl
+            self._save_risk()
             _event("PF_TE_LIVE_SETTLE", bar=bar.ws, side=cl["side"], won=won,
                    filled=round(cl["filled"], 2), cost=round(cl["cost"], 4),
                    payout=round(payout, 4), pnl=round(lpnl, 4),
@@ -973,6 +1018,7 @@ class TwapEdge:
         pnl = filled * 1.0 - cost - fee if filled else 0.0
         if filled:
             self.live_day_pnl[day] = self.live_day_pnl.get(day, 0.0) + pnl
+            self._save_risk()
         _event("PF_TE_SNIPE_ORDER", bar=bar.ws, winner=winner, cap=SNIPE_CAP,
                req_sh=sh, order=oid, matched=matched, avg_px=avg_px,
                filled=filled, cost=round(cost, 4), pnl=round(pnl, 4),
@@ -1051,6 +1097,7 @@ class TwapEdge:
         pnl = fsh * 1.0 - usd                      # redeems at $1, no fee
         if fsh:
             self.live_day_pnl[day] = self.live_day_pnl.get(day, 0.0) + pnl
+            self._save_risk()
         _event("PF_TE_SNIPE_ORDER", bar=bar.ws, winner=winner, mode="rest",
                cap=SNIPE_CAP, req_sh=sh, order=oid, matched=bool(fsh),
                filled=round(fsh, 2), cost=round(usd, 4), pnl=round(pnl, 4),
@@ -1246,6 +1293,10 @@ class TwapEdge:
                     and FIRST_SKIP_LO <= ask < FIRST_SKIP_HI):
                 # mid-band opening clip: market unsure but not cheap (§58)
                 continue
+            if bar.toxic:
+                # ladder brake: an earlier clip filled far below its displayed
+                # ask (stale quote into a dump) — no more clips this bar (§59)
+                continue
             if WHALE_VOL_DELAY_VOL > 0 and tl > WHALE_VOL_DELAY_TL:
                 vol = self._ambient_vol()
                 # vol is None for ~4 bars after a restart; an unknown regime
@@ -1306,6 +1357,13 @@ class TwapEdge:
                 bar.whale_spent += cost
             bar.whale.append(dict(side=side, filled=filled, cost=cost,
                                   avg_px=avg_px))
+            if (TOXIC_BRAKE > 0 and avg_px is not None
+                    and avg_px < ask * (1 - TOXIC_BRAKE)):
+                # quote was stale into a dump — stop laddering this bar (§59)
+                bar.toxic = True
+                _event("PF_TE_TOXIC_BRAKE", bar=bar.ws, side=side,
+                       seen_ask=ask, avg_px=round(avg_px, 4),
+                       imp=round(1 - avg_px / ask, 4))
         _event("PF_TE_WHALE_ORDER", bar=bar.ws, side=side, seen_ask=ask,
                req_px=px, req_sh=round(sh, 1), order=oid, matched=matched,
                avg_px=avg_px, filled=filled, cost=round(cost, 4),
