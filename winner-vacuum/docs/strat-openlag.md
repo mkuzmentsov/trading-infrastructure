@@ -161,8 +161,15 @@ displacement before the fire window:
 
 ## LIVE PROBE (deployed 2026-08-29, user "Proceed")
 
-`src/openlag.py`, releases `{btc,eth,sol}-openlag-every-tick-single`
-(chart/bots/<coin>_openlag.yaml). NOT an income lane — a measurement probe:
+`src/openlag.py`, releases `<coin>-openlag-every-tick-single` —
+**ALL 7 COINS since 08-30 ~14:40K** (btc/eth/sol from 08-30 08:15K; user
+"run the same on rest of the coins" added xrp/doge/bnb/hype). hype: no
+Binance spot → σ5m from own strike history (~65 min warmup; `sig_src` in
+OL_EVAL) and PVC-less (node volume-attach limit) so its halt is not sticky
+across restarts. First live cycle (btc 09:49 UTC): attempt-1 ask PULLED
+(live adverse-selection datum), attempt-2 filled 5.6sh@0.65, WON +$1.96;
+same bar eth skipped at ask 0.76 — the "priced away" verdict live.
+NOT an income lane — a measurement probe:
 - fire window [ws−10, ws−3] on the NEXT bar's market, side = sign(z),
   z = (latest Chainlink tick / forming strike − 1)·1e4 / σ5m(Binance klines);
   guards: ≥35 of ~59 strike ticks arrived, tick age ≤8s, σ ≥1bps.
