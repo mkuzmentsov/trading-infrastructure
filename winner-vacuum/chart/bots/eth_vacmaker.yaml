@@ -36,6 +36,8 @@ bot:
   pmTeMinCoverage: "0.5"
   pmTeWhaleStart: "30"
   pmTeWhaleScanS: "0.15"
+  pmTeToxicBrake: "0.05"
+  pmTeRiskPersist: "1"
   pmTeWhaleCooldownS: "0.5"
   pmTeDislocLadderUsd: "24"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
@@ -47,7 +49,7 @@ bot:
   pmTeWhaleVolDelayVol: "0.01"
   pmTeWhaleLadderUsd: "48"
   pmTeSize: "8"
-  pmTeSnipeCap: "0.99"
+  pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"
   pmTeSnipeSize: "12"
   pmTeSnipeWindowS: "90"

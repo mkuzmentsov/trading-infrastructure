@@ -12,18 +12,18 @@ bot:
   coin: bnb
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "15"
+  liveMaxDailyLossUsd: "30"
   # 08-30 user: halts pause 1h then resume w/ fresh budget (episodes; 0=day)
   liveHaltCooldownS: "3600"
-  liveMaxOrderUsd: "12"
+  liveMaxOrderUsd: "24"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
   liveTrading: "true"
   loopIntervalSecs: "300"
   paperMode: "false"
   pmTeEvalTl: "28"
-  pmTeLiveInflightUsd: "30"
-  pmTeLiveSize: "13"
+  pmTeLiveInflightUsd: "60"
+  pmTeLiveSize: "26"
   pmTeLockLiveUsd: "0"
   pmTeMakerCancelBps: "1.0"
   pmTeMakerRestPx: "0"
@@ -35,6 +35,8 @@ bot:
   # made $3.55/bar vs $0.28 for >0.95; #1 bar = btc 0.19 -> +$33.76):
   # separate $24/bar budget for <=0.85 fills + 0.15s dislocation scan.
   pmTeWhaleScanS: "0.15"
+  pmTeToxicBrake: "0.05"
+  pmTeRiskPersist: "1"
   # 08-30 §58 mid-band first-clip skip (eth exempt - band +$60 there)
   pmTeFirstSkipLo: "0.90"
   pmTeFirstSkipHi: "0.98"
@@ -47,9 +49,9 @@ bot:
   # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
   # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
   pmTeWhaleVolDelayVol: "0.01"
-  pmTeWhaleLadderUsd: "24"
+  pmTeWhaleLadderUsd: "48"
   pmTeSize: "8"
-  pmTeSnipeCap: "0.99"
+  pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"
   pmTeSnipeSize: "12"
   pmTeSnipeWindowS: "90"

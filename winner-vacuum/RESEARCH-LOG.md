@@ -717,3 +717,10 @@ of A+C after xrp restart round-trip proof.
 2026-08-30 16:15K — xrp PROMOTED to $24 tier (user: "deploy xrp with amount
 the same as in btc/eth"): 24/30/26/48/60, keeps brake 0.05 + persist. NB xrp
 went 21-3 (−13.38) in the hour before promotion — flagged to user.
+
+2026-08-30 17:20K — user: "run all coins on the same bet amount as btc" →
+UNIFORM $24 tier fleet-wide (24/30/26/48/60 all 7; sol/doge/bnb promoted).
+Same wave: §59 brake 0.05 + risk-persist fleet-wide (xrp round-trip PROVED
+live: recent_moves survived the restart — vol blind-window closed), snipe
+caps zeroed everywhere. Verified in-pod ×7, 0 errors. Worst-case/coin/day
+now ~1 bad laddered bar −$48 per 1h episode, halt 30.

@@ -37,6 +37,8 @@ bot:
   # made $3.55/bar vs $0.28 for >0.95; #1 bar = btc 0.19 -> +$33.76):
   # separate $24/bar budget for <=0.85 fills + 0.15s dislocation scan.
   pmTeWhaleScanS: "0.15"
+  pmTeToxicBrake: "0.05"
+  pmTeRiskPersist: "1"
   # 08-30 §58 mid-band first-clip skip (eth exempt - band +$60 there)
   pmTeFirstSkipLo: "0.90"
   pmTeFirstSkipHi: "0.98"

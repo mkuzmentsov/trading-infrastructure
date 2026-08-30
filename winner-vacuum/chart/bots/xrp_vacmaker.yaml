@@ -53,7 +53,7 @@ bot:
   pmTeWhaleVolDelayVol: "0.01"
   pmTeWhaleLadderUsd: "48"
   pmTeSize: "8"
-  pmTeSnipeCap: "0.99"
+  pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"
   pmTeSnipeSize: "12"
   pmTeSnipeWindowS: "90"
