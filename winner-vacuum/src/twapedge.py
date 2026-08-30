@@ -140,6 +140,14 @@ WHALE_VOL_DELAY_TL = float(os.getenv("PM_TE_WHALE_VOL_DELAY_TL", "20"))
 # (not a prediction), and rides its own budget so the bar can keep
 # sweeping. DISLOC_LADDER_USD=0 disables (default).
 WHALE_SCAN_S = float(os.getenv("PM_TE_WHALE_SCAN_S", "0.4"))
+# First-clip mid-band skip (§58, 08-30): first clips opened at ask in
+# [LO, HI) lost -$121.75/era, -$88.89 post-fix, negative 8/14 days, no
+# single-day LOO flip, 6/7 coins negative (eth POSITIVE +$60 - its
+# partial-window specialty - so eth ships with 0/0 = disabled). The
+# ladder may still ENTER the band from outside; only the OPENING clip
+# is gated. 0/0 disables.
+FIRST_SKIP_LO = float(os.getenv("PM_TE_FIRST_SKIP_LO", "0"))
+FIRST_SKIP_HI = float(os.getenv("PM_TE_FIRST_SKIP_HI", "0"))
 DISLOC_PX = float(os.getenv("PM_TE_DISLOC_PX", "0.85"))
 DISLOC_LADDER_USD = float(os.getenv("PM_TE_DISLOC_LADDER_USD", "0"))
 # ── post-close winner snipe: once the settlement tick lands (~T+1.5s relay)
@@ -1233,6 +1241,10 @@ class TwapEdge:
             if not ask or not asz or not (MIN_ASK <= ask <= WHALE_CAP):
                 continue
             if bar.whale and ask < WHALE_LADDER_MIN_ASK:
+                continue
+            if (FIRST_SKIP_HI > 0 and not bar.whale
+                    and FIRST_SKIP_LO <= ask < FIRST_SKIP_HI):
+                # mid-band opening clip: market unsure but not cheap (§58)
                 continue
             if WHALE_VOL_DELAY_VOL > 0 and tl > WHALE_VOL_DELAY_TL:
                 vol = self._ambient_vol()

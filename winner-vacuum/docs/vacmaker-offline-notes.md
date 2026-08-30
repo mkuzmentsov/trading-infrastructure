@@ -2020,3 +2020,22 @@ day/coin is no longer hard-capped (episode chain), realistically
 asked for NO halts at all; settled on 1h episodes mid-deploy. All六
 sites centralized into _risk_halted (mock-tested: trip/cool/resume/
 ep2/legacy). Deployed all 7, env verified 30|15|7 / 3600, 0 errors.
+
+**§58 — 08-30 ~12:00 Kyiv: LOO verdicts on the two analytics leads;
+mid-band first-clip skip DEPLOYED (6 coins, eth exempt).**
+LEAD 2 (0.90-0.98 first-clip band) SURVIVED everything: −$121.75/era
+(497 bars), negative 8/14 days, NO single-day LOO flip (ex-worst still
+−$76.31), post-fix-era −$88.89 (6/9 days negative), both sub-bands
+negative, est≥2.5 refinement does NOT rescue it (−$35.59), and 6/7
+coins negative — the exception is eth (+$60.18 era / +$30.33 post-fix,
+its documented partial-window specialty). DEPLOYED: PM_TE_FIRST_SKIP_
+LO/HI = 0.90/0.98 on btc/hype/bnb/sol/doge/xrp (eth 0/0). Gate blocks
+only the OPENING clip of a bar; ladder continuations from outside the
+band are untouched. Expected ≈ +$13/day at pre-tier sizing (post-fix
+run-rate ex-eth). Revert: set both to 0.
+LEAD 1 (UP/DOWN asymmetry): DOWN −$148.29, negative 9/15 days,
+ex-worst-day −$102.91, ex-3-worst-BARS −$42.72 — broad, but 08-27
+(the one clear down-trend day) INVERTED it (UP −52.35 / DOWN +21.77):
+this is trend-regime loading, the 6th confirmation of mode dependence.
+NOT deployed. Next test if pursued: split by daily drift sign +
+vol-conditional mechanism (grind-up vs dump-bar microstructure).

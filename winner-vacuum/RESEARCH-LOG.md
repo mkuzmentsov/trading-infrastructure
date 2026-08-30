@@ -702,3 +702,8 @@ bars in recovered post-halt windows). liveHaltCooldownS "3600"; 0 = legacy.
 Basis: era top-15 winners dominated by cheap entries (<=0.85 band $3.55/bar
 vs $0.28 for >0.95; #1 = btc 0.19 -> +$33.76 = 39% of era net). All 7 now:
 pmTeDislocLadderUsd 24, scan 0.15s. Verified in-pod, 0 errors.
+
+2026-08-30 12:00K — §58: mid-band first-clip skip (0.90-0.98) LIVE on 6
+coins (eth exempt, band +$60 there); LOO-robust −$122/era cell. UP/DOWN
+asymmetry NOT deployed (08-27 inversion = trend loading). Commit + verify
+0.90-0.98|0-0 in-pod, 0 errors.
