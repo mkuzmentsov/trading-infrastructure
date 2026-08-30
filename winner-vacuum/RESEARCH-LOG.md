@@ -713,3 +713,7 @@ asymmetry NOT deployed (08-27 inversion = trend loading). Commit + verify
 on xrp (pilot); btc snipe lanes closed + snipefak uninstalled (§56). Era
 replay for brake: net +$12.28 (5% = knee of the curve). Fleet-wide rollout
 of A+C after xrp restart round-trip proof.
+
+2026-08-30 16:15K — xrp PROMOTED to $24 tier (user: "deploy xrp with amount
+the same as in btc/eth"): 24/30/26/48/60, keeps brake 0.05 + persist. NB xrp
+went 21-3 (−13.38) in the hour before promotion — flagged to user.
