@@ -2060,3 +2060,17 @@ class (doge 08-20, eth 08-28 counter reset). Fleet-wide after xrp
 proves a restart round-trip. Mock tests: brake math, persist
 round-trip, halt_until preservation. In-pod verified: xrp brake=0.05
 persist=1, btc snipecap=0, snipefak gone, 0 errors.
+
+**§61 — 08-31 ~16:30 Kyiv: LADDER RE-ENTRY GAP 8s (all 8 bots; was
+0.5s).** Trigger: xrp double-clip flip −$47.52 (both clips 0.5s apart
+on the same est reading). Clip-index economics (era): clip1 +0.81% /
+clip2 −0.54% / clip3 +1.43% — clip2 is the ONLY negative rung. The
+separator is the fire gap: clip2 <5s after clip1 = −$53.15 (−0.70%,
+909W/23L); clip2 at 5-20s = +$9.51 (+1.57%) ≈ clip3-like. Instant-
+doubling adds exposure with zero new information; delayed rungs are
+implicitly re-confirmed on fresh state. Fix = existing knob
+PM_TE_WHALE_COOLDOWN_S 0.5→8 (no code change). Caveat (bug-13-
+adjacent): the 5-20s bucket is partly self-selected; forcing the
+delay forfeits some instant-double micro-wins (~+$53 era) vs the −$53
+bleed — EV ~flat, the value is in the TAIL (−$47 doubles become −$24
+unless the signal re-confirms at t+8s). Verified in-pod ×8, 0 errors.

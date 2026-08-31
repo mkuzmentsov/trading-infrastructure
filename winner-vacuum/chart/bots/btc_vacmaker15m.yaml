@@ -32,7 +32,7 @@ bot:
   pmTeMinCoverage: "0.5"
   pmTeWhaleStart: "30"
   pmTeWhaleScanS: "0.15"
-  pmTeWhaleCooldownS: "0.5"
+  pmTeWhaleCooldownS: "8"
   pmTeToxicBrake: "0.05"
   pmTeRiskPersist: "1"
   pmTeDislocLadderUsd: "24"

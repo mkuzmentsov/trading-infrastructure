@@ -42,7 +42,7 @@ bot:
   # (era net +$12.28) + risk-state persistence across restarts.
   pmTeToxicBrake: "0.05"
   pmTeRiskPersist: "1"
-  pmTeWhaleCooldownS: "0.5"
+  pmTeWhaleCooldownS: "8"
   pmTeDislocLadderUsd: "24"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
   # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
