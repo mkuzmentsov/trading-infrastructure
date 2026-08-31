@@ -732,3 +732,10 @@ in-pod signing now 0.5ms/sign (was ~100-300ms pure-Python, 117x gap closed);
 (c) risk-persistence proved on ALL 7 through the image roll (restored=1
 everywhere, 0 errors). Analytics leads closed: 04-08 UTC hole = 3-bar
 artifact (ex-3 +18.52); tl 20-25 cell = boundary skin (51/52 at tl≈20).
+
+2026-08-31 03:10K — DAY CLOSE 08-30: fleet −7.25 (153-7). sol +13.62 (28-0,
+best sol day ever, first full $24 day), eth +9.53, doge +5.05, bnb +2.07,
+btc +1.33, xrp −3.69 (clawed back from −13), hype −35.16 (the one toxic
+0.98→0.40 bar −57; ex-that-bar fleet +50). Big ship day: §57 cooldown halts,
+§58 mid-band gate, §59 brake+persist, uniform $24 tier, disloc fleet-wide,
+coincurve image, 15m pilot (no fills day 1), snipe closed. Balance $219.25.
