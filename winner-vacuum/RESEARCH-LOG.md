@@ -746,3 +746,10 @@ coincurve image, 15m pilot (no fills day 1), snipe closed. Balance $219.25.
 2026-08-31 16:30K — §61 ladder gap 8s fleet-wide after xrp −47.5 instant-
 double flip. clip2 <5s = −0.70% ROI vs 5-20s = +1.57%; cooldown 0.5→8.
 2026-08-31 ~19:40K | OPENLAG PROBE STOPPED (user: "stop the openlag, don't touch other trader bots") | all 7 releases uninstalled (vacmaker fleet + btc-vacmaker15m untouched, verified); FAK-only bot => no orphaned orders | event logs preserved FIRST to every-tick-single/data/openlag-probe/ (14 files, both UTC days) | FINAL PROBE TAPE (~35h live): 2 fills / 6 attempts (33% match) = 1W +$1.96 (pulled-then-refilled ask) + 1L −$4.90 (unresisted 41sh ask) => net −$2.94; 22 priced-ask skips (skip-counterfactual −$33+ after the 6-coin reversal bar); 0 halts, 0 errors, ~2,400 clean OL_EVALs | probe DELIVERED its three answers: (1) in-band pre-open asks at signal time are ~75-90% phantoms-or-priced; (2) fill physics is adversely selected exactly per bug #23 (the ask that resists wins, the ask that stands loses); (3) the seam stays PRICED — re-check via tools/openlag/ pipelines only | hourly babysit cron + monitor stopped
+
+2026-09-01 03:30K — DAY CLOSE 08-31: fleet +29.94 (117-2). eth +19.51 (26-0,
+era-best coin-day), sol +15.17, btc +12.90, hype +11.65, doge +7.40, bnb
++4.07, 15m pilot +1.80 (3-0 first fills); xrp −42.56 (one decisive-flip
+double bar → §61 ladder gap deployed same day). Six coins + pilot went a
+combined 101-0. First green day of the uniform-$24 era despite the xrp bar;
+clip flow healthy post-§61 (117 fills, ~39% ladder). Balance $240.26.
