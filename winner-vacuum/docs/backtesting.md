@@ -262,3 +262,15 @@ in-band liquidity by the band's measured ghost rate BEFORE economics;
 (ii) any execution-causality question should reuse the matched-placebo
 design (same bars, submit±5s, no order in flight) — event-rate comparisons
 without a placebo arm are uninterpretable here.
+
+## mrec v2 calibration note (2026-09-02): RB hash-match baseline
+
+The 30s REST-vs-WS hash reconcile matches only **~35-40% on btc** in normal
+operation — NOT staleness. Mechanism: `price_change` WS events carry no
+`hash`, so the recorded WS hash trails until the next full `book` event;
+57% of "mismatched" rows have IDENTICAL top-of-book prices, the rest are
+±0.35s churn-timing 1-2 tick diffs. RULES: (i) judge feed health on
+`evage` + file growth, not hash equality; (ii) for staleness verdicts
+compare TOP PRICES between RB and the nearest SNAP, not hashes; (iii) a
+truly stale feed shows hash match ≈0% AND rising evage AND frozen SNAP
+books — all three, or it isn't stale.
