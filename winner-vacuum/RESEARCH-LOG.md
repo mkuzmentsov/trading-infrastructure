@@ -753,3 +753,7 @@ era-best coin-day), sol +15.17, btc +12.90, hype +11.65, doge +7.40, bnb
 double bar → §61 ladder gap deployed same day). Six coins + pilot went a
 combined 101-0. First green day of the uniform-$24 era despite the xrp bar;
 clip flow healthy post-§61 (117 fills, ~39% ladder). Balance $240.26.
+
+2026-09-01 22:15K — 15m expansion: all 7 coins verified to have live 15m
+series; user decision WAIT — btc pilot ($12 tier, 4-0 lifetime) collects more
+sample before fleet-wide 15m rollout.
