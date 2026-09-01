@@ -53,7 +53,7 @@ def _rtds_latest(book):
     ts = max(d)
     return int(ts), d[ts]
 # distinguish archives by bar length: btc-mrec (5m), btc-mrec1h, btc-mrec1d
-_SUFFIX = {3600: "1h", 14400: "4h", 86400: "1d"}.get(BAR_SECONDS, "")
+_SUFFIX = {900: "15m", 3600: "1h", 14400: "4h", 86400: "1d"}.get(BAR_SECONDS, "")
 
 
 class Mkt:
@@ -67,9 +67,17 @@ class Mkt:
         self.bids: dict[str, dict] = {self.up: {}, self.down: {}}
         self.asks: dict[str, dict] = {self.up: {}, self.down: {}}
         self.vol_sh = 0.0; self.vol_notl = 0.0
+        self.hash: dict[str, str] = {}       # token -> last venue book hash (WS)
+        self.tick: dict[str, str] = {}       # token -> last tick_size_change value
         self.trades: list = []          # unemitted prints
         self.resolved: str | None = None
         self.res_poll_at = 0.0
+
+    def depth(self, tok: str, n: int = 10):
+        b = sorted(self.bids[tok].items(), reverse=True)[:n]
+        a = sorted(self.asks[tok].items())[:n]
+        f = lambda side: [[round(p, 3), round(s, 1)] for p, s in side]
+        return f(b), f(a)
 
     def bbo(self, tok: str):
         b = self.bids[tok]; a = self.asks[tok]
@@ -95,6 +103,13 @@ class MultiRecorder:
         self.tok2m: dict[str, tuple[Mkt, str]] = {}   # token -> (mkt, "U"/"D")
         self.writer = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
                                      f"{COIN}-mrec{_SUFFIX}")
+        # v2 (2026-09-01): raw WS event stream, verbatim + role-tagged
+        self.evwriter = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
+                                       f"{COIN}-mrecev{_SUFFIX}")
+        self.last_ev_t = 0.0            # arrival time of last WS market event
+        self.ev_n = 0                   # events this WS session
+        self.ws_sess = 0                # WS session counter
+        self.evq: list = []             # buffered raw events (drained async)
         self.resub = asyncio.Event()
 
     def _track(self, ws_ts: int, market: dict):
@@ -174,6 +189,7 @@ class MultiRecorder:
                 async with websockets.connect(POLYMARKET_WS, ping_interval=20,
                                               ping_timeout=30) as ws:
                     self.resub.clear()
+                    self.ws_sess += 1; self.ev_n = 0
                     await ws.send(json.dumps({"type": "market", "assets_ids": toks,
                                               "custom_feature_enabled": True}))
                     log.info("WS subscribed %d tokens", len(toks))
@@ -197,13 +213,55 @@ class MultiRecorder:
                 log.warning("ws: %s", exc)
                 await asyncio.sleep(1.0)
 
+    def _emit_raw(self, msg: dict, et: str, aid: str):
+        """v2: verbatim WS event -> mrecev file, tagged with (ws, U/D) and
+        arrival time. Event-time truth: no 100ms aliasing, includes the venue
+        book `hash` (authoritative-state fingerprint) and tick_size_change."""
+        ref = self.tok2m.get(aid)
+        row = {"t": round(time.time(), 4), "ev": "WSE", "et": et}
+        if ref:
+            row["ws"] = ref[0].ws; row["tok"] = ref[1]
+        if et == "book":
+            # full book events are ~100 levels; keep hash/ts + top-10 per side
+            # (SNAP rows carry the 10Hz depth history; WSE preserves EVENT
+            # timing + the authoritative hash chain)
+            trim = lambda side, rev: sorted(
+                [[float(x["price"]), float(x["size"])] for x in msg.get(side, [])],
+                key=lambda v: v[0], reverse=rev)[:10]
+            row["m"] = {"timestamp": msg.get("timestamp"), "hash": msg.get("hash"),
+                        "bids": trim("bids", True), "asks": trim("asks", False)}
+        elif et == "price_change":
+            # compact: 78-char asset ids dominate the raw payload; encode each
+            # change as [tok(U/D/?), side(B/S), px, sz]; keep ts + last hash
+            ch = []
+            for c in msg.get("changes", []) or msg.get("price_changes", []) or []:
+                a2 = c.get("asset_id", aid)
+                r2 = self.tok2m.get(a2)
+                ch.append([r2[1] if r2 else "?",
+                           "B" if c.get("side") == "BUY" else "S",
+                           float(c.get("price", 0)), float(c.get("size", 0))])
+            row["m"] = {"timestamp": msg.get("timestamp"),
+                        "hash": msg.get("hash"), "ch": ch}
+        else:
+            row["m"] = msg
+        self.evq.append(row)
+        if len(self.evq) > 50000:       # hard bound; drop oldest under storm
+            del self.evq[:10000]
+
     def _handle(self, msg: dict):
         et = msg.get("event_type"); aid = msg.get("asset_id", "")
         ref = self.tok2m.get(aid)
+        now = time.time()
+        if et in ("book", "price_change", "tick_size_change", "last_trade_price"):
+            self.last_ev_t = now; self.ev_n += 1
+            self._emit_raw(msg, et, aid)
+        if et == "tick_size_change" and ref:
+            ref[0].tick[aid] = str(msg.get("new_tick_size") or msg.get("tick_size") or "")
         if et == "book" and ref:
             m, _ = ref
             m.bids[aid] = {float(b["price"]): float(b["size"]) for b in msg.get("bids", []) if float(b.get("size") or 0) > 0}
             m.asks[aid] = {float(a["price"]): float(a["size"]) for a in msg.get("asks", []) if float(a.get("size") or 0) > 0}
+            if msg.get("hash"): m.hash[aid] = msg["hash"]
         elif et == "price_change":
             for ch in msg.get("changes", []) or msg.get("price_changes", []) or []:
                 a2 = ch.get("asset_id", aid); r2 = self.tok2m.get(a2)
@@ -216,6 +274,8 @@ class MultiRecorder:
                     book.pop(px, None)
                 else:
                     book[px] = sz
+                if ch.get("hash"): m2.hash[a2] = ch["hash"]
+            if msg.get("hash") and ref: ref[0].hash[aid] = msg["hash"]
         elif et == "last_trade_price" and ref:
             m, ud = ref
             px = float(msg.get("price", 0)); sz = float(msg.get("size", 0))
@@ -237,6 +297,8 @@ class MultiRecorder:
                     lead = ((spot - bo) / bo * 1e4) if (bo and spot > 0) else None
                     ub, ubs, ua, uas = m.bbo(m.up)
                     db, dbs, da, das = m.bbo(m.down)
+                    ubd, uad = m.depth(m.up)
+                    dbd, dad = m.depth(m.down)
                     trd = m.trades[:]; m.trades = []
                     await self.writer.write({
                         "t": round(now, 3), "coin": COIN, "ws": w, "ev": "SNAP",
@@ -255,18 +317,71 @@ class MultiRecorder:
                         "cl": cl_v, "cl_ts": cl_t, "tw": tw_v,
                         "ub": ub, "ubs": round(ubs, 1), "ua": ua, "uas": round(uas, 1),
                         "db": db, "dbs": round(dbs, 1), "da": da, "das": round(das, 1),
+                        # v2: top-10 depth ladders [px,sz] (ubd desc, uad asc, ...)
+                        "ubd": ubd, "uad": uad, "dbd": dbd, "dad": dad,
+                        # v2: freshness — age of last WS event, event count, session
+                        "evage": round(now - self.last_ev_t, 2) if self.last_ev_t else None,
+                        "evn": self.ev_n, "wss": self.ws_sess,
                         "vol": round(m.vol_notl, 2), "volsh": round(m.vol_sh, 1),
                         "trd": trd or None})
             except Exception as exc:
                 log.exception("snap: %s", exc)
             await asyncio.sleep(SNAP_SECS)
 
+    async def ev_drain_loop(self):
+        """v2: single writer task for the raw event stream (bounded buffer)."""
+        while True:
+            await asyncio.sleep(0.2)
+            if not self.evq:
+                continue
+            batch, self.evq = self.evq, []
+            try:
+                for row in batch:
+                    await self.evwriter.write(row)
+            except Exception as exc:
+                log.warning("ev_drain: %s", exc)
+
+    async def rest_reconcile_loop(self):
+        """v2: every ~30s pull the venue's authoritative REST book for the
+        CURRENT market's two tokens and record hash + top-3, plus whether it
+        matches our WS-state hash. Retroactively separates 'venue truth' from
+        'our stale WS view' (the ghost-kill / dead-WS class)."""
+        import urllib.request as _ur
+        while True:
+            await asyncio.sleep(30.0)
+            try:
+                now = time.time()
+                cur = self.mkts.get(grid_window_start(now))
+                if not cur:
+                    continue
+                for tok, ud in ((cur.up, "U"), (cur.down, "D")):
+                    def _fetch(t=tok):
+                        req = _ur.Request(
+                            f"https://clob.polymarket.com/book?token_id={t}",
+                            headers={"User-Agent": "Mozilla/5.0"})
+                        return json.loads(_ur.urlopen(req, timeout=6).read())
+                    d = await asyncio.to_thread(_fetch)
+                    rh = d.get("hash") or ""
+                    wh = cur.hash.get(tok) or ""
+                    top = lambda side, rev: sorted(
+                        [[float(x["price"]), float(x["size"])] for x in d.get(side, [])],
+                        key=lambda v: v[0], reverse=rev)[:3]
+                    await self.writer.write({
+                        "t": round(now, 3), "coin": COIN, "ws": cur.ws, "ev": "RB",
+                        "tok": ud, "rh": rh, "wh": wh, "match": bool(rh) and rh == wh,
+                        "rb3": top("bids", True), "ra3": top("asks", False),
+                        "tick": cur.tick.get(tok)})
+            except Exception as exc:
+                log.warning("rest_reconcile: %s", exc)
+
     async def run(self):
-        log.info("multi_recorder coin=%s ahead=%d snap=%.0fms", COIN, AHEAD, SNAP_SECS * 1000)
+        log.info("multi_recorder v2 coin=%s ahead=%d snap=%.0fms (ev-stream+hash+depth+freshness)",
+                 COIN, AHEAD, SNAP_SECS * 1000)
         _seed_history()
         await asyncio.gather(run_binance_ws(), run_rtds(RTDS_TOPICS),
                              self.discover_loop(),
-                             self.resolve_loop(), self.ws_loop(), self.snap_loop())
+                             self.resolve_loop(), self.ws_loop(), self.snap_loop(),
+                             self.ev_drain_loop(), self.rest_reconcile_loop())
 
 
 def main():
