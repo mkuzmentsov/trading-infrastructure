@@ -15,7 +15,7 @@ bot:
   coin: xrp
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "30"
+  liveMaxDailyLossUsd: "999"  # 09-01 user: dont halt xrp, let it run
   # 08-30 user: halts pause 1h then resume w/ fresh budget (episodes; 0=day)
   liveHaltCooldownS: "3600"
   liveMaxOrderUsd: "24"
