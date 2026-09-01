@@ -246,3 +246,19 @@ hard-split by era and only the current-era slice counts; the mismatched
 era doubles as a free negative control (it must come out dead — ours did).
 Corollary: archive data before Aug 7 is unusable for ANY settlement-window
 question (the mechanism didn't exist).
+
+## Bug #23 addendum (2026-09-01, adversarial hunt): ghost-kills at scale + the placebo control
+
+Placebo-controlled kill-timing on 6,418 live vacmaker FAKs (pess_ artifacts,
+session 09-01): (a) **taker-delay leakage REFUTED** — target-ask fade within
+~150ms of submit 3.5% vs matched placebo 8.9% (z=−9.2, wrong direction);
+makers do NOT see pending delayed orders. (b) **84% of our kills are
+"ghosts"**: the recorder shows a matchable ask persisting ≥15s with no
+consuming prints after the venue returns "no orders found to match" (60% =
+the ≥0.90 tick-cross artifact; ~40% genuine mid-band phantoms). This is the
+at-scale number behind the 11% cheap-fill rate and the 7× snapshot-sim
+overstatement. RULES: (i) any taker EV model must discount displayed
+in-band liquidity by the band's measured ghost rate BEFORE economics;
+(ii) any execution-causality question should reuse the matched-placebo
+design (same bars, submit±5s, no order in flight) — event-rate comparisons
+without a placebo arm are uninterpretable here.
