@@ -1,0 +1,58 @@
+# bnb-vacmaker15m — 15m-series PILOT (2026-08-30, user: "do btc 15m").
+# Same whale-clone lane as the 5m fleet, pointed at btc-updown-15m bars
+# (BAR_SECONDS 900; settles TWAP-60 like all series post 08-15). §50
+# validated the mechanics offline; this is the first live run. PILOT
+# SIZING: $12 clip / $24 ladder / halt $15 (half the 5m uniform tier)
+# until a few live days prove the cell; then promote on user go.
+# Carries the full §57-59 stack: 1h cooldown halts, toxic brake, risk
+# persistence, mid-band first-clip skip, disloc budget. Snipe lanes off.
+botName: bnb-vacmaker15m
+
+bot:
+  coin: bnb
+  barSeconds: "900"
+  dryRun: "false"
+  entrypoint: twapedge.py
+  liveMaxDailyLossUsd: "15"
+  liveHaltCooldownS: "3600"
+  liveMaxOrderUsd: "12"
+  liveQuoteWarmupSecs: "0"
+  liveReconcileSecs: "30"
+  liveTrading: "true"
+  loopIntervalSecs: "900"
+  paperMode: "false"
+  pmTeEvalTl: "28"
+  pmTeLiveInflightUsd: "30"
+  pmTeLiveSize: "13"
+  pmTeLockLiveUsd: "0"
+  pmTeMakerCancelBps: "1.0"
+  pmTeMakerRestPx: "0"
+  pmTeMaxAsk: "0.98"
+  pmTeMinAsk: "0.55"
+  pmTeMinCoverage: "0.5"
+  pmTeWhaleStart: "30"
+  pmTeWhaleScanS: "0.15"
+  pmTeWhaleCooldownS: "8"
+  pmTeToxicBrake: "0.05"
+  pmTeRiskPersist: "1"
+  pmTeDislocLadderUsd: "24"
+  pmTeFirstSkipLo: "0.90"
+  pmTeFirstSkipHi: "0.98"
+  pmTeWhaleVolDelayVol: "0.01"
+  pmTeWhaleLadderUsd: "24"
+  pmTeSize: "8"
+  pmTeSnipeCap: "0"
+  pmTeSnipeLiveUsd: "12"
+  pmTeSnipeSize: "12"
+  pmTeSnipeWindowS: "90"
+  pmTeThreshBps: "0.5"
+  pmTeTieMaxAsk: "0"
+  pmTeTwapWindow: "60"
+  polymarketRtdsSymbol: bnb/usd
+  prediscoveryLeadSecs: "30"
+  quoteNotionalUsd: "5"
+  trainingEventLogPath: /app/logs/logs-training-events.jsonl
+
+persistence:
+  enabled: true
+  size: 2Gi
