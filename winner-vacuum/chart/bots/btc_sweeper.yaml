@@ -10,6 +10,9 @@ botName: btc-sweeper
 bot:
   entrypoint: "sweeper.py"
   coin: "btc"
+  # 09-03: adapter-redeem ENABLED (venue auto-redeemer backlogged 4.5h;
+  # $148 of won positions stuck, fleet free balance hit $0.67 intra-bar)
+  pmRedeemViaAdapter: "true"
   paperMode: "true"
   dryRun: "true"
   liveTrading: "false"

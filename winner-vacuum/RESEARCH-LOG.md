@@ -783,3 +783,16 @@ kept windfalls, xrp +12.60 19-0, btc +4.18, bnb +3.53, hype −1.26, eth
 loss bars) held to −$15.6 — §61 single-clip caps + brake windfalls did the
 work. 15m fleet-wide went live mid-day. Balance $232.62 at close.
 2026-09-03 ~10:30K | mrec v2 defect found+fixed by the monitor itself | ALERT "RB hash match 6%" → three-signal check showed the FEED healthy (evage 0.01s, ev-file +250KB/5s) but the RB reconcile degraded: CLOB REST /book returns 403 under our fleet-wide polling (30s × 2 tok × 17 pods ≈ 68 req/min); only 30 of ~240 expected RB rows/hour landed and the survivors skewed the hash statistic | FIX (recorders only, no trader touched): 150s base + per-coin jitter, one token per cycle, exponential backoff to 20min on 403/429 ⇒ ~7 req/min fleet-wide; redeployed all 17, verified backoff logging live | monitor recalibrated: hash-rate alert REMOVED (it was firing on its own sampling artifact), replaced by RB-presence (zero rows past :45) + evage>300s + growth + pod count | ledger addendum written (rate-budget polling across pods; a silently-degrading diagnostic is worse than none) | ⚠️ hit the kubectl context trap again mid-check (cwd drift → dead EKS, reads only)
+
+2026-09-03 20:20K — §63 REDEMPTION INCIDENT + FIX: venue auto-redeemer
+backlogged ~4.5h → $148 of WON positions stuck unredeemed, fleet free
+balance hit $0.67 intra-bar (14 bots competing for scraps; balance read
+showed $58.93 and looked like a loss — it wasn't; day PnL was IMPROVING).
+Root cause of our exposure: btc-sweeper's adapter-redeem path was DISABLED
+since birth (PM_REDEEM_VIA_ADAPTER unset ⇒ REDEEM_ON=false) — vacmaker
+winners silently depended on the VENUE's auto-redeemer. Fix: pmRedeemViaAdapter
+"true" on sweeper (deployed, verified REDEEM=true LIVE=true). The venue's
+own redeemer caught up in parallel (0 PF_REDEEM from us; redeemable list
+now 0; balance $217.41 recovered). Sweeper now backstops any future venue
+backlog at 60s cycles. Lesson: balance-drop triage = positions?redeemable
+FIRST; won-but-unredeemed inventory is invisible in pUSD.
