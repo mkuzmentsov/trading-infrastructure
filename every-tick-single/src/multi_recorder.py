@@ -342,37 +342,55 @@ class MultiRecorder:
                 log.warning("ev_drain: %s", exc)
 
     async def rest_reconcile_loop(self):
-        """v2: every ~30s pull the venue's authoritative REST book for the
-        CURRENT market's two tokens and record hash + top-3, plus whether it
-        matches our WS-state hash. Retroactively separates 'venue truth' from
-        'our stale WS view' (the ghost-kill / dead-WS class)."""
+        """v2: periodically pull the venue's authoritative REST book for the
+        CURRENT market and record hash + top-3 vs our WS-state hash.
+        ⚠️ 2026-09-03: at 30s × 2 tokens × 17 pods (~68 req/min) the CLOB
+        REST endpoint rate-limits with 403s (measured: only 30 of ~240
+        expected RB rows/hour landed). Now: 150s base + per-coin jitter to
+        destagger the fleet, ONE token per cycle (alternating), and
+        exponential backoff on 403 up to 20 min. Fleet rate ~7 req/min."""
         import urllib.request as _ur
+        base = 150.0
+        # deterministic per-coin offset so the 17 pods do not fire together
+        off = (sum(ord(c) for c in COIN) % 60)
+        backoff = 0.0
+        flip = 0
+        await asyncio.sleep(off)
         while True:
-            await asyncio.sleep(30.0)
+            await asyncio.sleep(base + backoff)
             try:
                 now = time.time()
                 cur = self.mkts.get(grid_window_start(now))
                 if not cur:
                     continue
-                for tok, ud in ((cur.up, "U"), (cur.down, "D")):
-                    def _fetch(t=tok):
-                        req = _ur.Request(
-                            f"https://clob.polymarket.com/book?token_id={t}",
-                            headers={"User-Agent": "Mozilla/5.0"})
-                        return json.loads(_ur.urlopen(req, timeout=6).read())
-                    d = await asyncio.to_thread(_fetch)
-                    rh = d.get("hash") or ""
-                    wh = cur.hash.get(tok) or ""
-                    top = lambda side, rev: sorted(
-                        [[float(x["price"]), float(x["size"])] for x in d.get(side, [])],
-                        key=lambda v: v[0], reverse=rev)[:3]
-                    await self.writer.write({
-                        "t": round(now, 3), "coin": COIN, "ws": cur.ws, "ev": "RB",
-                        "tok": ud, "rh": rh, "wh": wh, "match": bool(rh) and rh == wh,
-                        "rb3": top("bids", True), "ra3": top("asks", False),
-                        "tick": cur.tick.get(tok)})
+                flip ^= 1
+                tok, ud = (cur.up, "U") if flip else (cur.down, "D")
+
+                def _fetch(t=tok):
+                    req = _ur.Request(
+                        f"https://clob.polymarket.com/book?token_id={t}",
+                        headers={"User-Agent": "Mozilla/5.0"})
+                    return json.loads(_ur.urlopen(req, timeout=8).read())
+
+                d = await asyncio.to_thread(_fetch)
+                backoff = 0.0
+                rh = d.get("hash") or ""
+                wh = cur.hash.get(tok) or ""
+                top = lambda side, rev: sorted(
+                    [[float(x["price"]), float(x["size"])] for x in d.get(side, [])],
+                    key=lambda v: v[0], reverse=rev)[:3]
+                await self.writer.write({
+                    "t": round(now, 3), "coin": COIN, "ws": cur.ws, "ev": "RB",
+                    "tok": ud, "rh": rh, "wh": wh, "match": bool(rh) and rh == wh,
+                    "rb3": top("bids", True), "ra3": top("asks", False),
+                    "tick": cur.tick.get(tok)})
             except Exception as exc:
-                log.warning("rest_reconcile: %s", exc)
+                if "403" in str(exc) or "429" in str(exc):
+                    backoff = min(1200.0, backoff * 2 + 60.0)
+                    log.warning("rest_reconcile throttled (%s); backoff=%.0fs",
+                                exc, backoff)
+                else:
+                    log.warning("rest_reconcile: %s", exc)
 
     async def run(self):
         log.info("multi_recorder v2 coin=%s ahead=%d snap=%.0fms (ev-stream+hash+depth+freshness)",

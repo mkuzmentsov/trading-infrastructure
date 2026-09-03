@@ -274,3 +274,16 @@ operation — NOT staleness. Mechanism: `price_change` WS events carry no
 compare TOP PRICES between RB and the nearest SNAP, not hashes; (iii) a
 truly stale feed shows hash match ≈0% AND rising evage AND frozen SNAP
 books — all three, or it isn't stale.
+
+## mrec v2 fix (2026-09-03): CLOB REST /book rate-limits the reconcile
+
+The 30s × 2-token × 17-pod REST reconcile (~68 req/min) draws **HTTP 403**
+from clob.polymarket.com — only 30 of ~240 expected RB rows/hour landed, and
+the surviving sample skewed the hash-match statistic (6% vs the ~35-40%
+baseline). Fixed: 150s base + per-coin deterministic jitter (destaggers the
+fleet), ONE token per cycle (alternating), exponential backoff to 20 min on
+403/429 ⇒ ~7 req/min fleet-wide. LESSONS: (i) any fleet-wide polling of a
+venue REST endpoint must be rate-budgeted across ALL pods, not per pod;
+(ii) a diagnostic that silently degrades produces a WORSE signal than none —
+the RB hash-rate alert was firing on its own sampling artifact. Health is now
+judged on evage + file growth + RB-presence, never on hash equality.
