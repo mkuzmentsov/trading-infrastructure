@@ -796,3 +796,8 @@ own redeemer caught up in parallel (0 PF_REDEEM from us; redeemable list
 now 0; balance $217.41 recovered). Sweeper now backstops any future venue
 backlog at 60s cycles. Lesson: balance-drop triage = positions?redeemable
 FIRST; won-but-unredeemed inventory is invisible in pUSD.
+
+2026-09-03 22:20K — 15m FLEET STOPPED (user "stop 15 bots"): all 7
+<coin>-vacmaker15m scaled to 0 (PVCs/history kept; restart = scale up).
+No stranded positions. Lane record: net ≈ −$30 over 2 days (doge15 −23.16,
+btc15 −11.76 drags; sol/xrp/eth/hype15 small green). 5m fleet unaffected.
