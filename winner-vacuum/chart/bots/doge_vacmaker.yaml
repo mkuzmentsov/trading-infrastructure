@@ -8,16 +8,18 @@
 # ⚠ deploy.sh live applies crypto.secret.yaml LAST — its caps override the
 # ones below (currently $5/order $50/day there; unification pending).
 # 2026-08-29 SIZING TIERS (user-approved; notes S55): raise greens btc/eth/hype to $24 clip/$48 ladder/$60 inflight (halt $15 unchanged = doubled upside, same floor); bnb holds $12 (green 6/6 post-fix); starve sol/doge/xrp to $5/$10/$15 with halt $7 (floor scaled with upside). Overlay no longer carries liveMaxOrderUsd/liveMaxDailyLossUsd.
+# 09-03 user: doge $5/bet max, NO ladder (data-gathering mode) — ladder
+# budget $4 blocks clip2 after any fill; disloc budget 0; halt scaled to $7.
 botName: doge-vacmaker
 
 bot:
   coin: doge
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "30"
+  liveMaxDailyLossUsd: "7"
   # 08-30 user: halts pause 1h then resume w/ fresh budget (episodes; 0=day)
   liveHaltCooldownS: "3600"
-  liveMaxOrderUsd: "24"
+  liveMaxOrderUsd: "5"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
   liveTrading: "true"
@@ -25,7 +27,7 @@ bot:
   paperMode: "false"
   pmTeEvalTl: "28"
   pmTeLiveInflightUsd: "60"
-  pmTeLiveSize: "26"
+  pmTeLiveSize: "5"
   pmTeLockLiveUsd: "0"
   pmTeMakerCancelBps: "1.0"
   pmTeMakerRestPx: "0"
@@ -43,7 +45,7 @@ bot:
   pmTeFirstSkipLo: "0.90"
   pmTeFirstSkipHi: "0.98"
   pmTeWhaleCooldownS: "8"
-  pmTeDislocLadderUsd: "24"
+  pmTeDislocLadderUsd: "0"
   # 2026-08-22 (notes §33/§37): the vol CONDITION is removed, the DELAY stays.
   # Measured 08-18+ venue truth: tl 21-30 = 60% of our clips and -$74.51 at
   # 95.6% win, while tl<=20 runs 98.3-100% win / +3.29..+12.68% ROI. Ambient
@@ -51,7 +53,7 @@ bot:
   # the delay on vol was gating on noise. 0.01 = always-on; it is a DELAY not
   # a skip, so the clip still fires in the tl<=20 lane. Revert: set back to 10.
   pmTeWhaleVolDelayVol: "0.01"
-  pmTeWhaleLadderUsd: "48"
+  pmTeWhaleLadderUsd: "4"
   pmTeSize: "8"
   pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"

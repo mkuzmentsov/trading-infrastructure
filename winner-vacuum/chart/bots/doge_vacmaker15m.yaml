@@ -6,6 +6,8 @@
 # until a few live days prove the cell; then promote on user go.
 # Carries the full §57-59 stack: 1h cooldown halts, toxic brake, risk
 # persistence, mid-band first-clip skip, disloc budget. Snipe lanes off.
+# 09-03 user: doge $5/bet max, NO ladder (data-gathering mode) — ladder
+# budget $4 blocks clip2 after any fill; disloc budget 0; halt scaled to $7.
 botName: doge-vacmaker15m
 
 bot:
@@ -13,9 +15,9 @@ bot:
   barSeconds: "900"
   dryRun: "false"
   entrypoint: twapedge.py
-  liveMaxDailyLossUsd: "15"
+  liveMaxDailyLossUsd: "7"
   liveHaltCooldownS: "3600"
-  liveMaxOrderUsd: "12"
+  liveMaxOrderUsd: "5"
   liveQuoteWarmupSecs: "0"
   liveReconcileSecs: "30"
   liveTrading: "true"
@@ -23,7 +25,7 @@ bot:
   paperMode: "false"
   pmTeEvalTl: "28"
   pmTeLiveInflightUsd: "30"
-  pmTeLiveSize: "13"
+  pmTeLiveSize: "5"
   pmTeLockLiveUsd: "0"
   pmTeMakerCancelBps: "1.0"
   pmTeMakerRestPx: "0"
@@ -35,11 +37,11 @@ bot:
   pmTeWhaleCooldownS: "8"
   pmTeToxicBrake: "0.05"
   pmTeRiskPersist: "1"
-  pmTeDislocLadderUsd: "24"
+  pmTeDislocLadderUsd: "0"
   pmTeFirstSkipLo: "0.90"
   pmTeFirstSkipHi: "0.98"
   pmTeWhaleVolDelayVol: "0.01"
-  pmTeWhaleLadderUsd: "24"
+  pmTeWhaleLadderUsd: "4"
   pmTeSize: "8"
   pmTeSnipeCap: "0"
   pmTeSnipeLiveUsd: "12"
