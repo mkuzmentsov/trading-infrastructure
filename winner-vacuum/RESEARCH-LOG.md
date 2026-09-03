@@ -775,3 +775,10 @@ all 7 verified (BAR=900, markets found, 0 errors). btc15 pilot was 5-0
 cut signing to 0.5ms — fire path is ~95% network (~45ms POST); presign
 would save <5ms and shrink windfall fills via size-at-cap. Hourly cron
 updated to cover all 15m bots.
+
+2026-09-03 03:55K — DAY CLOSE 09-02: 5m −20.45 (96-8: sol +60.49 w/ 2 brake-
+kept windfalls, xrp +12.60 19-0, btc +4.18, bnb +3.53, hype −1.26, eth
+−25.81, doge −74.18 = 4 flips, worst coin-day of era); 15m +4.89 (btc15
++4.83, doge15 first fill); TOTAL −15.56. Worst chop day by loss count (10
+loss bars) held to −$15.6 — §61 single-clip caps + brake windfalls did the
+work. 15m fleet-wide went live mid-day. Balance $232.62 at close.
