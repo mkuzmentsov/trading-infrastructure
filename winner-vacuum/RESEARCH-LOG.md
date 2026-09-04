@@ -801,3 +801,9 @@ FIRST; won-but-unredeemed inventory is invisible in pUSD.
 <coin>-vacmaker15m scaled to 0 (PVCs/history kept; restart = scale up).
 No stranded positions. Lane record: net ≈ −$30 over 2 days (doge15 −23.16,
 btc15 −11.76 drags; sol/xrp/eth/hype15 small green). 5m fleet unaffected.
+
+2026-09-04 06:40K — DAY CLOSE 09-03 (logged late; report cron gapped ~6h
+overnight, likely laptop sleep): 5m +25.37 (114-7: bnb +19.42, hype +16.92,
+xrp +15.50, btc +8.78, sol −7.28, eth −12.01, doge −15.96 incl one $5-mode
+loss); 15m −30.33 (fleet stopped 22:20K); TOTAL −4.96 — chop day #3
+recovered to ~flat. §63 redemption fix held. Balance $219.70 at close.
