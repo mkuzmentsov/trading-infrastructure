@@ -807,3 +807,10 @@ overnight, likely laptop sleep): 5m +25.37 (114-7: bnb +19.42, hype +16.92,
 xrp +15.50, btc +8.78, sol −7.28, eth −12.01, doge −15.96 incl one $5-mode
 loss); 15m −30.33 (fleet stopped 22:20K); TOTAL −4.96 — chop day #3
 recovered to ~flat. §63 redemption fix held. Balance $219.70 at close.
+
+2026-09-05 04:00K — DAY CLOSE 09-04: 5m +13.48 (124-2 — best W-L ratio day
+of the era; both losses brake-capped single clips: hype −20.3ish class-B,
+xrp −20.3 class-B). eth +13.46 (16-0), bnb +8.31 (13-0), sol +4.55, doge
++3.43 in $5 data mode (21-0!), btc +1.93, hype −10.30, xrp −7.90. All
+protections quiet or correct; zero errors; sweeper backstop clean. Balance
+$228.08 at close. Uniform-era running total ≈ +$150/6d.
