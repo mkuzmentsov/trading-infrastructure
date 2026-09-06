@@ -287,3 +287,6 @@ venue REST endpoint must be rate-budgeted across ALL pods, not per pod;
 (ii) a diagnostic that silently degrades produces a WORSE signal than none —
 the RB hash-rate alert was firing on its own sampling artifact. Health is now
 judged on evage + file growth + RB-presence, never on hash equality.
+
+## Bug #25 (2026-09-06): mrec-based recon sims are CLAIRVOYANT unless Chainlink ticks are lagged by the relay delay
+mrec SNAP records cl/cl_ts at ORACLE timestamps; the live bot receives each tick p50 2.21s later (p99 45s). A sim that filters ticks by `cl_ts <= now` grants the strategy ~2.2s of future oracle data — at tl 20-35 mid-dislocation that decides the side. Measured impact: +$3,178/6d (sim) vs −$92/18d (live PF_TE_WHALE_DELAY ground truth) for the same early deep-ask rule. Fix: lag every tick by the recorded per-event relay delay (or +2.2s flat) before feeding the estimator; better, prefer the live DELAY-event A/B which needs no reconstruction.

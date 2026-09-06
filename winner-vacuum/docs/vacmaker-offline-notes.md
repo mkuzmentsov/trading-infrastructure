@@ -2074,3 +2074,11 @@ adjacent): the 5-20s bucket is partly self-selected; forcing the
 delay forfeits some instant-double micro-wins (~+$53 era) vs the −$53
 bleed — EV ~flat, the value is in the TAIL (−$47 doubles become −$24
 unless the signal re-confirms at t+8s). Verified in-pod ×8, 0 errors.
+
+## §64 (2026-09-06) Early deep-ask lane REJECTED — the tl>20 discount is fair price; mrec sim was clairvoyant
+Trigger: 09-06 windfalls (bnb +$76.09 @0.238 fill 03:19 UTC, sol +$7.02 @0.73 + +$9.96 @0.687) — user asked "can we get more of such deals?" using the mrec v2 local dumps.
+1) mrec SNAP scan (7 coins × 09-01..06): 24+ persistent (≥0.8s) winner-side asks ≤0.90 at tl 25-35 on decisive margins, ~$183/2d top-of-book EV on bnb+sol alone. Nearly all episodes DIE before tl 20 — the §37 delay gate (vol 0.01 ⇒ all bars wait for tl≤20) is why we miss them.
+2) Two-sided mrec counterfactual (fire $24 at ask≤0.90 when reconstructed est decisive, tl 20-35): 644 fires 598W-46L +$3,178/6d. **CLAIRVOYANT — REJECTED**: reconstruction used Chainlink ticks at their oracle timestamps; the bot receives them p50 2.21s later (relay). At tl 20-30 mid-dislocation 2.2s of future ticks decides the side. Same trap as the dual-ask retraction (bug ledger: delay-insensitive PnL = look-ahead). Logged as bug #25 in docs/backtesting.md.
+3) **Ground truth — live PF_TE_WHALE_DELAY A/B** (bot's OWN real-time est at the first blocked early fire; 18 days 08-20..09-06, winners from settles+mrec RES): 555 deep-ask (≤0.90) events → 446W-109L (80.4%), hypothetical $24-clip **−$92** vs **+$174 actually earned by late-firing the same bars**. Late beats early by $266 on identical bars.
+4) Cuts (ex the 09-02 01:55-03:15 stale-0.82 book block): ask 0.30-0.65 → 52% win −$132; 0.65-0.80 → 68% −$218; only 0.80-0.91 +$225 (87.6% vs ~85% breakeven, thin) and est≥3bps +$286 (89.6%) are green — same hindsight-cell shape as §38's one-day cell; not deployed, LOO-fragile prior (est-gating triple-refuted).
+VERDICT: the tl>20 deep discount is the fair price of genuine uncertainty at that horizon; our edge remains the tl≤20 arithmetic lock, which ALREADY hoovers deep asks that persist (both 09-06 windfalls were plain whale_loop fires at tl 12-19.5). No config change. The "more deals" answer: no — the ones we miss are the ones that would cost money.

@@ -814,3 +814,9 @@ xrp −20.3 class-B). eth +13.46 (16-0), bnb +8.31 (13-0), sol +4.55, doge
 +3.43 in $5 data mode (21-0!), btc +1.93, hype −10.30, xrp −7.90. All
 protections quiet or correct; zero errors; sweeper backstop clean. Balance
 $228.08 at close. Uniform-era running total ≈ +$150/6d.
+
+## 2026-09-06 08:40K — Day close 2026-09-05 (UTC): +$29.99 (123-2), best uniform-era day
+5m fleet: bnb 18-1 +13.27 (incl +$11.5 brake windfall) | btc 7-0 +1.68 | doge 19-0 +1.46 ($5 data mode) | eth 15-0 +9.20 | hype 22-0 +10.73 | sol 18-0 +5.78 | xrp 24-1 −12.13 (early full-clip loss, halt=999 by user).
+Only 2 losses all day (one xrp $24 clip, one bnb ~$1.9 partial). Zero halts, zero errors. Brake trips: bnb 1 (windfall kept +$11.5), eth 2 (both wins), hype 1. Balance 09-05 close ≈ $253.6 (from $222.6 at 12:00K).
+Uniform-era 7-day tally now ≈ +$180. Reporting gap 01:00→08:36K (laptop sleep; cron session-local, bots unaffected).
+09-06 opened hot: bnb ladder filled 99.8sh @ 0.238 at 03:19 UTC, won → +$76.09 single-bar windfall (brake marked bar toxic post-fill, §59 working as designed).
