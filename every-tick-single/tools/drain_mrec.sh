@@ -14,7 +14,10 @@ drain_pod() {
   local sub=$short
   [ "$short" = "${coin}-mrec" ] && sub=$coin      # 5m keeps plain coin dir
   mkdir -p "$DEST/$sub"
-  local listing=$(kubectl exec -n $NS $pod -- sh -c 'for f in /app/logs/raw/*.jsonl.gz; do [ -f "$f" ] && echo "$f $(wc -c < $f)"; done' 2>/dev/null)
+  # only files SETTLED for >=90s: at the hour rollover all 17 pods gzip at
+  # once and a file still being written changes size mid-transfer, which
+  # fails verification (2026-09-07: 7 such failures in one cycle)
+  local listing=$(kubectl exec -n $NS $pod -- sh -c 'now=$(date +%s); for f in /app/logs/raw/*.jsonl.gz; do [ -f "$f" ] || continue; m=$(stat -c %Y "$f" 2>/dev/null || echo 0); [ $((now - m)) -ge 90 ] && echo "$f $(wc -c < $f)"; done' 2>/dev/null)
   echo "$listing" | while read rf rsize; do
     [ -z "$rf" ] && continue
     local bn=$(basename $rf) lf="$DEST/$sub/$(basename $rf)" got=0
