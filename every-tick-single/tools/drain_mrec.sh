@@ -39,7 +39,7 @@ drain_pod() {
 }
 for pod in $(kubectl get pods -n $NS --no-headers | awk '/mrec/ && $3=="Running" {print $1}'); do
   drain_pod $pod &
-  while [ $(jobs | wc -l) -ge 6 ]; do wait ${${(v)jobstates}[1]%%:*} 2>/dev/null || sleep 1; done
+  while [ $(jobs | wc -l) -ge 3 ]; do wait ${${(v)jobstates}[1]%%:*} 2>/dev/null || sleep 1; done
 done
 wait
 echo CYCLE-DONE
