@@ -111,3 +111,37 @@ First quotes verified: btc 4h book 0.56/0.57 → BUY UP 0.56 + BUY DOWN
   ground-truth dataset accumulates from now; re-run rewsim3 on it after
   a few days to validate the 4h fill model against paper/live.
 - 5m/15m: do NOT re-enter in-band. Third confirmation, now WITH rewards.
+
+---
+
+## POST-MORTEM 2026-09-02 — the August program is OVER, verified on-venue
+
+Checked `docs.polymarket.com/market-data/market-details.md#liquidity-reward-settings`
+against live gamma. Two separate maker subsidies, do not conflate them:
+
+**1. Liquidity rewards (`clobRewards`) — ⛔ ZERO on every crypto up-down market.**
+Read `rewardsMinSize` / `rewardsMaxSpread` / `clobRewards[].rewardsDailyRate` off gamma.
+As of 09-02, btc/eth/sol/doge/xrp × {5m, 15m, 4h} all return **no `clobRewards` array at all**
+⇒ dailyRate 0. The field is NOT simply omitted by the endpoint — 136 of the top 500 active
+markets by 24h volume DO carry it (Fed markets $1,000/day, tennis $0.001/day), so absence
+is real. The $1M August program ended 08-31 exactly as scheduled. **This kills the 4h rewfarm
+thesis** (it was priced entirely off alt pools of $150-250/day). Re-check before any revival:
+one gamma call per slug, look for a non-empty `clobRewards`.
+
+⚠️ `rewardsMinSize` is 50sh but **`rewardsMaxSpread` is per-BAR, not a constant 1.5¢** —
+observed 0 / 1.5 / 4.5 / 4.5 across four consecutive btc 5m bars, and 1.5 vs 4.5 differing
+across coins in the same bar. Our "1.5¢ band" note was an observation of one config, not a rule.
+Never hardcode it; read it per market.
+
+**2. Maker rebate (`feeSchedule.rebateRate`) — 🟢 LIVE and unchanged.**
+Live on all 5m crypto: `{rate: 0.07, exponent: 1, takerOnly: true, rebateRate: 0.2}`,
+`feesEnabled: true`. Confirms the fee shape `shares × rate × p^e × (1−p)^e` and that
+**`makerBaseFee`/`takerBaseFee` = 1000 are legacy nominal fields — ignore them**, the
+`feeSchedule` object is the truth.
+
+⭐ OPEN LEAD (not yet sized): makers are paid **20% of the taker fees** collected in the
+market, daily, pro-rata. On 5m crypto a taker at 50¢ pays 3.5% of notional, so the rebate
+pool is 0.7% of taker notional — an order of magnitude the old rewards program never reached
+per-dollar. Sylldra (0xfd9b7636) collects ~$1.0-1.6/day of it on ~$100-200/day of maker
+volume. Sizing this pool is the unanswered [[openmm-5m-maker]] rebate question and is now
+answerable from `MAKER_REBATE` activity rows + venue taker volume.

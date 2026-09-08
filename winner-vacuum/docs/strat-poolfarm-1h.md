@@ -31,7 +31,8 @@ extreme mids is base-rate artifact).
 - ~+$1/bar × 24 bars/day ≈ $15-20/day gross at 50sh, minus occasional solo
   bars. Capital: one pair ≈ $48 locked ~1h (+resolve lag ~15min; MAX_INV
   gate then blocks the next bar's start — throughput cost).
-- **1h has NO maker rebate** (makerRebatesFeeShareBps=None, verified) and
+⚠️ **CORRECTED 2026-09-07 — this line is WRONG. 1h DOES pay the maker rebate:** the 2026-08-20 and 08-21 payments ($1.91 and $1.42) were poolfarm-1h days and both credited at exactly 20.0% of our own fee-equivalent. See strat-rebate-farm-20260907.md §0. Original line follows:
+> - **1h has NO maker rebate** (makerRebatesFeeShareBps=None, verified) and
   reward presence ≈ 0 for us (quotes fill within minutes then nothing rests).
   So income = the pair edge only.
 - Batch variant (PM_MM_BATCH_SH) backtested on 1h: batch 10 cuts worst bar

@@ -710,3 +710,38 @@ single transfer. Consequences and the settled configuration
 If failures ever persist across cycles for the SAME file, check
 `gzip -t` pod-side first; a pod-side-bad file is the only case where data
 is genuinely lost (never observed to date).
+
+
+## Bug #39 (2026-09-08, agent A): a sub-cent limit price is only legal after the market's `tick_size_change` — a lagged venue state
+A limit price must be LEGAL at the instant it is placed, and on Polymarket legality is a lagged venue state. The 0.001 tick is switched per market by a
+`tick_size_change` event that arrives ~121 s (p50) after the price first crosses 0.96 — 74 % of the
+time after the bar has closed. A sim that quotes `best_bid + 0.001` whenever the price is above 0.96
+places an order the venue rejects (`"invalid price, max: 0.99"`) in 98.6 % of its fills.
+**Rules:** (1) every sim that uses a sub-cent price must gate on the recorded `tick_size_change`
+timestamp for that market (`a12_tick.py` extracts them; `a13_tradeable.py` applies them); (2) the
+snapshot book is *not* evidence of the regime — off-grid quotes appear a median 74 s after the price
+crosses 0.96 and mostly post-close; (3) when a live lane got 0 fills against a sim that says 13 %
+(§56 vs the tick-jump), assume the sim placed illegal orders before assuming queue physics.
+**Bug #37 follow-through:** both cells the rebate-farm doc left open were drift artefacts
+(−4.4 / −2.2 c/sh terminal); re-score any "not refuted" maker cell on terminal before citing it.
+
+
+## Bug #40 (2026-09-08, edgehunt): raw-event windows must be keyed on (ws, tok), not tok. The `cur`
+and `post` markets are recorded simultaneously and both carry tokens labelled `U`/`D`. A window
+filtered on token alone mixed the new bar's opening book (0.40/0.51) into the post-close tick-size
+events and produced a fictitious "book at 0.40/0.51 at the tick change" — 33,393 "matched" events
+became 10,188 real ones after the `ws` filter. Rule: every join against the raw `mrecev` stream
+keys on `(coin, ws, tok)`; `bookev.parquet`/`trades.parquet` already do, the window extractor did not.
+
+## Bug #41 (2026-09-08, edgehunt): a live A/B must be POWERED before it is designed. The 16-20
+cell's per-bar ROI sd (17.4 pp) makes a +0.8 pp effect need 858 coin-days/arm. Any proposed live
+A/B in this program must state n-per-arm from the ledger's per-bar sd first; if it exceeds ~30
+coin-days/arm it is an observational study, and should be written up as one.
+
+
+## Bug #42 (2026-09-08, agent C): reward-eligible presence must apply the rewards config attach lag
+The Aug rewards
+config attached ~50 s after bar open (rewfarm §1), so share-seconds at tl > 250 score nothing.
+Scoring the first-60s cell without the lag overstated its reward presence **7×** (3,226k → 456k
+share-s/day) and its break-even pool by the same factor. Rule: any "presence" statistic for a
+rewards program is gated on the program's own attach time, per market, read from the venue.

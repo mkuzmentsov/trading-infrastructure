@@ -820,3 +820,120 @@ $228.08 at close. Uniform-era running total ≈ +$150/6d.
 Only 2 losses all day (one xrp $24 clip, one bnb ~$1.9 partial). Zero halts, zero errors. Brake trips: bnb 1 (windfall kept +$11.5), eth 2 (both wins), hype 1. Balance 09-05 close ≈ $253.6 (from $222.6 at 12:00K).
 Uniform-era 7-day tally now ≈ +$180. Reporting gap 01:00→08:36K (laptop sleep; cron session-local, bots unaffected).
 09-06 opened hot: bnb ladder filled 99.8sh @ 0.238 at 03:19 UTC, won → +$76.09 single-bar windfall (brake marked bar toxic post-fill, §59 working as designed).
+
+## 2026-09-07 03:55K — Day close 2026-09-06 (UTC): +$129.02 (120-2) — RECORD day (4× prev best +29.99)
+5m fleet FINAL: bnb 22-0 +101.87 (0.238 ladder windfall +$76.09 at 03:19 UTC + a +$12.20 windfall in the day's last 6 min) | btc 3-0 +0.96 | doge 24-1 −0.07 ($5 data mode capped its loss at −4.25) | eth 18-1 −16.53 (one 0.99 thin-est flip −23.76) | hype 17-0 +15.17 | sol 16-0 +22.30 (two dislocation wins +7.02/+9.96) | xrp 20-0 +5.32.
+Zero halts, zero errors. Taker fees ≈ $4.85 on ~$1.8k notional (fee = sh×0.07×p×(1−p) — negligible at 0.99, concentrated in the deep fills). Balance 03:54K $374.87 (ATH; era started $180.87 on 08-30).
+Research same day: §64 (early deep-ask lane rejected on live DELAY A/B; mrec sim was clairvoyant — bug #25) and §65 (abuse-sweep: bleed band resolved by §58/§61, ladder-cap raise refuted, second-bite refuted, §33 late-shift quantified: 68.8% ask persistence tl18→tl13, ~+$3.8/day naive, single-coin A/B proposed — awaiting user).
+
+## 2026-09-07 ~23:xxK — §73 MAKER HUNT ROUND 3: the 0.001-TICK JUMP (first positive maker cell) + a rebate-farm accounting correction
+User: *"keep searching for the maker strategy which will generate profits on 5m markets."*
+Full write-up: `docs/strat-maker-tickjump-20260907.md`. Scripts: `tools/mrec/tickjump/`.
+Data: mrec v2 pq build, 7 coins, 09-01→09-06, 9,833 bars / 2.73M prints.
+
+**1. 🟡 THE CANDIDATE — post-only bid ONE 0.001-tick above the favourite's best bid, tl 2-30, bid ≥0.98.**
+The venue tick is **0.001 above 0.96** (14.3% of late-window `ub≥0.96` are off the 0.01 grid vs
+0.017% below 0.90), so price priority costs **0.1c** instead of 1c. Pooled replay, 50sh/bar cap:
+**+0.518 ± 0.169 c/share, t=3.07, 6/6 days, +$74/day**; with the fleet's own recon gate
+(`|est_bps|≥2, cov≥0.5`) **+0.738 ± 0.119, +$63/day**. Mechanism = the resting-order wall read
+backwards: **joining** the touch fills only 449 bars at win 0.98598 (−0.09 c/sh), **improving**
+fills 2,467 bars at win 0.99480 (+0.52) — the front of the queue gets the BENIGN flow.
+CONTROLS PASS: the same jump mid-bar, where the tick is 0.01, is **−1.799 (t=−7.9, 0/6 days)**;
+mid-band 0.30-0.96 in the same window −0.279. FILL MODEL VALIDATED on the tape: **94.7% of prints
+(87.5% of shares) in that window execute exactly AT the displayed best bid** — the improvement
+niche is unoccupied (and that also bounds the competitive decay: ~5 ticks of headroom).
+⚠️ **NOT DEPLOYED, and must not be sized on this evidence**: (a) LOO-coin — drop btc and it is
+**+$0.6-3/day** (bnb/doge/hype negative in every config), and README §4 records replay-vs-live
+per-coin r=**−0.63**, so "run btc only" is forbidden; (b) the downside is **7-13 loss events** in
+6 days (uncapped t falls to 1.78, 13 loss bars, day 09-06 −$530); (c) ⭐ **a maker can never
+sweep** — a resting bid fills at its own price, so this lane deliberately buys the grind and
+forgoes the option that §7 of the live ledger measured as **61.7% of all fleet profit**. Maker
+grind ROI +0.53% beats taker grind +0.34% (no fee + rebate), but taker-with-sweeps is +0.87%.
+**Proposed arm: 5 shares, log-only, ALL SEVEN coins, |est_bps|≥2, tl 2-30, one clip/bar — judge on
+FILL RATE and post-only rejections, not PnL.** (§54's 0/165 rest lane was the *post-close* snipe at
+a fixed 0.99 — a different window, not a contradiction, but the reason fill rate is the question.)
+
+**2. ⛔ Static DEEP resting bids on the late favourite — REFUTED, t = −8 to −16.** `fav_bid − Δ`
+placed at tl 30/45/60/90 and left to the close: **−13 to −19 c/share** for every Δ ∈ {1,2,3,5,10,
+15,20,30}c and every placement time, filled at mean 0.58-0.77 winning 12-58%. Strict
+("walked-through") and zero-queue fill models agree. ⭐ *A sweep is not a price you can wait at.*
+Do not misread the print census (prints at 0.80-0.90 in tl 0-30 win 90.8%) — that is the market
+*at* 0.85, not a bid pre-committed at 0.85.
+
+**3. ⛔ No volume-tier maker rebate.** Live gamma 09-07: all 5m/15m crypto up/down =
+`{rate:0.07, exponent:1, takerOnly:true, rebateRate:0.2}`, `clobRewards: None`. `rebateRate`
+varies by MARKET (sports 0.15, Fed 0.25), never by our volume. Closes the reopener named in
+`strat-maker-4060-pooled` §5(a).
+
+**4. ⛔ Full (tl × price) map of the touch-joining maker — every one of 64 cells negative**
+(−1.9 to −7.3 c/share, t −3 to −17), lifting the caps the program had always run under
+(q 0.04-0.60, tl 40-270). ⚠️ `mm.py` skips every epoch where the favourite has no ask (83% of
+late-window seconds), which is why the high-price late cell had never been sampled; `lw2.py` fixes
+that. `mm.py:load_coin` was also missing `evage` — added, so freshness gates actually bind.
+
+**5. ⚠️⚠️ ACCOUNTING CORRECTION → `docs/strat-rebate-farm-20260907.md` §11 (ledger-worthy).**
+That doc's headline reproduces **bit for bit** (half-spread +0.868 vs +0.851, adverse −1.562 vs
+−1.540, sum −0.441 vs −0.430 ✔) — but its `net` omits the **placement→fill mid drift, −4.156
+c/share**. Terminal `win − q` + rebate on the identical 47,038 fills is **−4.624 ± 0.382**; we
+fill **3.30c ABOVE the mid at the instant of fill**. Verdict unchanged (more dead), and it
+**reconciles** −0.43 with `strat-maker-4060-pooled`'s −7.03 — the two docs were measuring
+different things. ⚠️ Re-score anything that used the magnitude, above all *"+$269/day at LAT=0"*
+(that curve lives in `pess2/qdecay.py`, which owns the cancel-latency axis). The §9 signal-cancel
+work uses a 1-second markout and is unaffected.
+**Rule to carry: decompose a maker's PnL as (mid@quote − q) + (mid@fill − mid@quote) + (win −
+mid@fill). The middle term is the strategy, not a nuisance.**
+
+## 2026-09-08 03:56K — Day close 2026-09-07 (UTC): +$31.32 (131-2)
+5m fleet FINAL: bnb 16-0 +4.04 | btc 14-0 +4.05 | doge 20-2 −5.60 (both losses $5-data-mode capped) | eth 24-0 +13.10 | hype 17-0 +4.61 | sol 17-0 +4.59 | xrp 23-0 +6.53.
+Pure grind day (no windfalls): 131-2, zero halts, zero errors. Balance 03:55K $383.95 (ATH era; peak read $398.80). Uniform-era 9-day run ≈ +$310. Cron renewed 09-07 (ab2ba68a). Housekeeping: multiple in-flight-clip balance dips triaged clean (§63 pattern held every time).
+
+## 2026-09-08 — §73b AGENT A (maker round 3): THE TICK-JUMP LANE IS INFEASIBLE — the 0.001 tick arrives ~2 min late
+Doc `docs/strat-maker-hunt-r3-20260907.md`; scripts `tools/mrec/tickjump/agentA/`. Every book-side attack on §73-1
+PASSED (98.1% of late sell prints at the best bid vs a 7,647-sh median queue; 12 exact-+0.001 improvers in 3,905
+bar-tokens; capacity median 100 sh/bar; pre-registered persist-5s gate → 2 loss bars, +0.839 ± 0.073 c/sh, all 7
+coins positive, LOO-btc +$36/day) — **and then the venue clock killed it**: 16,212 raw `tick_size_change` events
+show the fine tick switches **~121 s (p50) after the price crosses 0.96, 74% after close, 13% of decisive bars by
+tl 30**. 0.991 is rejected (`invalid price, max: 0.99`) for 98.6% of the sim's fills; tradeable subset **34 bars,
++$1.7/day**. This reconciles §56's live 0/165. Bug #39: gate every sub-cent sim on the recorded tick_size_change.
+Also closed: mirror lottery (underdog bid 0.002 — 0 win events in 390 prints, ceiling +$2/day); rebate-farm's two
+"not refuted" cells on TERMINAL PnL (first-60s two-sided −4.40 ± 0.72, .04-.15 band −2.23 ± 0.44, both 0/6 days —
+bug #37 artefacts); flip-transient, post-close winner-bid pool ($187 of $217/day in coarse-tick bars), minted
+0.999 ask (≡ 1.000 by identity), 0.999 exit demand (0.8% of bars). **The maker program has no open 5m cell.**
+
+## 2026-09-08 — §73c AGENT B (non-maker 5m edge & mechanics hunt): NOTHING TO ABUSE, NO CROSS-MARKET SIGNAL
+Doc `docs/strat-edge-hunt-5m-20260907.md`; scripts `tools/mrec/edgehunt/`; 7 live ledgers pulled read-only (08-17→09-07).
+Mechanics: 41k `tick_size_change` events → **0 crossed/locked books**, no stale 0.01-grid asks; post-close tape 1.67M sh/6d
+= **99.98% sellers dumping the winner into 0.98-0.999 bids** (taker-liftable winner asks $272/6d field-wide — snipe dead
+from the tape side); underdog asks ≤0.10 late: flip 0.003-0.04% vs 0.9% BE, every cell −0.9…−7 c/sh; orders ARE accepted
+post-close (626/628 ids at T+2.1s) but nothing takeable; min size 5 sh; late takers = 0.99-lifters, no wash/new archetype.
+Cross-coin: btc's est is right about an alt 77% vs the alt's own est 97.7%; 15m/1h add nothing. Live lane: "fire only at
+displayed 0.99" is a SIZING signal (+$139.64, 1.19%, tl≤12 7.78%) not a gate (forfeits $75); sweeps scale 2.3%→35% ROI
+with requested size (confirms ledger §5); tl 0-2 window +$0.26/day; UTC 03-11 hole was the mid-band bleed (post-08-31 +1.01%).
+⭐ **The tl≤12 vs 16-20 A/B is UNDECIDABLE live**: per-bar ROI sd 17.4pp ⇒ 858 coin-days/arm (~4 months) for +0.8pp.
+Bug #40 (key raw-event windows on (ws,tok) — cur/post share token labels), bug #41 (power an A/B before designing it).
+
+## 2026-09-08 — §73d AGENT C (mid-band 20-80c maker for rebates / rewards-readiness): COST FRONTIER + GO/NO-GO TRIGGER
+Doc `docs/strat-midband-mm-rewards-20260907.md`; scripts `tools/mrec/midband/` (incl. `rewards_monitor.py`, NOT deployed).
+47 pre-registered cells, terminal PnL, 7 coins × 9,833 bars: **every cell negative, 0-1 of 6 days positive**. join/static
+−6.71 c/sh (−$4,500/day @50sh×7), **join/cancel-on-touch-move −2.53 c/sh (−$1,370/day)** — drift is 2-3× adverse
+selection everywhere and cancel-on-move is the only lever that matters (drift −7.3 → −3.1). Rebate +0.30-0.35 c/sh =
+5-12% of the hole. 40-60c is worse than 20-80 at every placement. First-60s cheapest per share (−1.23, 0/6 days) but earns
+~no rewards (Aug config attached at ~tl 250 → bug #42). Cheapest reward-eligible presence ≈ **$0.30 per 1,000 in-band
+share-seconds** (edge05/cancel). **GO/NO-GO for a returned rewards program: pool ≥ ~$1,600-1,800 per coin per day** with
+today's field (Aug alt pools were $833-1,667 — just under); at Aug's *measured* capture no pool ever offered breaks even.
+Least-bad "keep the plumbing warm" config ≈ one coin, 1 quoted bar/hour, ≈ $1.5/day. openmm gaps: size 5 = zero rewards
+(min 50), first-minute window is the wrong window, imb/pull gates on (proven harmful), no rewards fields read.
+**Decision map now: no open 5m maker cell; rewards lane = monitor + re-run frontier the day `clobRewards` reappears.**
+
+## 2026-09-08 — §74 30-70c MAKER ROUND 4 (user: "market maker only, 30-70, only 5m, search for the edge"): the last three untested cells, all dead
+Doc `docs/strat-maker-3070-20260908.md`; scripts `tools/mrec/midband/r3070/`. Terminal PnL, queue, tape cap, placebos.
+(A) TWAP-recon-gated maker at tl 3-60: the gate leaves 61 bars at |bps|≥2 (a near-tie price and a decisive margin exclude
+each other); +7.8 ± 8.8 c/sh vs **flipped-side placebo +19.9 ± 12.8** → noise. (B) momentum-following one-sided maker
+(full bar): −1.25…−1.51 c/sh, 0-2/6 days; contrarian placebo −1.39 — identical. (C) deep-size for sweeps: −5.5…−8.6 c/sh,
+t −20…−26, 0/6 days; the ≥100-share fills are the WORST at every depth (−6.9…−9.1) — big sweeps are informed. Sixth
+field-average inversion. **Nothing untested remains in 30-70c; the go/no-go is the rewards pool (§73d).**
+
+## 2026-09-08 — §74b user idea: mint at open + 0.99 asks on both tokens ("chop double take-profit") — break-even by construction
+`r3070/minttp.py`, 11,137 bars: winner sold −1c in 74 % of bars vs loser sold pre-reversal +99c in **0.74 %** (break-even 1.0 %)
+⇒ +3.0 ± 3.7 c/bar on $50 (t 0.8, 4/9 days, xrp/btc +, bnb/hype −). TP 0.98 −10.5c, 0.95 −62c, 0.90 −139c. Chop gate: 71 %
+of bars fill nothing. Split/merge itself is not a distinct mechanism (identity; doc §D). Documented in strat-maker-3070 §D/§E.

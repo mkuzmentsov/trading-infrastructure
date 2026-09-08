@@ -2090,3 +2090,1000 @@ User asked for an abuse-scan of data on hand (5m only, no code). Sources: 21d bo
 3) **Second bite at deep fills: REFUTED (adverse depth).** 32 deep fills (<=0.85, tl<=20) since 09-01, post-fill 12s depth from mrec: **every one of the 11 losses had $96-920 more sitting <=0.85** (the dump continues; the market knows), while winners mostly snap back (best ask returns to/above fill). Immediate re-FAK $24 at <=0.85: ~+$110 on 12 winners-with-depth vs −$264 on 11 losers ⇒ net negative. The 08-17 ladder floor 0.94 protects exactly this flank; bnb's 0.238 windfall passed the gate only because the DISPLAYED ask was stale 0.99 (gate checks display; FAK swept reality).
 4) **Early deep-ask (tl>20): REFUTED** — §64, same day.
 5) **LIVE CANDIDATE — §33 budget late-shift, now with the missing number.** Live fills 21d, .98+ band: tl 16-20 = 1147W-11L +$41.50 on $14,725 (+0.28%, loss rate 0.95%); tl 12-16 = 271W-1L +$40.85 on $3,433 (+1.19%, loss rate 0.37%). mrec availability: winner-side ask <=0.99 (>=8sh) present in 10.5% of bars at tl18, 8.0% at tl13; **persistence tl18→tl13 = 68.8%**, avg px unchanged (0.840). Naive shift of the 16-20 budget to <=14: 0.688×$14,725 ≈ $10.1k staked at ~+1.19% ≈ +$120/21d vs +$41.50 now ⇒ ~+$3.8/day. CAVEATS: (a) selection bias — the 31% of asks that vanish are plausibly the surest winners (field vacuums them), so realized ROI on persisting bars may be lower than the observed 12-16 cell; (b) behavioural change to the highest-volume cell — per the 08-22 lesson, NEVER fleet-deploy; if pursued, single-coin A/B (shift one coin's fire gate 20→14 for ~1wk) with the rest as control. NOT deployed; analysis only per user instruction.
+
+## §66 (2026-09-06) mrec v2 TRADE-TAPE analysis — ⭐ THE BID-DROP VETO (best candidate since §37), 15m/1h closed, 4h flagged
+User: "analyse the updated mrec logs … update vacmaker or create a new strategy … no code for now."
+Dataset: **09-01 20:00 → 09-06 09:00 UTC**, 110 hourly files × 8 coins (5m) + 15m/1h/4h/1d recorders.
+Converted to parquet (scratchpad `pq/`): **2,741,325 real trade prints**, 27.5M `cur` SNAP rows,
+38.3M long-duration SNAP rows, 67k RB reconciles, 9,822 resolved 5m bars.
+
+### 0. Method validation (do this before trusting anything below)
+- **Offline TWAP-60 recon vs real resolutions: 99.48%** (9,773 bars); by |margin|: 0-0.1bps 72.9%,
+  0.25-0.5 97.2%, 1-2 99.4%, **≥5bps 100.0%** (n=6,227). The settlement arithmetic reconstructs exactly.
+- **Bug #25 does NOT apply here.** The live-time estimate is gated at the SNAP row's own `cl_ts`
+  (the latest tick *the recorder had already received*), not at wall time. Measured relay
+  `t − cl_ts` p50 **2.12-2.14s** across all 7 coins — the documented 2.21s. The replayed
+  accuracy-vs-tl surface reproduces §33 exactly (|est|≥5bps → 99.98% at every tl; 0.5-1bps decays
+  98.1% @tl 3-8 → 77.5% @tl 25-30), which is the independent check that the lag is right.
+
+### 1. ⭐⭐ THE BID-DROP VETO — the ask tells you the price, the BID tells you whether it is real
+**Feature:** `dB = favourite's best BID now − same side's best BID 10-20s ago`. Pure book state,
+no trade tape, no oracle — the bot already has everything it needs in `pm_state`.
+**Rule:** skip the clip when `|est| < 5bps AND dB20 <= −0.03`.
+
+Mechanism (this is the part that generalises): a cheap favourite ask has two completely different
+causes and we have never had a discriminator for them.
+- **ask falls, bid holds/rises** = one seller dislocating into a book that still believes → our gift.
+- **ask falls AND bid falls** = the market is *revaluing* on spot/Chainlink ticks our 59-tick TWAP
+  mean has not averaged yet. It is right and we are stale. Every mid-band loss looks like this.
+
+Replay (live gates: tl 3-20, threshold 0.10+0.035·max(0,tl−14), cov≥0.5, ask 0.55-0.99,
+first-clip skip 0.90-0.98, ladder floor 0.94, $8 clips / $16 bar / 8s gap; fills **tape-confirmed** —
+a fire counts only if a real BUY print existed at ≤ our limit within 1.5s):
+
+| | clips | stake | pnl | ROI | win | $/day |
+|---|---|---|---|---|---|---|
+| baseline | 722 | $5,776 | +$75.96 | 1.32% | 94.2% | **$12.66** |
+| + veto dB20≤−0.03 | 641 | $5,128 | +$176.93 | 3.45% | 98.0% | **$29.49** |
+
+Day-wise it converts the shape, not just the level: base `+10.2 / −58.7 / −4.5 / +14.2 / +75.8 / +38.9`
+(2 negative days) → veto `+6.3 / +36.1 / +34.6 / +18.1 / +35.8 / +46.0` (**6/6 positive**).
+The 09-02 −$58.70 day becomes +$36.12.
+
+**Robustness battery (all passed):**
+- *Fill model independent.* Under naive displayed-ask fills: $2.14/day → **$39.87/day**, 7/7 days
+  positive. So the veto is about being WRONG, not merely about FAK slippage.
+- *Parameter insensitive.* lookback 5s/10s/20s → $32.9 / $33.1 / $29.5 per day; threshold
+  −0.01…−0.15 → $26.4-$32.0 per day. Nothing to tune = nothing fitted.
+- *Orthogonal to price.* Within every ask band, keep vs veto: 0.55-0.80 → 86.7%/+24.4% vs
+  51.9%/−24.3%; 0.80-0.90 → 95.3%/+12.3% vs 63.2%/−26.7%; 0.90-0.95 → 99.0%/+4.4% vs
+  81.8%/−13.1%; 0.95-0.98 → 98.8%/+1.7% vs 84.0%/−13.5%; 0.98-0.99 → no effect (0.24% vs −0.14%,
+  as expected: at 0.98 the book is already locked).
+- *Orthogonal to est.* Within |est| bands, keep vs veto: <1bps → 96.0%/+1.3% vs 58.3%/−29.3%;
+  1-2 → 98.1%/+2.1% vs 78.2%/−11.4%; 2-5 → 100%/+6.0% vs 86.4%/−4.2%; **≥5bps → 100% both**
+  (hence the est exemption: at ≥5bps the arithmetic is settled and a falling bid is a *gift*,
+  +3.2% ROI on the vetoed set).
+- *It is the BID, not the ask.* Same rule on `dA20` (ask drop) yields only $20.55/day.
+- *Permutation.* Dropping the same number of clips at random: p = **0.0026**. Shuffling `dB20`
+  within coin (preserves the marginal + the clip mix): p = **0.0046**.
+- *Per coin:* helps bnb/btc/doge/eth/xrp, hurts hype (+$10.96 in the vetoed set) and sol (+$14.69).
+  5/7. Day-wise the vetoed set is negative 6/7 days.
+
+**Worked pair (this is the whole idea in two bars):**
+- VETOED LOSS — xrp 09-03 ws=1788433200. est DOWN −2.7bps @tl45 decaying to −1.0 @tl13; DOWN bid
+  holds 0.66-0.79 until tl≈17 then **collapses to 0.10 by tl13** while our est still says DOWN.
+  Fired tl=10 on a displayed 0.76, FAK swept to 0.12. −$8.49. The market repriced 7s before we did.
+- KEPT WINNER — bnb 09-04 ws=1788528000. est UP 6.3→0.5bps; UP bid **rises** 0.21 (tl21) → 0.99 (tl5)
+  while the ask dips to 0.61 at tl20. Took it at 0.46. +$9.09.
+
+**Relation to prior work — it fills the exact gap §64/§65 left open.** §64 rejected the early
+deep-ask lane and §65-3 rejected the second bite because deep asks are, *on average*, fairly priced;
+neither had a way to split the population. dB is that split. It also complements §59: the toxic-fill
+brake keys on slippage *after* the first clip is already lost; dB catches the first clip.
+
+**Also tested, not deployable:** our own |est| drift over 20s is cleanly monotone (shrinking margin
+−2.3% ROI → widening +6.4%) but gating on it removes half the clips for +$0.6/day. A static
+ask−bid spread filter gives $23.2-23.6/day — real but strictly worse than dB, and combining them
+over-filters ($18.4/day). Trade-tape directional flow (signed $ on our side, 5-30s) also separates
+(bottom-5% bucket −18% ROI) but is contaminated by the 1c dog-lottery flow and is day-wise unstable
+(3 up / 3 down); dB dominates it and needs no tape.
+
+**RECOMMENDATION (not deployed, user said no code):** single-coin A/B per the 08-22 lesson —
+put `PM_TE_BIDDROP_VETO` on ONE coin (bnb or eth: both large positive, both mid-band-prone) for
+~1 week with the other six as control. Needs only a ~20s ring buffer of the favourite side's best
+bid. Do NOT fleet-deploy: it is a behavioural change to the highest-volume cell, and 2/7 coins
+are negative on 6 days of data.
+
+### 2. Resting a bid on the recon winner — RE-CLOSED, now with the queue actually measured
+The pool is real and large: taker SELL prints into bids at 0.95-0.99 in tl[0,45] = **$105k/day of
+notional on the eventual winner** (btc $96k/day), 99.5% correctly sided, maker ROI +0.94% at
+0.98-0.99, +1.6% at 0.95-0.98, +3.7% at 0.90-0.95. Total maker pool ≈ $1.5k/day.
+**Why we still cannot have it:** the v2 depth ladders let us measure the queue at the exact bid
+being hit for the first time — **median 17,391 shares, p25 4,254, p90 39,746**. A $12 clip is
+0.07% of the queue. This is bug #11 (queue-position death) measured directly rather than inferred,
+and it re-confirms §56's snipe-rest verdict from the other side. Do not reopen without time priority.
+
+### 3. Supply census on the TRUE tape (replaces every displayed-ask estimate)
+tl[3,30], px 0.55-0.99, over 6 days / 8 coins:
+- winner-side prints **$12.9k/day net at +4-6% ROI** (btc $8.2k/day) — the addressable pool.
+- loser-side prints −$7.8k/day ⇒ late-window takers as a class extract ≈**$3.2k/day** from makers.
+  (The informed-flow wall, seen for the first time from the makers' side of the ledger.)
+- Our fleet earns ~$19/day of that. The binding constraint is **not supply**: median top-of-book
+  on a fireable bar is $29 (p75 $68) against an $8 clip / $16 bar cap.
+- **The favourite has NO ask at all in 83% of late-window seconds.** This is venue truth, not a
+  recording artifact: RB agrees with our WS on ask *presence* in 99.9% of 66,764 reconciles.
+- Cheap tail: 1.93M shares/6d bought at ≤2c by lottery takers who lose 80-87% of stake — but only
+  $14.3k of notional, and the offer side of it is the same 1c queue wall. Nothing to take.
+
+### 4. Longer durations — 15m and 1h CLOSED, 4h FLAGGED (do not act yet)
+TWAP-60 recon validated on 15m (**99.66%**, n=879) and 4h (**100%**, n=161).
+**⚠️ 1h reconstructs at only 95.2% (n=103) — the 1h market is probably NOT TWAP-60.** Do not run
+any 1h recon strategy until its settlement window is identified.
+Late-window opportunity (tl 3-20, decisive, ask 0.55-0.99, first fireable second per bar):
+
+| dur | fireable bars | hit% | avg ask | median top-of-book | win | ROI |
+|---|---|---|---|---|---|---|
+| btc 15m | 29 | 6.6% | 0.896 | $93 | 89.7% | **−0.56%** |
+| eth 15m | 31 | 7.0% | 0.909 | $40 | 90.3% | **−1.17%** |
+| btc 1h | 12 | 11.5% | 0.891 | $82 | 83.3% | **−7.09%** |
+| 4h (5 coins) | 20 | 5-19% | 0.93 | $27-169 | **100%** | **+2.9…+11.3%** |
+
+15m and 1h are closed. **4h is the one interesting cell**: widening to tl 3-45 gives 24 fires,
+**24/24 wins, +5.94% ROI**, and the books are ~1.7× deeper than 5m (median top-of-book $49 vs $29,
+p75 $118 vs $68) — i.e. the one place our capital-per-bar constraint would bind less. But it is
+**~5 fires/day fleet-wide and n=24**: that is an observation, not a result. ACTION: keep the five
+4h recorders running, re-cut in 3-4 weeks (~150 fires) before anyone writes code.
+
+### 5. Two recorder defects found while doing this (see docs/backtesting.md)
+1. `price_change` rows — **95% of the event stream** (848k of 897k events/hour on btc) — carry no
+   `ws`, so they cannot be attributed to cur/next/next2. Everything in §66 therefore rests on SNAP
+   + `book` + `last_trade_price` (which do carry `ws`). Cheap fix available.
+2. The RB `match` flag remains a churn metric, not a staleness metric — quantified again below.
+
+## §67 (2026-09-06, same session) §66 CORRECTED — the veto is a TAIL filter, not a $/day multiplier; and it does NOT extend to the early lane
+
+Two follow-up investigations forced a correction to §66-1 and closed one more door.
+Both were triggered by holding the work to the same standard §64 used: *when a sim
+disagrees with live ground truth, the sim is wrong until proven otherwise.*
+
+### 1. ⚠️ CORRECTION to §66-1: "$12.66 → $29.49/day" was one cell of a 12-cell grid
+
+§66 reported the veto against a single fill model (tape-confirmed, 1.5s window,
+unlimited FAK sweep). Re-running the whole grid — fill window × how far below the
+displayed ask we assume the FAK sweeps — shows the **baseline** is wildly fill-model
+dependent while the **veto** is not:
+
+| fill window | sweep cap | baseline $/day | veto $/day | delta |
+|---|---|---|---|---|
+| 0.4s | 0¢ / 5¢ / ∞ | 4.90 / 16.29 / 29.33 | 13.68 / 21.66 / 26.27 | +8.8 / +5.4 / **−3.1** |
+| 0.6s | 0¢ / 5¢ / ∞ | 8.36 / 20.37 / 35.40 | 16.65 / 24.88 / 30.08 | +8.3 / +4.5 / **−5.3** |
+| 1.5s | 0¢ / 5¢ / ∞ | −5.89 / 2.32 / 12.66 | 17.75 / 23.11 / 29.49 | +23.6 / +20.8 / +16.8 |
+| 3.0s | 0¢ / 5¢ / ∞ | −8.29 / −1.78 / 8.77 | 18.42 / 22.90 / 29.77 | +26.7 / +24.7 / +21.0 |
+
+**Baseline spans −$8.3 … +$35.4/day. The veto spans $13.7 … $30.1/day and is
+6/6-positive-days in 11 of the 12 cells.** So the defensible claim is *not* a delta —
+the delta ranges −$5.3 to +$26.7 and cannot be pinned down offline. The defensible
+claim is that **the veto makes the outcome insensitive to execution assumptions**,
+because it removes exactly the bars whose PnL depends on them (collapsing books, where
+you either sweep a windfall or eat a disaster).
+
+The two negative cells are the most contaminated corner: a 0.4-0.6s forward window
+*plus* unlimited sweep is close to "we always catch the windfall exactly when one
+exists". They also carry a real warning though — **on a bid-drop bar the FAK does fill
+cheaper**, so the veto forfeits genuine windfalls (the §65-3 bnb-0.238 class). That
+trade-off is only measurable on live fills.
+
+**Model-INDEPENDENT results (hold in every cell) — report these, not the delta:**
+
+| | baseline | veto |
+|---|---|---|
+| losing clips / day | 4.7 – 7.3 | **1.5 – 2.3** |
+| worst DAY | −$34 … −$76 | **+$1.6 … +$6.6** (one cell −$4.14) |
+| worst single BAR | −$16.3 … −$16.7 | −$16.3 … −$16.5 (**unchanged**) |
+
+That is the true shape: it does **not** stop the single worst bar; it stops the
+*accumulation* of bad bars within a day. A day-level tail filter with a ~3× cut in loss
+count. The supporting split is fill-model-free — among clips that DID print: bid-drop
+79.8% win / −$77.89 vs 97.8% / +$57.84; among clips that did NOT print: 63.7% / −$187.40
+vs 97.9% / +$222.46. It separates in both subsets, and bid-drop clips are *more* fillable
+(53.3% vs 46.9% at 1.5s), so we are more likely to actually eat those losses.
+
+### 2. ⛔ The veto does NOT re-open the early deep-ask lane (§64 stands, and gets stronger)
+
+Hypothesis worth testing: §64 rejected firing at tl>20 on deep asks because they are
+*on average* fairly priced — maybe dB is the missing discriminator there too.
+**It is not. The sign inverts.** Calibrated early lane (tl 20-35, ask 0.55-0.90,
+tape-confirmed, 22 fires/day, 74.2% win, −$20.7/day at $24 clips):
+
+| | fires/day | win | $24-clip $/day |
+|---|---|---|---|
+| no bid drop ("keep") | 15.2 | 73.6% | **−27.8** |
+| bid drop ("veto") | 6.8 | 75.6% | **+7.2** |
+
+The keep set is negative 5/6 days. Mechanistically consistent: at tl≤20 the TWAP window
+is ~2/3 observed, so a bid collapse means the market holds late ticks we have not
+averaged. At tl 20-35 the outcome genuinely is not determined yet, so bid moves are
+ordinary repricing that reverts. **The bid-drop veto is a LATE-WINDOW tool only —
+do not generalise it to the early window.**
+
+### 3. ⚠️ How the early-lane test nearly produced a fake +$270/day (new bug-ledger entry)
+
+First cut of the early lane read **+$1,619/6d (+$270/day)** — flatly contradicting §64's
+live A/B (−$92 over 18d). Two corrections, in order of damage:
+- **ask band 0.30-0.90 → 0.55-0.90** (the bot's real `MIN_ASK`): +$270/day → **−$48/day**.
+  Sub-MIN_ASK asks the bot would never take supplied the *entire* fake profit.
+- **+ tape-confirmed fills**: −$48/day → **−$20.7/day**, i.e. 22 fires/day vs §64's live
+  30.8/day at 74.2% vs 80.4% win. Now calibrated, same sign, slightly pessimistic.
+
+Logged as bug #26. §66-1's headline was NOT affected (that sim always used
+`askmin=0.55` and tape fills) — but the near-miss is why §67-1 exists.
+
+## §68 (2026-09-06, evening session) THE FILL MODEL, CALIBRATED TO LIVE — §67's uncertainty band collapses, and the veto survives
+
+> ⚠️ **CORRECTED by §72.** A fourth live day (09-05, +$29.99) was available and unused; the
+> house cell is **2.60×** live over 09-02…09-05, not 1.9×, and it is superseded by the same cell
+> plus a **tape-SIZE cap** (1.17×, ledger #28). §68-8 (conditional cap raise) is DESTROYED and
+> §68-13 (MIN_ASK) is WOUNDED — MIN_ASK 0.90 now looks better than 0.55. Read §72 first.
+
+User: "analyse the updated mrec logs … update vacmaker or create a new strategy … no code
+for now." Continuation of §66/§67 on the same parquet (09-01 20:00 → 09-06 09:50 UTC; raw now
+runs to 09-06 14:00 but 5 extra hours were not worth a 30-min rebuild). Scripts:
+`scratchpad/mine/{fires,fwd,band,decomp,cal,depthsim,calib,halt}.py`.
+
+§67 left the program with an honest but paralysing verdict: *the veto's $/day delta ranges
+−$5.3…+$26.7 across a 12-cell fill-model grid and cannot be pinned down offline.* This section
+pins it down, by doing the thing nobody had done: **scoring the fill model against the live
+fleet's own realised PnL on the same days.**
+
+### 1. ⚠️ Two scale errors in every §66/§67 number
+- **The replay was sized at $8 clips / $16 bar. The live fleet runs $24 / $48**
+  (`chart/bots/*_vacmaker.yaml: pmTeWhaleLadderUsd: "48"`, doge on $4 data mode). Every
+  §66/§67 dollar figure is therefore at **one third of live scale**. Ratios and day-shapes are
+  unaffected; absolute $/day was not comparable to anything.
+- **The sim fills at `min(displayed ask, best qualifying print)` with no depth limit.** A $24
+  clip exceeds the median top-of-book ($25.3, p25 $14.7) on ~half of fires, so the unlimited-size
+  assumption is worth another ~8% of stake at live sizing.
+
+### 2. ⭐ The price improvement in the sim is a LATENCY ARTIFACT — measured, not argued
+For each of 1,293 policy fires, the favourite's best ask was tracked forward through the 10Hz
+SNAP ladders (`fwd.py`). Price improvement of ≥5¢ below the displayed ask occurs in:
+
+| forward window | 0.2s | 0.4s | 0.6s | 1.0s | 1.5s | 3.0s |
+|---|---|---|---|---|---|---|
+| improve ≥5¢ | **1.3%** | 3.0% | 4.3% | 5.5% | 7.0% | 9.4% |
+| mean improvement | +0.2¢ | +0.6¢ | +0.9¢ | +1.2¢ | +1.6¢ | +2.7¢ |
+| ask gone entirely | 3.5% | 1.6% | 1.6% | 1.5% | 1.4% | 1.3% |
+
+Our decision→match path is a 0.4s scan plus ~200ms of venue latency. **The windfalls that make
+the unlimited-sweep cells look good are book moves arriving 0.5-3s after our order would already
+have landed.** And they are concentrated exactly where §67 worried: on bid-drop fires, ≥5¢
+improvement runs 6.2% at 0.2s but 28.7% at 1.5s (vs 0.5% / 3.1% on non-bid-drop fires). So
+§67's "the veto forfeits genuine windfalls" objection is mostly an artifact of the forward window,
+not a property of the market. It is also a discount on a much worse bet: those fires win 72.3%
+vs 97.8%.
+
+### 3. ⭐⭐ The calibrated cell: fill AT the displayed ask, within 0.4s, walking the top-3 ladder
+Ground truth from `RESEARCH-LOG.md` day closes, 5m fleet only. **09-01 is excluded — the parquet
+begins 09-01 20:00 UTC, so the sim sees 4 hours of a 24-hour live day.** Comparable window
+09-02…09-04: live **+$18.40**, **351 bars, 17 loss bars** (96-8 / 114-7 / 124-2).
+Sweeping the price-improvement cap at live sizing (`calib.py`, `diag.py`):
+
+| window | cap | sim 09-02…09-04 | vs live | sim bars | sim loss bars |
+|---|---|---|---|---|---|
+| **0.4s** | **0¢** | **+$34.94** | **1.90×** | **312** | **22** |
+| 0.4s | 1¢ | +$74.95 | 4.07× | 312 | 22 |
+| 0.4s | ∞ | +$212.84 | 11.6× | 312 | 22 |
+| 0.6s | 0¢ | +$69.57 | 3.78× | 346 | 22 |
+| 1.5s | 0¢ | −$114.42 | — | 391 | **34** |
+| 1.5s | ∞ *(the §66/§67 cell)* | +$54.44 | 2.96× | 391 | **34** |
+| live | — | +$18.40 | 1.00× | 351 | **17** |
+
+**(0.4s, 0¢) is the best cell on all three axes at once** — PnL, bar count, and loss-bar count —
+and it is the only cell within 2× of live on dollars. It still **overstates**: 1.9× on PnL and
+1.3× on loss bars, which is the residual from the live brake/halt/xrp/doge-$5 rules the sim does
+not model. Treat it as the house cell, not as truth.
+
+Two consequences that do change conclusions:
+- §67's grid was not a symmetric uncertainty band. Its optimistic corner (0.4-0.6s × unlimited
+  sweep) reads **+$213…+$242** against a live **+$18.40** on the same three days.
+- **§66/§67 ran at (1.5s, ∞), which carries 34 loss bars against live's 17.** The veto's job is
+  removing loss bars, so it was scored against roughly double the loss population that exists.
+  Its benefit in that cell is inflated; it does not vanish in the calibrated cell (§4), but the
+  headline "$12.66 → $29.49/day" was measured on a fire set that does not match the live bot.
+- Bug #23 is confirmed from a third direction: live pays *at or above* the seen ask, so any
+  `fpx < displayed ask` in a replay is borrowed from the future.
+
+### 3b. ⚠️ The calibration is aggregate-only — PER COIN the sim is ANTI-correlated with live
+`percoin.py`, 09-01…09-04, live per-coin day closes vs the calibrated cell:
+Pearson **r = −0.63** on 4-day coin totals (n=7), **r = −0.28** across 28 coin-days, sign
+agreement 16/28. Live doge −$84.76 vs sim +$21.8; live sol +$67.81 vs sim −$30.7.
+The cause is structural, not a bug: with ~17-22 loss bars in the window and a ~30:1 payoff, a
+coin's PnL is decided by *which individual bars flipped*, and the sim's fire set is not the live
+bot's fire set (the live bot has the toxic brake, per-coin halts, xrp's disabled halt, doge's $5
+data mode). **Therefore: the aggregate calibration is usable; the per-coin ordering from ANY
+replay is not.** This directly weakens §4's per-coin table and §66's "pilot on bnb or eth"
+reasoning — the pilot coin cannot be chosen from replay alone.
+
+### 4. The bid-drop veto under the calibrated model — it holds, at ~+$10/day
+$24/$48, W=0.4s, cap=0¢, live gates, tape-confirmed, full 6 days:
+
+| | clips | $/day | ROI | clip win | losing clips/day | worst day | positive days |
+|---|---|---|---|---|---|---|---|
+| baseline | 554 | $27.41 | 1.48% | 95.5% | 4.2 | **−$63.36** | 5/6 |
+| + veto | 489 | **$37.60** | 2.23% | 98.6% | **1.2** | **+$6.82** | **6/6** |
+
+On the three days that have live ground truth (09-02…09-04): base **+$34.94 / 22 loss bars** →
+veto **+$116.05 / 7 loss bars**. Live over the same days was +$18.40 / 17 loss bars, i.e. the
+baseline already overstates 1.9×, so the veto's absolute gain should be discounted by about that
+factor before anyone expects it live — call it **+$5…+$7/day**, not +$10.
+
+Neighbourhood (W 0.4-0.6s × cap 0-3¢): delta **+$8.0 … +$12.6/day, positive in all six cells**.
+Adding the live halt logic (§57, $30 step / 1h cooldown, per coin) changes nothing — it binds on
+one clip in six days, because the veto and §61 already remove the accumulation halts exist to stop.
+Permutation null (drop 65 random clips, 2,000 draws): **p = 0.0135** — real but weaker than the
+p=0.0026 §66 reported in its own cell.
+
+Per coin under calibration: bnb +29.6, eth +19.3, sol +10.5, xrp +10.4, btc −2.2, doge −2.8,
+hype −3.7 ($/6d). §66 had sol *negative*; here it is third-best. **Per §3b, do not use either
+ranking to choose the pilot coin** — choose it on live loss-bar counts instead.
+
+### 5. Band mix: where the veto's benefit lives, and the one gap calibration does NOT close
+86% of the veto's benefit sits in the **ask ≤ 0.90** bands (`decomp.py`). Those are the bands
+whose fill rate is least trustworthy: the 10Hz book says a takeable ask ≥$8 is still there 0.2s
+later on **58.4%** of 0.55-0.75 fires, but the live FAK match rate in that band is **11.2%**
+(bug #23, n=295). The tape model lands at 22-35% — between the two, still 2-3× live.
+Re-weighting each band to the live anchors (`cal.py`) keeps the veto's tail metrics intact
+(losing clips/day 2.3-4.3 → 0.7-1.7; worst day −$9…−$50 → +$3…+$7; 5/6 → 6/6 positive days)
+but leaves the $/day delta spanning −$0.2…+$13.2. **Report the tail metrics. The $/day delta is
+solid in the calibrated cell and fragile under band re-weighting.**
+
+### 6. Standing recommendations (unchanged in direction, sharpened)
+1. **Fix the replay's sizing before anyone re-runs it**: `polysim2.py` must default to
+   CLIP=24 / LADDER=48, `FILLW=0.4`, and a `cap=0` price-improvement policy with the top-3
+   ladder walk. The old defaults answer a different question than the one being asked.
+2. The veto pilot stays **bnb or eth**, log-only arm first (§66-2b) — now with a second reason:
+   they are the only two coins positive under both fill models.
+3. Never quote a replay $/day without naming the cell. The house cell is (0.4s, 0¢, $24/$48).
+
+### 7. §65-5 late-shift REFUTED in the calibrated cell (the last open candidate from §65)
+§65-5 proposed moving the tl 16-20 budget later (fire only at tl≤14), estimated at ~+$3.8/day
+from live fills × a 68.8% persistence rate. Replayed properly (`lateshift.py`), the fire window
+is not a budget you can move — the supply is not there to move it into:
+
+| fire window | base $/day | base ROI | veto $/day | veto ROI | stake |
+|---|---|---|---|---|---|
+| tl[3,20] | **$27.41** | 1.48% | **$37.60** | 2.23% | $10.1-11.1k |
+| tl[3,18] | $16.97 | 1.18% | $25.82 | 1.98% | $7.8-8.6k |
+| tl[3,16] | $11.40 | 0.99% | $21.98 | 2.12% | $6.2-6.9k |
+| tl[3,14] | $16.51 | 1.97% | $24.99 | 3.30% | $4.5-5.0k |
+| tl[3,12] | $10.26 | 1.72% | $20.87 | 4.07% | $3.1-3.6k |
+
+Stake retention tl20→tl14 is 45-55% (close to §65-5's 68.8% persistence estimate, slightly worse),
+and the ROI gain (2.23%→3.30% with the veto) does not pay for it. **Narrowing the window is a
+capital-efficiency trade, and capital is not our constraint — supply is.** Closed.
+
+### 8. 🟡 NEW CANDIDATE — the cap raise, CONDITIONAL on the veto (§65-2 tested it unconditionally)
+§65-2 refuted raising the $48 ladder cap on live fills (82 bars at ≥$44 spent, pooled −$54.40).
+That test had no discriminator. Inside the veto set, with the depth walk limiting each clip to
+real displayed supply (`gift.py`):
+
+| sizing | clips | stake | $/day | ROI | losing clips/day | worst day |
+|---|---|---|---|---|---|---|
+| $24 / $48 | 489 | $10.1k | $37.60 | 2.23% | 1.2 | +$6.82 |
+| $36 / $72 | 490 | $14.1k | $51.08 | 2.17% | 1.2 | +$7.60 |
+| $48 / $96 | 491 | $17.6k | $59.17 | 2.01% | 1.2 | +$8.05 |
+| $72 / $144 | 491 | $23.7k | $69.03 | 1.75% | 1.2 | +$8.95 |
+
+Monotone in dollars, gently decaying in ROI, **loss count and worst day flat**. The mechanism is
+visible in the book: on cheap (≤0.90) fires the median top-of-book is **$68** when the bid is
+holding vs **$14.40** when it is dropping — the gift cell is exactly where the depth is.
+⚠️ This is the same claim §65-2 refuted live, and it leans on displayed top-3 depth being
+takeable, which bug #23 says it is not in the cheap band (11.2% live match at 0.55-0.75). 87% of
+the veto set's stake sits at 0.98-0.99 where the live match rate is 75%, so it is not fatal —
+but **this must not be deployed before the veto itself proves out live.** Order: log-only veto arm
+→ blocking veto on bnb/eth → only then re-open sizing.
+
+### 9. ⛔ "FADE the stale estimate" — the obvious follow-on to the veto — is DEAD, and the reason matters
+If a collapsing favourite bid means the market is right and our TWAP mean is stale, why skip
+instead of buying the OTHER side? Priced at the real opposite ask at the same instant
+(`fade.py`, 1,178 bid-drop decision rows; favourite wins 73.5%, so the dog wins 26.5%):
+
+| dog ask band | n | dog win | mean ask | ROI |
+|---|---|---|---|---|
+| ≤0.10 | 30 | 0.0% | 0.069 | −106% |
+| 0.10-0.25 | 134 | 0.8% | 0.177 | −101% |
+| 0.25-0.50 | 292 | 21.6% | 0.389 | −48.7% |
+| 0.50-0.75 | 247 | 22.7% | 0.624 | −66.3% |
+| 0.75-1.00 | 475 | 40.4% | 0.905 | −56.0% |
+| **pooled** | **1,178** | **26.5%** | **0.614** | **−58.7%** |
+
+**Mechanism (the generalisable part): on a bid-drop bar the pair sum `fav_ask + dog_ask` has a
+median of 1.45** (p10 1.08, p90 1.88). The book is not mispriced, it is *withdrawn* — the makers
+have pulled both sides, so both asks are expensive at once. `ua ≡ 1 − db` means a collapsing
+favourite bid mechanically makes the dog's ask *dearer*, not cheaper. There is no side to take.
+Skipping is the only correct action, which is exactly what the veto does.
+(Control on the same rows: buying the favourite at its displayed ask is −14.6% ROI — the veto's
+value restated at decision-row level rather than clip level.)
+
+### 10. ⭐ dB EXPLAINS three of the open analytics leads — no separate gate needed
+Fill-model-free view: decision-row EV at the displayed ask, live gates, 12,291 rows
+(`hourcoin.py`). The bid-drop share of a cell predicts the cell's ROI almost by itself.
+
+**(a) The hour-of-day lead — the "04-08 UTC hole" is REFUTED, and the hours that ARE negative are
+the bid-drop-heavy ones.** 04-08 is fine on this window (04 +1.1%, 05 +9.8%, 06 +4.5%, 07 +4.6%);
+the negative hours are 08, 10, 11 and 14, and each of them is bid-drop-heavy:
+
+| UTC hour | 02 | 04 | 08 | 10 | 11 | 14 | 20 |
+|---|---|---|---|---|---|---|---|
+| ROI | +17.3% | +1.1% | **−7.4%** | **−11.2%** | **−9.3%** | −1.8% | +4.5% |
+| bid-drop share | 3.3% | 1.5% | **27.9%** | **35.2%** | **33.3%** | **29.3%** | 5.6% |
+
+Every negative hour has a bid-drop share of 28-35%; every strongly positive hour is under 6%.
+**Do not add an hour-of-day gate** — it would be a lossy proxy for the veto. Lead closed.
+
+**(b) The tl 16-20 cell (open lead) — same story.** ROI decays 4.95% (tl 3-8) → 4.20% (8-12) →
+2.57% (12-16) → **1.75% (16-20)** while the bid-drop share climbs 5.6% → 9.5% → 10.4% → **12.3%**.
+§37's "fire later" result and §67-2's "the veto is late-window only" are two views of one
+mechanism: the further from settlement, the more often the book is repricing on ticks our TWAP
+mean has not averaged. Combined with §7 above (narrowing the window loses more stake than it
+gains in ROI), the conclusion is **keep tl[3,20] and veto inside it**, not shrink it.
+
+**(c) UP/DOWN asymmetry (open lead) — no exploitable asymmetry.** UP +4.13% vs DOWN +2.25% ROI,
+but the gap is the bid-drop share (7.7% vs 11.7%). The veto separates identically on both sides:
+UP keep +5.67% / veto −15.86%; DOWN keep +4.14% / veto −13.55%. Lead closed.
+
+### 11. Robustness of the veto INSIDE the calibrated cell — and the one number that should worry us
+`robust.py`, W=0.4s / cap=0¢ / $24/$48, baseline $27.41/day.
+
+- **Threshold insensitive** (as §66 found in its own cell): dB20 ≤ −0.01/−0.02/−0.03/−0.05/−0.08/−0.15
+  → delta **+$9.7 / +$11.1 / +$10.2 / +$7.3 / +$10.9 / +$7.5 per day**. All positive, all 6/6 positive days.
+- **Lookback**: dB5 +$9.1, dB10 **+$16.6**, dB20 +$10.2 per day. dB10 is the best but dB20 has the
+  better worst day; nothing here needs tuning.
+- **⚠️ The `|est| ≥ 5bps` exemption is INERT in the calibrated cell.** estmax = 5 / 10 / ∞ give
+  byte-identical results ($225.62) — no fired clip in the calibrated set has |est| ≥ 5bps *and* a
+  bid drop. §66 called the exemption "load-bearing" from the (1.5s, ∞) cell. Keep it (it is free
+  insurance and it is right in principle), but it is not doing work at the live fire set.
+- **Leave-one-COIN-out**: delta stays **+$5.3 … +$10.8/day** dropping any single coin. Not one coin.
+- **⚠️⚠️ Leave-one-DAY-out: dropping 09-02 turns the delta NEGATIVE (−$8.85/day).**
+
+That last point deserves the whole paragraph. Per-day, calibrated cell:
+
+| day | base $ | base loss clips | veto $ | veto loss clips | delta |
+|---|---|---|---|---|---|
+| 09-01 *(4h only)* | 6.8 | 0 | 6.8 | 0 | 0.0 |
+| **09-02** | **−63.4** | **11** | **+42.0** | **2** | **+105.4** |
+| 09-03 | 41.2 | 5 | 54.3 | 2 | +13.2 |
+| 09-04 | 57.1 | 6 | 19.7 | 3 | **−37.5** |
+| 09-05 | 90.8 | 2 | 56.3 | 0 | **−34.5** |
+| 09-06 | 31.9 | 1 | 46.4 | 0 | +14.5 |
+
+**The loss-count reduction is broad — 25 → 7 clips, better on 5 of 6 days. The dollar benefit is
+one day.** Delta is positive on 3/6, negative on 2/6, zero on 1. (§66's "6/6 positive days" refers
+to the veto's *level*, not the delta — both statements are true and they are easy to confuse.)
+
+This is what a tail filter looks like with one tail event in the sample, and it is the honest
+reason not to promise a $/day number: **judge the pilot on loss-bar count, which moves on 5 days
+out of 6, not on PnL, which moves on one.** It also raises the value of simply waiting — re-cutting
+this in 3 weeks (§66-2b step 1, zero code, zero risk) would put 3-4 bad days in the sample instead
+of one.
+
+### 12. Does dB make the crude band gates redundant? No — §58 still earns its keep
+Both existing band gates were built as proxies for "the mid band bleeds". If dB is the real
+discriminator they should be relaxable, recovering volume. Tested in the calibrated cell (`gates.py`):
+
+| configuration | base $/day | veto $/day | veto loss/day | veto worst day | veto positive days |
+|---|---|---|---|---|---|
+| live gates (skip 0.90-0.98 + floor 0.94) | 27.41 | **37.60** | 1.2 | +$6.82 | **6/6** |
+| no first-clip skip (§58 off) | 16.80 | 26.05 | 2.2 | −$8.47 | 4/6 |
+| no ladder floor | 26.10 | **40.84** | 1.3 | +$6.82 | **6/6** |
+| neither | 15.91 | 29.84 | 2.3 | −$5.18 | 5/6 |
+
+**§58's first-clip skip is complementary to dB, not a proxy for it** — dropping it costs
+$11.55/day even with the veto on, and breaks the 6/6 day shape. Keep it.
+The **ladder floor 0.94** is the only gate the veto makes slightly redundant (+$3.24/day to
+relax it, loss count and worst day unchanged). Too small and too thin (n≈3 extra clips) to act on;
+noted only so nobody re-derives it.
+
+### 13. ⛔ "Raise MIN_ASK to 0.98" (flagged open 09-02) — ANSWERED: dominated by the veto
+The 1c-insurance session flagged that a live-only join suggested `MIN_ASK=0.98` would have been
+~+$90/18d, contradicting the offline replays of §38/§45/§47 (which ran the optimistic fill model).
+Re-run in the calibrated cell (`minask.py`):
+
+| MIN_ASK | base $/day | base loss/day | base worst day | veto $/day | veto loss/day | veto worst day |
+|---|---|---|---|---|---|---|
+| **0.55** (live) | 27.41 | 4.2 | −$63.36 | **37.60** | 1.2 | **+$6.82** |
+| 0.75 | 18.71 | 2.3 | −$25.33 | 27.98 | 1.0 | +$6.82 |
+| 0.90 | 19.41 | 0.7 | −$11.93 | 21.78 | 0.2 | +$4.04 |
+| 0.95 | 13.83 | 0.5 | −$19.90 | 17.19 | 0.2 | +$2.17 |
+| 0.98 | 13.33 | 0.5 | −$20.60 | 16.81 | 0.2 | +$2.17 |
+
+Raising MIN_ASK does cut the loss count (4.2 → 0.5/day) — it is a real filter — but it pays for it
+with **half the PnL**, because it throws away the cheap band that §41 established as the profit
+centre. The veto gets a better worst day (+$6.82 vs −$20.60) at **2.8× the PnL**, by removing the
+bad cheap bars instead of all of them. **Keep MIN_ASK=0.55.** Question closed.
+
+### 14. The 4h lane re-scored under the calibrated model — the verdict holds but the WAIT is longer than §66 planned
+Same house cell (0.4s tape confirmation, no price improvement, depth-limited to the displayed top
+level), first fireable second per bar, tl[3,45], |est|≥0.5bps (`long4h.py`):
+
+| dur | tape-confirmed fires / 6d | fires/day | ROI | win |
+|---|---|---|---|---|
+| 4h | **8** | 1.3 | +5.72% | 8/8 |
+| 15m | 64 | 10.7 | **−4.02%** | 89.1% |
+| 1h | 11 | 1.8 | +3.53% | 11/11 |
+
+- **15m: closed, and more firmly than §66** (−4.02% vs −0.56/−1.17% under the optimistic model).
+- **4h: direction unchanged, but §66's plan needs rescheduling.** §66 counted 24 fires by using a
+  1.5s window and no depth cap; demanding a print within 0.4s leaves **8 fires in 6 days**. At
+  1.3 fires/day, "~150 fires" is **~4 months**, not 3-4 weeks. Keep the five 4h recorders running,
+  but do not schedule a decision date around the old arithmetic.
+- **1h: ignore the +3.53%.** n=11, and §66 measured the 1h recon at only **95.2%** accuracy —
+  the 1h market is probably not TWAP-60, so these labels are suspect. Identify the 1h settlement
+  window before anyone scores it again.
+
+### 15. Self-attack on §3: the calibration bracket is 0.76× – 1.90×, not "1.9× high"
+The live fleet is not uniformly $24 — doge runs a $4-5 "data mode" ladder
+(`doge_vacmaker.yaml: pmTeWhaleLadderUsd "4"`), and the day closes mix eras (live doge on 09-02
+lost −$74.18 across 4 flips, which is $24-clip arithmetic, so doge was NOT on $4 mode that day).
+Honouring the small size (`percoinsize.py`):
+
+| sizing assumption | sim 09-02…09-04 | vs live +$18.40 | doge contribution |
+|---|---|---|---|
+| uniform $24/$48 | +$34.94 | 1.90× | +$21.27 |
+| doge on $2/$4 | +$14.04 | **0.76×** | +$0.37 |
+| live | +$18.40 | 1.00× | **−$86.71** |
+
+**So the honest claim is a bracket: the house cell lands within 0.76×–1.90× of live**, versus
+2.96× for §66's cell and 11.6× for (0.4s, unlimited sweep). It is the right order of magnitude
+and it matches the bar and loss-bar counts; it is *not* accurate to a factor, and the "discount
+the veto's gain by 1.9×" advice in §4 should be read as "expect somewhere between the sim number
+and half of it".
+
+**The deeper problem it exposes:** the sim scores doge at **+$21** while live doge lost **−$86.71**
+over the same three days. The sim is not merely mis-sizing doge — it never fires on doge's four
+09-02 flip bars at all. That is the concrete face of the per-coin anti-correlation in §3b: the
+replay's fire set and the live bot's fire set differ bar-for-bar, so **anything that depends on
+*which* bars get taken (per-coin PnL, per-coin veto benefit, pilot-coin choice) cannot be
+answered by this pipeline.** Aggregate distributional claims — loss-bar rate, worst-day shape,
+band ROI — are what it can support.
+
+## §69 (2026-09-06, same session) ⭐⭐ THE SAMPLE CONTAINS TWO REGIMES — the veto is CHOP INSURANCE, and it costs money in calm
+
+> ⛔⛔ **RETRACTED IN FULL — see §72-2.** The "addressable pool" measured here was a layer of
+> GHOST QUOTES: on decisive (|margin|≥5bps) bars, 4,739 cheap favourite-ask seconds across 271
+> bars on 09-01…09-03 produced a matching print on **1 bar**. What cleared after 09-03 was the
+> phantom layer, not supply — the print rate of cheap favourite offers ROSE from 0.24 to 0.75.
+> The chop/calm regime split and the "veto is insurance with a premium" framing both die with it.
+> Kept only as the audit trail for how the error was made. Do not cite any number below.
+
+This was found by accident, checking recorder coverage. Resolved-bar coverage is complete
+(288/288 bars per coin per day, no gaps), but **the fire-window supply halves after 09-03, on
+all seven coins at once**: bars carrying a favourite ask in tl[3,20], per coin per day —
+
+| coin | 09-02 | 09-03 | → | 09-04 | 09-05 |
+|---|---|---|---|---|---|
+| btc | 63 | 69 | | **23** | 44 |
+| sol | 66 | 73 | | **25** | 43 |
+| eth | 74 | 68 | | **31** | 40 |
+| bnb | 63 | 67 | | **32** | 35 |
+| xrp | 69 | 75 | | **35** | 40 |
+| doge | 68 | 67 | | **34** | 27 |
+| hype | 83 | 94 | | 60 | 70 |
+
+Seconds-with-an-ask per bar drops 14.0-14.2 → 7.7-8.5; the median displayed ask rises
+0.82/0.95 → **0.97**; median top-of-book rises $9.50 → $27.90. Cheap supply dried up and what is
+left is dear and deep. 09-02 is on record as "worst chop day by loss count" and 09-03 as "chop
+day #3"; 09-04 is "best W-L ratio day of the era". **The split is chop vs calm.**
+
+### The veto's effect is opposite in the two regimes (calibrated cell)
+
+| | base $/day | base loss/day | veto $/day | veto loss/day | **delta** |
+|---|---|---|---|---|---|
+| **chop** (09-02, 09-03) | **−$11.09** | 8.0 | **+$48.20** | 2.0 | **+$59.29/day** |
+| **calm** (09-04…09-06) | +$59.94 | 3.0 | +$40.80 | 1.0 | **−$19.14/day** |
+
+**In calm the veto still halves the loss count (3.0 → 1.0/day) but costs $19/day**, because the
+baseline is doing fine and the veto is blocking winners. In chop it turns a losing baseline into a
+strongly positive one. Pooled over the sample it is +$10-12/day only because 2 of 5 full days were
+chop days.
+
+**So the correct description is not "a tail filter" but INSURANCE with a premium.** The premium is
+real and payable every calm day; the payout is large and rare. §66's "6/6 positive days" and
+§68-11's leave-one-day-out fragility are both symptoms of this one structure.
+
+### What this changes
+1. **Any pilot must be judged over a window containing chop days, and scored on loss-bar count**
+   (which improves in BOTH regimes) rather than PnL (which does not). A one-week calm pilot will
+   read negative and would kill a rule that is working exactly as designed.
+2. **Do not regime-gate the veto.** The temptation is obvious — run it only in chop — but the
+   regime is identified here *after the fact* from 5 days, and §37's lesson (win count is useless
+   at 30:1 payoff) applies doubly to a gate fitted on two chop days.
+3. **A live-observable regime proxy exists and is free**: the count of fire-window bars whose best
+   favourite ask is below 0.95, per coin per day. It ran 0.32-0.84 of bars in chop and 0.18-0.61
+   in calm. Worth logging on the fleet regardless of the veto decision — it is the cleanest
+   available measure of how much of our own addressable pool exists on a given day.
+4. **The supply halving is itself the more urgent question.** If it is competition rather than
+   weather, the addressable pool is shrinking and every $/day estimate in §66-§68 is measured on
+   a market that no longer exists. The 5m recorders answer this for free: re-cut the availability
+   table in 2-3 weeks. If cheap supply stays at the 09-04+ level, the veto matters much less than
+   the vanishing pool does.
+
+### §69 verification — it is NOT a recorder artifact, and it is specifically the WINNER-SIDE OFFER that vanished
+Three checks before trusting §69 (`wsrest.py`, `supply.py`, panel audits):
+
+1. **Recorder integrity: clean.** Panel coverage is exactly 18 rows/bar in tl[3,20] on every day
+   (2,016 bars/day, 288 per coin); `est_bps` present on 99.2-99.8% of rows and median coverage
+   0.8136 on every day; and at each REST reconcile the WS book agrees with REST on ask *presence*
+   in **99.8-99.97%** of rows on every day, including after 09-03. The 09-03 recorder redeploy
+   (rate-budgeted RB polling) cut RB row counts 39,838 → 3,875/day but did not touch the book.
+2. **Total flow is flat.** Late-window (tl 3-30) taker BUY notional per bar: 142 / 133 / **142** /
+   176 / 124 across 09-02…09-06. Nothing left the market.
+3. **What changed is the composition.** Side-independent ask presence fell only ~15%
+   (ua 0.625→0.514, da 0.567→0.542), but presence of an ask on the **favourite** side fell **3×**
+   (0.198/0.211 → 0.058/0.078 of fire-window seconds). Since `ua ≡ 1 − db`, a favourite ask exists
+   only when someone bids the loser — so what disappeared is precisely *the market offering the
+   eventual winner*, which is the entire vacmaker pool.
+
+Measured three ways, all moving together:
+
+| | 09-02 | 09-03 | → | 09-04 | 09-05 | 09-06 |
+|---|---|---|---|---|---|---|
+| bars where the favourite is offered at all | 26.3% | 27.7% | | **13.8%** | 17.0% | 14.1% |
+| median seconds offered, per such bar (of 18) | 18 | 18 | | **7** | 8 | 8 |
+| median min ask reached | 0.87 | 0.95 | | 0.97 | 0.98 | 0.97 |
+| **p25** min ask reached | **0.52** | **0.52** | | **0.80** | 0.73 | 0.78 |
+
+Half as many bars, offered for less than half as long, and repriced from a p25 of **0.52 to
+0.73-0.80**. That is the signature of a seam being competed away, not of a calm market — the same
+shape the openlag probe recorded when its pre-open seam was priced out between 08-17 and 08-22.
+
+⚠️ **Caveat on my own §69 wording**: the competition-vs-weather test in `supply.py` reported
+"cheap winner-side prints" without actually filtering to the winner side, so it does not
+discriminate. What the checks above establish is narrower and safer: the change is real, it is
+not the recorder, it is in winner-side *offers* rather than in volume, and it is 3 days long.
+
+**Action: this outranks the veto.** Re-cut this table in 2-3 weeks from the running recorders
+(zero code, zero risk). If the 09-04+ level holds, the vacmaker's addressable pool has roughly
+halved and every $/day in §66-§68 is measured on a market that no longer exists — which matters
+far more than whether the veto is worth $10/day.
+
+## §70 (2026-09-06, same session) ⭐⭐ vR — MAKE THE BID-DROP VETO RELATIVE. It dominates §66's absolute rule and, unlike it, pays in BOTH regimes
+
+> ⚠️ **CORRECTED by §72-4.** vR's lag arithmetic is clean and it beats vB in 12/12 fill cells on
+> dollars — but the p-values are **0.01–0.08** after stratifying the null on spread and correcting
+> for the scanned family, 85% of the benefit sits in the bug-#23 band, replacement clips are 33%
+> of the gain, and **vR loses to vB on losing-clip count in all 12 cells** — the one metric that is
+> fill-model independent. The two rules are NOT ranked. Log both.
+
+Found by the optimistic-investigator fork while mining the full 10-level ladders (which were
+themselves dead — see §71). Under evaluation by the pessimistic fork at time of writing.
+
+**Rule:** skip the clip when `(fav_bid_now − fav_bid_10s_ago) / fav_bid_10s_ago <= −0.25`.
+Same ~10-20s ring buffer of the favourite side's best bid that §66 already asked for, plus one
+division. No depth data, no trade tape, no oracle, and **no `|est|` carve-out** — vR fires zero
+times at |est| ≥ 5bps, so §66's exemption becomes a literal no-op.
+
+**Mechanism — why relative beats absolute.** A 3¢ fall means something completely different at a
+bid of 0.99 than at a bid of 0.40. The absolute rule over-vetoes the top of the book (where 3¢ is
+noise) and under-vetoes the middle (where 3¢ is a collapse). The 2×2 makes it concrete: on the
+$8/$16 clip set, vB∧vR = 57 clips at 59.6% win / **−23.8% ROI** (the genuinely toxic core both
+rules find), while **vB-only = 60 clips at 90.0% win / +10.5% ROI — profit the absolute rule
+throws away and the relative rule keeps**; vR-only is 8 clips.
+
+### In the §68 calibrated cell ($24/$48, 0.4s, cap 0¢) — and split by the §69 regimes
+
+| | clips | $/day | ROI | loss/day | worst day | pos days | **chop $/day** | **calm $/day** |
+|---|---|---|---|---|---|---|---|---|
+| baseline | 554 | 27.41 | 1.48% | 4.2 | −$63.36 | 5/6 | **−11.09** | +59.94 |
+| vB (§66, dB20≤−0.03) | 489 | 37.60 | 2.23% | 1.2 | +$6.82 | 6/6 | **+48.20** | **+40.80 (−19.14)** |
+| **vR (rB10≤−0.25)** | 517 | **44.89** | 2.54% | 1.7 | +$6.82 | 6/6 | +30.84 | **+66.94 (+21.01)** |
+| vR (rB20≤−0.25) | 513 | 41.02 | 2.34% | 1.5 | +$6.82 | 6/6 | +30.16 | +59.65 (−0.85) |
+| vR **or** vB | 485 | 35.82 | 2.13% | 1.2 | +$6.82 | 6/6 | +44.37 | +39.78 (−60.48) |
+
+**This is the reason vR matters more than the ROI gain: §69 showed vB is insurance — it pays
++$59/day in chop and costs −$19/day in calm. vR is positive in both** (+$83.86 chop, +$21.01 calm
+in total dollars). A calm-week pilot would read negative for vB and positive for vR.
+
+**Threshold shape — an interior optimum with a plateau, not a boundary solution** (calibrated cell):
+
+| rB10 ≤ | −0.02 | −0.05 | −0.10 | **−0.15** | −0.20 | −0.25 | −0.30 | −0.40 | −0.90 | base |
+|---|---|---|---|---|---|---|---|---|---|---|
+| $/day | 43.63 | 44.24 | 49.56 | **51.73** | 49.61 | 44.89 | 39.88 | 34.97 | 32.46 | 27.41 |
+| loss/day | 1.0 | 1.0 | 1.0 | 1.2 | 1.5 | 1.7 | 2.0 | 2.8 | 3.8 | 4.2 |
+| worst day | +4.67 | +4.67 | +4.95 | +4.95 | +6.82 | +6.82 | +5.61 | −26.03 | −43.19 | −63.36 |
+
+The vetoed set is stable across thresholds — 71-78% win rate, mean ask 0.82-0.85, negative PnL at
+every setting. **The lead's calibrated cell prefers −0.15; the investigator's $8/$16 grid prefers
+−0.25; the whole −0.02…−0.25 plateau is $43-52/day.** Nothing here needs tuning, which is the
+point — pick −0.20 and stop.
+
+**Investigator's robustness battery ($8/$16 cells):** permutation p<0.0001 (random equal-size
+drop) and p<0.001 (shuffle rB10 within coin); positive in all 6 day-LOOs and all 7 coin-LOOs;
+corr with ask **0.077**, with spread −0.058, with dB20 0.329; separates within every ask band
+including **0.98-0.99 (+0.9% vs −5.1%)** where §66 reported vB had no effect; beats vB in **12 of
+12** fill cells. Decisive comparison: **marginal vR inside the vB-kept set p=0.0095 (it adds);
+marginal vB inside the vR-kept set p=0.988 (it adds nothing).**
+
+### ⚠️ What is NOT established
+- **42 losing clips exist in the entire sample; vR vetoes 25 of them.** Every dollar figure is a
+  25-event effect. Permutations and LOOs cannot manufacture power.
+- **No out-of-sample period exists** — pre-09-01 recordings were deleted by user order, so vR was
+  found and validated on the same 6 days. Day-LOO is not OOS.
+- **~12% of vR's sim gain comes from "replacement clips"** that fire later in the same bar after a
+  veto. Whether the live 8s-gap + re-qualify logic actually produces them is untested.
+- The sim still lacks the §37 vol-delay gate, the §59 toxic brake and the halts.
+- Many rules were scanned this session; the p-values are not corrected for that.
+
+**RECOMMENDATION (nothing deployed, user said no code):** if the §66 A/B goes ahead, run
+**`rB10 ≤ −0.20`** instead of `dB20 ≤ −0.03 & |est|<5` — same ring buffer, one division, no
+carve-out. Log-only arm first (§66-2b), then one coin. Judge it on **loss-bar count**, and note
+that unlike vB it should also show a PnL gain in a calm week.
+
+## §71 (2026-09-06) The other two big swings of the session — both DEAD, both with generalisable reasons
+
+### 1. ⛔ THE EXIT LANE — loss-cutting after entry. Dead, and dead structurally.
+All prior work on this bot is entry-only; the bot has always held to redemption. With a ~30:1
+payoff, cutting even a fraction of the −$7 losses should beat winning more bars. It cannot be done.
+
+**The decisive statistic (fill-model free).** Reconstruct the entire post-entry state space —
+9,401 (clip × second) states from the 722 baseline clips. Exiting at a displayed bid `q` is +EV
+iff `P(we are wrong | state) > (1 − q)`. Realized loss rate vs market-implied loss rate:
+
+| exit bid | n | mean q | realized loss | implied (1−q) | excess |
+|---|---|---|---|---|---|
+| 0.00-0.05 | 188 | 0.024 | 85.6% | 97.6% | −12.0 pp |
+| 0.15-0.30 | 137 | 0.217 | 51.8% | 78.4% | −26.5 pp |
+| 0.30-0.50 | 198 | 0.408 | 25.8% | 59.2% | **−33.5 pp** |
+| 0.70-0.85 | 359 | 0.783 | 4.7% | 21.7% | −16.9 pp |
+| 0.97-1.00 | 6,997 | 0.989 | 0.06% | 1.14% | −1.1 pp |
+
+**Negative in every bucket, every dt bucket (−9.9…−1.6pp) and every remaining-time bucket.**
+Mechanically it must be: the favourite's bid *is* the dog's ask, so "exit the loser" ≡ "buy the
+dog", which `strat-reversion` closed in 2026-08. This is that result re-derived from the other
+side of the book with a statistic that needs no fill model at all.
+
+**And the timing forbids any trigger.** On the 42 losing clips, seconds after entry until the
+favourite's bid falls 15¢: **median 3s**. Until our own `est` flips sign: **median 11.5s**.
+Bid first in **15 of 15** cases where both happen; est first in **zero**. The market reprices ~7s
+before our estimator does, so any trigger fast enough to save the price *is* the market's price
+(−EV by the table above), and any trigger of ours arrives when the bid is already 0.01-0.15.
+End-to-end stop-rules: −$45.84/day (bid −15¢, displayed fills), −$12.46/day (tape-confirmed),
++$1.24/day (est-flip, 17 exits, 14 of them genuine losers — good precision, no money) and
+**−$0.11/day on the veto-filtered clip set**, which is the set that would actually be running.
+
+**Mirror case — exiting winners early: refuted again.** Unconditional exit at t+1s costs
+−$719.95; cost of selling a winner is mean **6.7¢/sh** against mean **21.1¢/sh** recovered on a
+loser, at a 16:1 base rate. (Prior work's 24.9¢/sh was measured at a different point; same sign.)
+
+**Bonus correction to the §66 mental model:** losing clips already show a **0.275 median ask−bid
+spread at the fill instant** (winners 0.040). "The bid collapsed after we bought" is only half
+true — a third of the apparent recovery was never available to us.
+
+### 2. ⛔ THE FULL DEPTH LADDER — no new information in levels 2-10
+The recorder captures 10 levels per side; only the top 3 had ever been put into parquet. Extracted
+in full (`tools/mrec/lad2pq.py`, 2,535,377 rows).
+
+- ⭐ **The two books are ONE book at EVERY level, not just the top.** `uad[i].p + dbd[i].p == 1`
+  and `uad[i].s == dbd[i].s` at **100.00%** for levels 0, 2, 5 and 9 (n = 89k-106k per level).
+  This generalises the known `ua ≡ 1 − db` and it deletes an entire class of ideas: dog-side
+  depth, cross-book imbalance, and any "compare the two ladders" feature are **identically zero
+  new information**. Record this next to bug #23 — it is the same fact one layer deeper.
+- Levels 4-10, 5¢/10¢ depth sums, level counts and imbalance: **all non-monotone** across
+  quintiles, and flat inside the bid-drop-kept set. The only monotone survivor is ask-$ within 5¢
+  of the top (6.83% → 1.26% ROI by quartile — thin ask good, thick ask bad, i.e. an informed
+  seller dumping size), but every cell is positive so it is a sizing hint, not a gate.
+- **Top-of-book imbalance does NOT transfer from the openmm maker result.** Inverted-U with both
+  tails negative (ask-heavy −1.38%, bid-heavy −3.12%), and after the veto the bid-heavy quartile
+  is the *worst* — the opposite sign to openmm's finding that imbalance removes maker adverse
+  selection. Whatever protects a resting quote does not predict a taker's outcome.
+
+### 3. Smaller closures from the same sweep
+- **`tick_size_change` as a "the venue thinks it's decided" signal:** dead, not merely weak.
+  35,622 events, 99.9% are 0.01→0.001, **78% land after close**, they fire on **both tokens of a
+  pair simultaneously** (so they are direction-less), and only **12 of 722** clips have one before
+  the fire.
+- **Relay freshness (`t − cl_ts`) as a gate:** real but dominated. Top staleness quintile is
+  −2.41% ROI, but stacked on the veto it *reduces* dollars while cutting the loss count. The
+  feature is quantised, so thresholds 2.2/2.5/2.8s are the same rule.
+- **The "gift" cell (bid rising + ask<0.95):** +14.16% ROI on 68 clips and it is essentially the
+  whole baseline PnL — but the permutation is **p = 0.054** (the cheap-ask cell is profitable
+  anyway), so the dB conditioning is ~1.5σ. And it is **not sizable**: median takeable tape
+  notional at ≤ our limit is **$17.70**, only 38% of those fires have ≥$32. That is an independent
+  confirmation of §65-2's live cap-raise refutation, and it argues against §68-8's conditional
+  cap raise.
+- **Second-clip / ladder schedule:** clip index 1 contributes +$3.90 (+0.57% ROI) on 85 clips
+  against clip 0's +$72.06. The ladder is roughly free and roughly pointless; not worth
+  re-optimising on 85 events.
+- **⚠️ Hour-of-day — the two forks DISAGREE and the disagreement is instructive.** §68-10 found
+  hours 08/10/11/14 negative with 28-35% bid-drop share, from **12,291 decision rows**
+  (fill-model-free EV at the displayed ask). The investigator found 04-08 UTC to be the *best*
+  block and called the effect noise, from **722 clips** (n=23-28 per hour). Both are right about
+  their own object: the decision-row view has ~500× the power and says the hour effect is real and
+  is the bid-drop share in disguise; the clip-level view says it does not survive into realised
+  fills at this sample size. **Neither supports an hour gate.** What is agreed and matters: the
+  "04-08 UTC hole" from the 08-30 analytics cuts is **refuted** on this window.
+
+### §69 replication — the SAME collapse, on the SAME date, in the independent 15m market
+The 15m markets are separate venues with their own makers, their own tokens and their own
+recorder pods. Same statistic, same window `tl[3,20]` (`longpool.py`):
+
+| | 09-02 | 09-03 | → | 09-04 | 09-05 |
+|---|---|---|---|---|---|
+| **15m** bars where the favourite is offered | 19.8% | 20.4% | | **11.5%** | 14.1% |
+| **15m** median seconds offered (of 18) | 18 | 18 | | **6** | 8 |
+| **15m** p25 min ask reached | 0.50 | 0.52 | | **0.77** | 0.70 |
+| **5m** bars offered | 26.3% | 27.7% | | 13.8% | 17.0% |
+| **5m** median seconds offered | 18 | 18 | | 7 | 8 |
+| **5m** p25 min ask reached | 0.52 | 0.52 | | 0.80 | 0.73 |
+
+**Three statistics, two independent markets, the same break date, the same magnitudes.** That
+rules out a 5m coin-mix or hour-mix effect and rules out a single-pod recorder fault. 4h moves the
+same way (offered 83% → 47-63%) but at 30 bars/day it is not evidence. 1h is too thin to read.
+
+Note the 15m *trader* fleet was stopped 09-03 22:20 Kyiv — but that cuts the wrong way: if our own
+takers stop lifting asks, more asks should survive, not fewer.
+
+**What this does NOT establish:** the cause. Competition, a venue-side change, and a genuine shift
+in maker behaviour all fit. What it does establish is that the effect is real, market-wide across
+durations, and dated. The action is unchanged and now more urgent: **re-cut this table in 2-3
+weeks from the running recorders before anyone spends effort optimising a $10/day veto on a pool
+that may have halved.**
+
+### §69 mechanism probe — the offers are not being CANCELLED, they stop APPEARING (and what survives is eaten faster)
+Fate of the first favourite-side offer in each bar, three seconds later (`fate2.py`, tl 4-20,
+ask ≤0.99, "traded" = a real BUY print at ≥ ask−0.5¢ on that token within 3s):
+
+| regime | n | still there | **traded away** | cancelled (gone, no print) | median lifted $ |
+|---|---|---|---|---|---|
+| chop 09-02…03 | 977 | 85.0% | **23.7%** | 2.6% | $0.00 |
+| calm 09-04…06 | 552 | 57.6% | **64.3%** | 6.2% | $13.22 |
+| — cheap only (≤0.90), chop | 469 | 95.7% | 15.4% | 3.2% | |
+| — cheap only (≤0.90), calm | 220 | 85.9% | 40.0% | 9.5% | |
+
+**What this settles:** cancellation barely moves (2.6% → 6.2%), so the offers are not being pulled.
+They stop *appearing at all*. Since `ua ≡ 1 − db`, the favourite's ask exists only when someone
+bids the loser — so what changed is that the loser side stopped being bid late in the bar.
+
+**⚠️ What this does NOT settle — and I nearly reported it wrongly.** The 2.7× rise in "traded away"
+looks like a faster competitor arriving, but it is at least partly mechanical: our own fleet fires
+a roughly constant ~120 clips/day, and the offered-bar population halved (≈530/day → ≈277/day), so
+the *same* amount of taking covers 43% of the smaller population versus 23% of the larger one —
+which is close to the observed 23.7% → 64.3%. **The consumption statistic cannot distinguish
+"a competitor arrived" from "constant taking chasing half the supply."**
+
+So the mechanism question stands open with one branch closed: it is a supply-side change in who
+bids the loser late, not a cancellation/pull effect, and not (measurably) a change in how fast
+offers get consumed. Distinguishing competition from a maker-behaviour shift needs either the
+`price_change` attribution fix (recorder defect §66-5, so we can see order placement rather than
+just state) or simply more days.
+
+## §72 (2026-09-06, same session) ⛔⛔ ADVERSARIAL PASS — §69 RETRACTED, §68 and §70 CORRECTED, and the bug behind all of them
+
+A pessimistic fork was run against §66-§71 with instructions to destroy them. It destroyed one
+section outright, wounded three, and found the single assumption underneath all of it. **Everything
+below was re-verified independently by the lead before being written here** (`phantom.py`,
+`tapecap.py`, and the RESEARCH-LOG check). Read this section before believing §68, §69 or §70.
+
+### 1. ⭐⭐ THE BUG UNDER EVERYTHING: a tape-CONFIRMED fill is not a tape-SIZED fill (ledger #28)
+Every §66-§71 sim authorises the **entire displayed top-3 ladder** on the strength of *one*
+qualifying print. A 5-share print at 0.99 licenses $72 of displayed depth. Cap each clip instead
+at the shares that actually printed at ≤ our limit inside the fill window, and the whole picture
+changes (verified independently, `tapecap.py`, 09-02…09-05 vs live **+$48.39**):
+
+| | uncapped (§68 house cell) | **tape-SIZE capped** | capped @50% capture |
+|---|---|---|---|
+| baseline $/day | 27.41 | **14.00** | 5.57 |
+| baseline vs live, 4 days | **2.60×** | **1.17×** | 0.28× |
+| vB $/day | 37.60 | 23.90 | 14.44 |
+| vR $/day | 44.89 | 28.09 | 16.92 |
+| **baseline worst day** | **−$63.36** | **−$1.59** | −$13.64 |
+| stake | $11,146 | $7,589 | $5,586 |
+| **losing clips/day (base / vB / vR)** | **4.2 / 1.2 / 1.7** | **4.2 / 1.2 / 1.7** | **4.2 / 1.2 / 1.7** |
+
+At $72/$144 sizing the uncapped sim buys **more shares than the entire window's tape**. Under the
+cap the sizing curve flattens by $48/$96 and **turns down** — reproducing §65-2's live refutation
+exactly. **§68-8's conditional cap raise is DESTROYED; §65-2 was right; do not re-open sizing.**
+
+**The one metric that is identical in both models is the losing-clip count.** Everything else —
+$/day, worst day, ROI, the band decomposition — moves by 2-5×. That was already the standing
+instruction (§67) and this is the third independent confirmation of it.
+
+### 2. ⛔ §69 IS RETRACTED. The "addressable pool" I measured was a layer of GHOST QUOTES.
+§69 claimed the pool halved after 09-03. It did not. What cleared was a phantom quote layer.
+On bars that settle **|margin| ≥ 5bps** (where the recon is 100% accurate, so a cheap offer on the
+eventual winner is a pure gift), cheap (≤0.90) displayed **favourite**-ask seconds and the bars
+that ever saw a matching print:
+
+| day | cheap fav-ask seconds | bars offered | median ask | **bars with ANY cheap winner-side print** |
+|---|---|---|---|---|
+| 09-01 | 843 | 47 | 0.51 | **0** |
+| 09-02 | 2,273 | 130 | 0.52 | **0** |
+| 09-03 | 1,623 | 94 | 0.51 | **1** |
+| 09-04 | 9 | 1 | — | 0 |
+| 09-05 | 1 | 1 | — | 0 |
+
+A 0.51 offer on an arithmetically-settled winner, standing the whole fire window, against which
+**nothing ever prints on 224 of 225 bars**, is a ghost (bug #23, 84% ghost-kill rate). And on all
+bars the *print rate* of cheap favourite offers goes **0.236 / 0.302 → 0.674 / 0.707 / 0.750** —
+i.e. after 09-03 the remaining cheap supply is *more real*, not less. §69 counted ghosts as supply.
+
+- My integrity check was inadequate: WS-vs-REST **presence** agreement cannot detect a class of
+  quote that both feeds agree is there. Agreement was never the question.
+- The 15m "replication" replicated the same phantom layer, not an independent effect.
+- **The "chop vs calm regime" and the "veto is insurance with a premium" framing die with it.**
+  Under the tape cap the veto's calm-regime delta is **+$1.01/day (vB) / +$8.64/day (vR)**, not
+  −$19.14/day. There is no premium to pay.
+- What survives, and is worth keeping: **panel-derived supply/availability statistics before
+  09-04 are contaminated by that phantom layer. Any availability claim must be tape-gated.**
+  (Bug #23 addendum.)
+
+### 3. §68 CORRECTED — a fourth live day existed, and the house cell is not the best cell
+- **I missed a day.** `RESEARCH-LOG.md:818` logs the 09-05 close at 09-06 08:40K — *before* this
+  session — at **+$29.99 (123-2)**, and 09-05 is entirely inside the parquet. Correct live target
+  is 09-02…09-05 = **+$48.39, 474 bars, 19 loss bars**. The house cell is **2.60× live**, not 1.9×,
+  and it is best on two of three axes, not three: (1.5s, 1¢) is nearer on dollars at 1.13×.
+- **The grid never varied the parameter that mattered.** Size was fixed. Adding the tape-size cap
+  gives **1.17×** — a better calibration than any of the twelve cells, and outside the search space.
+- **The target itself is biased.** The live fleet carries the §59 brake, halts, xrp rules and
+  doge-$4, all of which *reduce* live PnL, so "closest to live" selects a fill model that is too
+  pessimistic by exactly the cost of those features. Proximity conflates fill realism with policy.
+- Still true and still the most important part of §68: the per-coin anti-correlation (r=−0.63),
+  and therefore **never rank coins or choose a pilot coin from a replay**.
+- **§68-13 (MIN_ASK) is WOUNDED and the question is re-opened.** Under the tape cap:
+  MIN_ASK 0.55 = **$14.00/day at 4.2 losses/day**; MIN_ASK **0.90 = $14.62/day at 0.7 losses/day**;
+  0.98 = $10.39/day at 0.5. Raising to 0.90 costs *nothing* and removes 83% of the losses. My
+  "dominated, keep 0.55" was a house-cell artifact — the cheap band's positive contribution exists
+  only when the sim may buy depth that never printed. **This now competes directly with the veto
+  as a live A/B candidate, and it is far simpler to implement.**
+
+### 4. §70 (vR) CORRECTED — still the better of the two rules, but the statistics were oversold
+What survived attack, cleanly: the **lag arithmetic is correct** (`ub_L(tlk)` = `ub(tlk+L)` at
+exact-match 1.0000, n=147k-232k — no bug #25 leak); not a denominator artifact (vetoed-set median
+`b10` 0.81 vs kept 0.80); interior optimum; and **vR > vB in 12/12 fill cells at $24/$48, with vR's
+delta positive in all 12 while vB goes negative in 2**. Day-LOO ex-09-02: vR **+$3.17/day** vs vB
+−$8.85/day (so §68-11's fragility finding was itself a house-cell artifact — it applies to vB).
+
+What broke:
+- **p ≈ 0.01–0.08, not p<0.0001.** The investigator's null drops clips uniformly, but vR's vetoed
+  set has median **spread 0.45** vs kept **0.04**. Stratify the null and it degrades: ask band
+  0.0118 → **spread band 0.0777** → spread × ask 0.0527 → `fav_bid` quintile 0.0490. Correcting
+  for the scanned family (3 lookbacks × 11 thresholds) under a max-statistic null: **0.031**.
+  Unproven, not refuted — vR still separates within wide-spread strata (keep +2.6…+8.2% ROI vs
+  veto −15.7…−25.8%), just not at 2σ against "drop random wide-spread clips".
+- **85% of the benefit is in the ask<0.90 band**, where the live FAK match rate is 11.2% (bug #23)
+  against the sim's 22-35%. Applying vR only at ask ≥0.90 leaves **+$2.47/day** and restores a
+  −$49.95 worst day.
+- **Replacement clips are 33% of the gain, not 12%** — post-hoc removal gives $235.04 vs the full
+  sim's $269.34. Against vB, *half* of vR's margin is sim re-laddering mechanics.
+- **⚠️ vR loses on the only metric the program trusts.** In all 12 cells vR has MORE losing clips
+  than vB (1.7 vs 1.2 in the house cell). vR wins on dollars — the fill-model-dependent metric —
+  and loses on loss count, the model-independent one. Preferring vR is preferring the untrustworthy
+  metric. **The two rules are not ranked. Log both; let live fills decide.**
+- Base is **25 losing clips**, of which 5 clips are 62% of the removed PnL and 7 of 15 are on 09-02.
+
+### 5. ⭐ THE COUNTER-EXAMPLE THAT NOBODY HAD FACED — and it refutes §68-2's framing
+Live, 09-06 03:15 UTC bnb — **the fleet's biggest single-bar win of the era, +$76.09**
+(`RESEARCH-LOG.md`: "bnb ladder filled 99.8sh @ 0.238 at 03:19 UTC"). Verified in the tape: at
+tl=11.43 a **99.846-share print at $0.24** against a **displayed ask of 0.62-0.69** two seconds
+earlier. `rB10 = −0.966`, `dB20 = −0.94`: **both vetoes block this bar**, and the house cell instead
+fires one $8.71 clip at 0.99 for +$0.08.
+
+This is direct live evidence against §68-2's claim that price improvement is "mostly a latency
+artifact". Improvement is *rare* (≥5¢ within 0.2s on 1.3% of fires) but the clips are
+**dollar-capped**, so improvement buys shares super-linearly and one such bar is worth ~5 days of
+fleet PnL. Frequency is the wrong statistic for a payoff this convex. §68-2 should read: *the
+sim's 1.5-3.0s windows overstate how often improvement is reachable, but the improvement tail is
+real, live, and large.*
+
+In mitigation, the class was priced: deep (≤0.50, ≥$10) late prints run **128 winner-side vs 471
+loser-side**, −$1,046/day if taken blindly, so blocking the class is right on average. But
+winner-side deep prints sit in a vB-state **70.3%** of the time vs 39.1% for loser-side —
+**vB preferentially deletes the good half of the class** (vR: 46.9% vs 30.8%, less badly). At six
+days and one such bar this is unresolvable offline, and it is the honest argument against both
+vetoes.
+
+### 6. Sections that SURVIVED the adversarial pass
+- **§71-1 exit lane: survives**, and the evaluator sharpened why — `ub ≡ 1 − da`, so exiting the
+  favourite at bid *q* is priced identically to buying the dog at ask 1−*q*. Exhaustive 1-D and
+  3-D scans (flip × bid bucket × remaining time, entry ask, |est|) find **no** positive cell with
+  n≥100; the best is −0.0103, which is just the 1¢ spread at q=0.99. It is not independent
+  corroboration — it is the same identity from the other end. Closed permanently.
+- **§71-2 the two books are one book at all 10 levels: survives**, but **report it at 1e-6, not
+  1e-9** — max |p_ask_up + p_bid_down − 1| is 2.98e-08, which is float32 storage noise. At 1e-6 the
+  identity holds 1.00000 at every level, sizes match, and there are zero rows where one side has a
+  level and the mirror does not.
+- §68-7 (late-shift) — stake-retention arithmetic is model-independent; no objection.
+- §68-9 (fade) and §68-10 (dB explains the leads) — follow from `ua ≡ 1−db`; internally consistent.
+
+### 7. Where this leaves the program
+**Ranked by what is actually established:**
+1. **The loss-clip reduction is real and fill-model-independent**: 4.2/day → **1.2 (vB) / 1.7 (vR)**,
+   identical under both size models. This is the only claim to put in front of a deploy decision.
+2. **MIN_ASK 0.90 is a newly serious, much simpler competitor** to the whole veto programme
+   (−83% losses at no cost to $ under the honest size model). It was closed on artifact evidence.
+3. **vR vs vB is unresolved.** vR wins on dollars in 12/12 cells; vB wins on loss count in 12/12.
+   Log both, decide live.
+4. **Sizing is closed** (again). **The exit lane is closed permanently.** **§69 is withdrawn.**
+5. Everything still rests on **25 losing clips over 6 days, with 09-02 dominating**. The cheapest
+   real progress remains: **wait 3-4 weeks and re-cut**, with the tape-size cap in the harness and
+   a tape-gated availability statistic.

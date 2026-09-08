@@ -1,0 +1,20 @@
+/private/tmp/claude-501/-Users-maxkuzmentsov-development-projects-my-hummingbot-hummingbot-infra/90a51c5d-64c9-498e-8f50-45324c303774/scratchpad/lm/lw4.py:87: RuntimeWarning: divide by zero encountered in scalar divide
+  f'net={ps*100:+7.2f}±{se*100:4.2f}c t={ps/se:+5.1f} $/d={per.p.sum()/6:+8.1f} d+={int((day>0).sum())}/{len(day)} '
+=== A. TWAP-recon-gated maker, band 0.30-0.70, tl 3-60, join touch (queue) ===
+ungated two-sided (reference)                  bars= 1343 sh=  56596 q=0.491 wr=0.465 net=  -2.28±0.64c t= -3.6 $/d=  -215.4 d+=1/6 lossbars=290 worstLOO$/d= -241.2
+EST |bps|>=1 cov>=.5                           bars=  138 sh=   2675 q=0.495 wr=0.459 net=  -3.27±5.71c t= -0.6 $/d=   -14.6 d+=3/6 lossbars=63 worstLOO$/d=  -24.0
+EST |bps|>=2 cov>=.5                           bars=   61 sh=    983 q=0.529 wr=0.604 net=  +7.78±8.79c t= +0.9 $/d=   +12.8 d+=5/6 lossbars=22 worstLOO$/d=   +7.6
+EST |bps|>=3 cov>=.5                           bars=   31 sh=    478 q=0.514 wr=0.566 net=  +5.54±11.67c t= +0.5 $/d=    +4.4 d+=4/6 lossbars=13 worstLOO$/d=   +0.7
+EST |bps|>=5 cov>=.5                           bars=    6 sh=    111 q=0.518 wr=0.942 net= +42.73±6.07c t= +7.0 $/d=    +8.0 d+=2/3 lossbars=1 worstLOO$/d=   +3.8
+EST |bps|>=8 cov>=.5                           bars=    1 sh=     10 q=0.390 wr=1.000 net= +61.30±0.00c t= +inf $/d=    +1.0 d+=1/1 lossbars=0 worstLOO$/d=   +0.0
+PLACEBO est side FLIPPED |bps|>=3              bars=   17 sh=    444 q=0.438 wr=0.634 net= +19.91±12.76c t= +1.6 $/d=   +14.7 d+=4/5 lossbars=8 worstLOO$/d=   +8.8
+EST |bps|>=3 improve +1c                       bars=   33 sh=    585 q=0.538 wr=0.560 net=  +2.47±11.45c t= +0.2 $/d=    +2.4 d+=4/6 lossbars=12 worstLOO$/d=   -1.2
+EST |bps|>=3 tl 3-30                           bars=   25 sh=    478 q=0.535 wr=0.508 net=  -2.36±13.68c t= -0.2 $/d=    -1.9 d+=3/6 lossbars=10 worstLOO$/d=   -5.4
+EST |bps|>=3 band .40-.60                      bars=   18 sh=    347 q=0.526 wr=0.572 net=  +4.93±14.62c t= +0.3 $/d=    +2.9 d+=2/4 lossbars=9 worstLOO$/d=   -1.0
+=== B. momentum-following one-sided maker, band 0.30-0.70, full bar (tl 3-290) ===
+MOM mid up >=1c in 5s                          bars= 6854 sh= 284434 q=0.518 wr=0.502 net=  -1.25±0.27c t= -4.6 $/d=  -593.4 d+=0/6 lossbars=983 worstLOO$/d= -597.3
+MOM mid up >=2c in 10s                         bars= 7030 sh= 292271 q=0.524 wr=0.506 net=  -1.51±0.28c t= -5.3 $/d=  -733.1 d+=0/6 lossbars=1016 worstLOO$/d= -735.0
+MOM mid up >=3c in 20s                         bars= 7149 sh= 299005 q=0.534 wr=0.516 net=  -1.50±0.29c t= -5.1 $/d=  -745.7 d+=2/6 lossbars=881 worstLOO$/d= -755.9
+MOM mid up >=5c in 30s                         bars= 7053 sh= 285723 q=0.545 wr=0.526 net=  -1.51±0.32c t= -4.7 $/d=  -716.8 d+=2/6 lossbars=911 worstLOO$/d= -718.4
+PLACEBO MOM flipped (contrarian) 10s/2c        bars= 7443 sh= 324543 q=0.477 wr=0.459 net=  -1.39±0.25c t= -5.6 $/d=  -752.7 d+=0/6 lossbars=1198 worstLOO$/d= -739.7
+ungated two-sided full bar (reference)         bars= 7851 sh= 452357 q=0.502 wr=0.485 net=  -1.38±0.16c t= -8.5 $/d= -1041.3 d+=0/6 lossbars=457 worstLOO$/d=-1006.1
