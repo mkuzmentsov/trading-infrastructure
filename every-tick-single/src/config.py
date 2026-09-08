@@ -122,6 +122,11 @@ LIVE_MAX_ORDER_USD = float(os.getenv("LIVE_MAX_ORDER_USD", "5"))
 # Daily realized-loss kill switch (USD). When the UTC day's realized loss
 # exceeds this, cancel everything and stop quoting until the next UTC day.
 LIVE_MAX_DAILY_LOSS_USD = float(os.getenv("LIVE_MAX_DAILY_LOSS_USD", "25"))
+# Halt cooldown (user 2026-08-30 "instead of full day, make halt for 1h"):
+# each time the day pnl drops another LIVE_MAX_DAILY_LOSS_USD below the
+# previous trip level, live orders pause for this many seconds, then
+# resume with a fresh budget. <=0 = legacy: halt until the next UTC day.
+LIVE_HALT_COOLDOWN_S = float(os.getenv("LIVE_HALT_COOLDOWN_S", "0"))
 # Live warmup default is 0 (place the entry the instant the bar rolls — the
 # latency edge). Respected if explicitly set. Paper keeps QUOTE_WARMUP_SECS.
 LIVE_QUOTE_WARMUP_SECS = int(os.getenv("LIVE_QUOTE_WARMUP_SECS", "0"))

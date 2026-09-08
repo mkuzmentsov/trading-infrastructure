@@ -78,3 +78,6 @@ every-tick-single/data/
 # mrec recorder archives pulled from the cluster (660MB of .gz, regenerable)
 data/
 every-tick-single/backtest/rebate_arb/cache/
+
+# scratch eval dumps (regenerable from mrec)
+eval.jsonl
