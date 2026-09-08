@@ -250,6 +250,365 @@ def register(mcp: FastMCP) -> int:
 
     count += 4
 
+    # ----- Reward-pool farming / venue structure (public) ------------------
+
+    @mcp.tool()
+    def polymarket_get_books(token_ids: list[str]) -> list[dict[str, Any]]:
+        """Batch order books (one CLOB round-trip for many tokens). Use instead
+        of looping polymarket_get_book — the venue caps request rate, and a
+        multi-leg thesis must read every leg at the SAME instant to be valid."""
+        out: list[dict[str, Any]] = []
+        for i in range(0, len(token_ids), 250):
+            chunk = token_ids[i:i + 250]
+            r = httpx.post(f"{_CLOB}/books", json=[{"token_id": t} for t in chunk],
+                           headers=_UA, timeout=45)
+            r.raise_for_status()
+            for b in r.json():
+                bids = sorted(((_f(x["price"]), _f(x["size"])) for x in b.get("bids", [])), reverse=True)
+                asks = sorted(((_f(x["price"]), _f(x["size"])) for x in b.get("asks", [])))
+                out.append({
+                    "token_id": b.get("asset_id"),
+                    "bid": bids[0][0] if bids else None, "bid_size": bids[0][1] if bids else 0.0,
+                    "ask": asks[0][0] if asks else None, "ask_size": asks[0][1] if asks else 0.0,
+                    "mid": round((bids[0][0] + asks[0][0]) / 2, 4) if bids and asks else None,
+                })
+        return out
+
+    @mcp.tool()
+    def polymarket_scan_reward_pools(
+        limit: int = 25,
+        max_capital: float = 0,
+        min_pool: float = 1.0,
+        max_pages: int = 30,
+    ) -> dict[str, Any]:
+        """⭐ Screen LIVE liquidity-reward pools by capturable yield, measured
+        against the REAL book (not gamma's cached bestBid/bestAsk).
+
+        For each market carrying a reward pool this reads the actual CLOB book,
+        counts the qualifying competition — resting size >= rewardsMinSize and
+        within rewardsMaxSpread of the midpoint, the only orders that score —
+        and models your share as minSize/(minSize + competition), the payout
+        formula's Q_normal when you post the minimum qualifying quote.
+
+        `capital_usd` is the cost of a two-sided minimum quote (one share of
+        YES + one of NO costs $1, so it is ~rewardsMinSize dollars).
+
+        CAVEATS the caller must respect:
+          * `est_daily_usd` assumes competition stays as it is now. An empty
+            band is usually a pool that only just opened — first movers get it
+            until others arrive.
+          * Rewards pay only while you are quoted; the payout floor is $1/day,
+            so rows under ~$1 are unlikely to pay at all.
+          * A wide book (`spread` large) means the midpoint is barely
+            informative — quoting inside it invites adverse selection. Weigh
+            `est_daily_usd` against `spread` * size before deploying.
+        """
+        rows: list[dict] = []
+        offset = 0
+        for _ in range(max_pages):
+            try:
+                batch = _get(_GAMMA, "/markets",
+                             {"closed": "false", "limit": 100, "offset": offset})
+            except httpx.HTTPStatusError:
+                break
+            if not isinstance(batch, list) or not batch:
+                break
+            rows.extend([b for b in batch if isinstance(b, dict)])
+            if len(batch) < 100:
+                break
+            offset += 100
+
+        cands = []
+        for m in rows:
+            pool = sum(_f(x.get("rewardsDailyRate"))
+                       for x in (m.get("clobRewards") or []) if isinstance(x, dict))
+            toks = _jlist(m.get("clobTokenIds"))
+            if pool < min_pool or len(toks) != 2:
+                continue
+            minsz = _f(m.get("rewardsMinSize"))
+            if max_capital and minsz > max_capital:
+                continue
+            cands.append((m, pool, toks, minsz, _f(m.get("rewardsMaxSpread"))))
+
+        books: dict[str, dict] = {}
+        flat = [t for _, _, toks, _, _ in cands for t in toks]
+        for i in range(0, len(flat), 250):
+            chunk = flat[i:i + 250]
+            try:
+                r = httpx.post(f"{_CLOB}/books", json=[{"token_id": t} for t in chunk],
+                               headers=_UA, timeout=45)
+                r.raise_for_status()
+                for b in r.json():
+                    books[b["asset_id"]] = b
+            except Exception:
+                continue
+
+        out = []
+        for m, pool, toks, minsz, maxspread in cands:
+            b = books.get(toks[0])
+            if not b:
+                continue
+            bids = sorted(((_f(x["price"]), _f(x["size"])) for x in b.get("bids", [])), reverse=True)
+            asks = sorted(((_f(x["price"]), _f(x["size"])) for x in b.get("asks", [])))
+            if not bids or not asks:
+                mid = None
+                comp = 0.0
+                spread = None
+            else:
+                mid = (bids[0][0] + asks[0][0]) / 2
+                spread = round(asks[0][0] - bids[0][0], 4)
+                qb = sum(s for p, s in bids if (mid - p) * 100 <= maxspread and s >= minsz)
+                qa = sum(s for p, s in asks if (p - mid) * 100 <= maxspread and s >= minsz)
+                comp = min(qb, qa)          # the payout takes min of the two book sides
+            share = minsz / (minsz + comp) if (minsz + comp) > 0 else 1.0
+            est = pool * share
+            out.append({
+                "slug": m.get("slug"),
+                "question": m.get("question"),
+                "pool_usd_day": pool,
+                "competition_shares": round(comp, 1),
+                "est_daily_usd": round(est, 2),
+                "capital_usd": round(minsz, 2),
+                "return_pct_day": round(est / minsz * 100, 1) if minsz else None,
+                "min_size": minsz, "max_spread_c": maxspread,
+                "mid": round(mid, 4) if mid else None, "spread": spread,
+                "end": m.get("endDate"),
+                "fees_enabled": bool(m.get("feesEnabled")),
+                "condition_id": m.get("conditionId"),
+                "tokens": toks,
+            })
+        out.sort(key=lambda x: -(x["est_daily_usd"]))
+        return {
+            "scanned_markets": len(rows),
+            "reward_markets": len(cands),
+            "total_live_pool_usd_day": round(sum(c[1] for c in cands), 2),
+            "top": out[:limit],
+        }
+
+    @mcp.tool()
+    def polymarket_scan_negrisk(limit: int = 15, max_pages: int = 30) -> dict[str, Any]:
+        """Scan neg-risk (multi-outcome, one-winner) events for basket
+        mispricing, priced off the REAL books.
+
+        Reports per event: sum of best ASKs across every YES leg (buy-the-field
+        cost) and sum of best BIDs (sell-the-field proceeds).
+
+        ⚠️ Read the direction asymmetry before trading either:
+          * `sum_ask < 1` is NOT automatically an arb. Most Polymarket
+            multi-outcome events are AUGMENTED neg-risk — they carry unnamed
+            placeholder slots and an "Other" outcome, so the listed legs are
+            not a complete partition. A sum below 1 is usually just the
+            market's probability that the winner is unlisted.
+          * `sum_bid > 1` IS a genuine arb regardless of completeness: you are
+            paid more than $1 to cover a set that pays at most $1, and an
+            unlisted winner makes every leg you sold expire worthless.
+        `complete_set_risk` flags events whose legs may not be exhaustive.
+        """
+        rows: list[dict] = []
+        offset = 0
+        for _ in range(max_pages):
+            try:
+                batch = _get(_GAMMA, "/markets",
+                             {"closed": "false", "limit": 100, "offset": offset})
+            except httpx.HTTPStatusError:
+                break
+            if not isinstance(batch, list) or not batch:
+                break
+            rows.extend([b for b in batch if isinstance(b, dict)])
+            if len(batch) < 100:
+                break
+            offset += 100
+
+        groups: dict[str, list] = {}
+        for m in rows:
+            if m.get("negRisk") and m.get("negRiskMarketID"):
+                groups.setdefault(m["negRiskMarketID"], []).append(m)
+        groups = {k: v for k, v in groups.items() if len(v) >= 2}
+
+        flat = [_jlist(m.get("clobTokenIds"))[0]
+                for v in groups.values() for m in v if _jlist(m.get("clobTokenIds"))]
+        books: dict[str, dict] = {}
+        for i in range(0, len(flat), 250):
+            try:
+                r = httpx.post(f"{_CLOB}/books",
+                               json=[{"token_id": t} for t in flat[i:i + 250]],
+                               headers=_UA, timeout=45)
+                r.raise_for_status()
+                for b in r.json():
+                    books[b["asset_id"]] = b
+            except Exception:
+                continue
+
+        out = []
+        for _k, v in groups.items():
+            sa = sb = 0.0
+            missing = 0
+            fee = 0.0
+            rate = _f((v[0].get("feeSchedule") or {}).get("rate")) if v[0].get("feesEnabled") else 0.0
+            for m in v:
+                t = _jlist(m.get("clobTokenIds"))
+                b = books.get(t[0]) if t else None
+                asks = sorted((_f(x["price"]) for x in (b or {}).get("asks", [])))
+                bids = sorted((_f(x["price"]) for x in (b or {}).get("bids", [])), reverse=True)
+                if asks:
+                    sa += asks[0]
+                else:
+                    missing += 1
+                if bids:
+                    sb += bids[0]
+                    # hitting a bid makes you the TAKER: rate * p * (1-p) per share
+                    fee += rate * bids[0] * (1 - bids[0])
+            ev = (v[0].get("events") or [{}])[0] if v[0].get("events") else {}
+            titles = " ".join((m.get("groupItemTitle") or "") for m in v).lower()
+            gross = sb - 1.0
+            out.append({
+                "event": ev.get("slug") or v[0].get("slug"),
+                "legs": len(v), "legs_without_ask": missing,
+                "sum_ask": round(sa, 4), "sum_bid": round(sb, 4),
+                "sell_field_gross_edge": round(gross, 4),
+                "taker_fee_cost": round(fee, 4),
+                "sell_field_net_edge": round(gross - fee, 4),
+                "complete_set_risk": ("other" not in titles) or missing > 0,
+                "fee_free": not bool(v[0].get("feesEnabled")),
+            })
+        out.sort(key=lambda x: -x["sell_field_net_edge"])
+        return {"events_scanned": len(groups),
+                "note": ("sum_bid > 1.0 is the tradeable direction (mint a YES+NO pair for $1, "
+                         "sell both into the bids). Only sell_field_net_edge > 0 is real — on a "
+                         "fee-enabled market the taker fee rate*p*(1-p) per share typically "
+                         "cancels a 1c gross edge exactly. fee_free markets (Geopolitics and "
+                         "world events) are where a thin edge survives. "
+                         "sum_ask < 1.0 is usually just an incomplete outcome set, not an arb."),
+                "best_sell_field": out[:limit],
+                "cheapest_buy_field": sorted(out, key=lambda x: x["sum_ask"])[:limit]}
+
+    @mcp.tool()
+    def polymarket_get_combo_markets(limit: int = 25, search: str = "") -> dict[str, Any]:
+        """Catalog of markets usable as COMBO legs (multi-leg conjunction
+        positions priced by RFQ), plus whether combo trading is actually open.
+
+        A combo YES pays only if EVERY leg pays; the NO is the complement. Legs
+        are quoted by competing market makers in a 400ms auction, so a combo is
+        the way to express a correlated multi-market view without legging in
+        (and without paying the spread on each leg separately).
+
+        `rfq_live` reports whether quoting is enabled yet — while every market
+        reports `pending`, the catalog exists but no RFQ can be executed."""
+        params: dict[str, Any] = {"limit": min(limit, 100)}
+        if search:
+            params["search"] = search
+        d = httpx.get("https://combos-rfq-api.polymarket.com/v1/rfq/combo-markets",
+                      params=params, headers=_UA, timeout=30).json()
+        mkts = d.get("markets") or []
+        rows = [{
+            "slug": m.get("slug"), "title": m.get("title"),
+            "prices": m.get("outcome_prices"), "volume": _f(m.get("volume")),
+            "pending": m.get("pending"), "tags": m.get("tags"),
+            "condition_id": m.get("condition_id"),
+            "position_ids": m.get("position_ids"),
+        } for m in mkts[:limit]]
+        return {"rfq_live": any(not r["pending"] for r in rows),
+                "count": len(rows), "markets": rows}
+
+    @mcp.tool()
+    def polymarket_get_clob_market_info(condition_id: str) -> dict[str, Any]:
+        """Authoritative CLOB-level parameters for one market in a single call —
+        tick size, minimum order size, taker/maker base fees, the live rewards
+        configuration and RFQ status. Use this (not gamma) before quoting: the
+        tick size decides your minimum price improvement and gamma's copy of the
+        reward config can lag."""
+        d = _get(_CLOB, f"/markets/{condition_id}")
+        return d if isinstance(d, dict) else {"raw": str(d)}
+
+    @mcp.tool()
+    def polymarket_get_price_history(
+        token_id: str, interval: str = "1w", fidelity: int = 60
+    ) -> dict[str, Any]:
+        """Price time series for a token. interval: 1h/6h/1d/1w/1m/max,
+        fidelity = minutes per point. Returns the series plus range, realised
+        volatility and drift — enough to judge whether a resting quote will be
+        run over before its reward accrues."""
+        d = _get(_CLOB, "/prices-history",
+                 {"market": token_id, "interval": interval, "fidelity": fidelity})
+        h = d.get("history") or []
+        px = [_f(p.get("p")) for p in h]
+        if not px:
+            return {"points": 0}
+        rets = [px[i] - px[i - 1] for i in range(1, len(px))]
+        vol = statistics.pstdev(rets) if len(rets) > 1 else 0.0
+        return {
+            "points": len(px), "first": px[0], "last": px[-1],
+            "min": min(px), "max": max(px),
+            "drift": round(px[-1] - px[0], 4),
+            "vol_per_point": round(vol, 5),
+            "series": [{"t": p.get("t"), "p": _f(p.get("p"))} for p in h[-200:]],
+        }
+
+    @mcp.tool()
+    def polymarket_scan_cheap_longshots(
+        max_price: float = 0.10,
+        min_volume24h: float = 0,
+        min_liquidity: float = 500,
+        limit: int = 25,
+        max_pages: int = 30,
+    ) -> dict[str, Any]:
+        """Screen cheap outcomes for asymmetric payoff — small stake, large
+        multiple if it hits. Ranked by payoff multiple with the liquidity to
+        actually get filled and out.
+
+        Reports `fee_free` (Geopolitics and world-event markets charge NO taker
+        fee — on every other category a taker pays rate*p*(1-p) per share, which
+        at a 5c entry is small but not zero) and `holding_rewards` (the venue
+        flags some long-dated markets as holding-reward eligible).
+
+        This is a SCREEN, not a recommendation: a 20x payoff priced at 5c is the
+        market saying 5%, and it is usually right. Read the market description
+        with polymarket_get_market before staking anything — resolution wording,
+        not the headline, decides these."""
+        rows: list[dict] = []
+        offset = 0
+        for _ in range(max_pages):
+            try:
+                batch = _get(_GAMMA, "/markets",
+                             {"closed": "false", "limit": 100, "offset": offset})
+            except httpx.HTTPStatusError:
+                break
+            if not isinstance(batch, list) or not batch:
+                break
+            rows.extend([b for b in batch if isinstance(b, dict)])
+            if len(batch) < 100:
+                break
+            offset += 100
+        out = []
+        for m in rows:
+            toks = _jlist(m.get("clobTokenIds"))
+            prices = [_f(p) for p in _jlist(m.get("outcomePrices"))]
+            outcomes = _jlist(m.get("outcomes"))
+            liq = _f(m.get("liquidityNum") or m.get("liquidity"))
+            if len(toks) != 2 or len(prices) != 2 or liq < min_liquidity:
+                continue
+            if _f(m.get("volume24hr")) < min_volume24h:
+                continue
+            for i, p in enumerate(prices):
+                if 0 < p <= max_price:
+                    out.append({
+                        "slug": m.get("slug"), "question": m.get("question"),
+                        "outcome": outcomes[i] if i < len(outcomes) else str(i),
+                        "price": p, "payoff_multiple": round(1 / p, 1),
+                        "token_id": toks[i],
+                        "liquidity": round(liq, 0),
+                        "volume24h": round(_f(m.get("volume24hr")), 0),
+                        "fee_free": not bool(m.get("feesEnabled")),
+                        "holding_rewards": bool(m.get("holdingRewardsEnabled")),
+                        "tick": _f(m.get("orderPriceMinTickSize")),
+                        "end": m.get("endDate"),
+                        "condition_id": m.get("conditionId"),
+                    })
+        out.sort(key=lambda x: -x["payoff_multiple"])
+        return {"scanned": len(rows), "found": len(out), "candidates": out[:limit]}
+
+    count += 7
+
     # ----- Portfolio (needs wallet address only) --------------------------
 
     if _wallet():
@@ -451,6 +810,44 @@ def register(mcp: FastMCP) -> int:
                                           "total_usd": round(reward_total, 6)},
                     "maker_rebates": {"count": len(rebates),
                                       "total_usd": rebate_total}}
+
+        @mcp.tool()
+        def polymarket_get_reward_percentages() -> dict[str, Any]:
+            """Live share of each reward market's pool this wallet is currently
+            earning — the real-time feedback loop for reward farming. A market
+            you are quoting that shows a 0% share means your orders are NOT
+            scoring: too small (< rewardsMinSize), too far from the midpoint
+            (> rewardsMaxSpread), or one-sided in a market whose midpoint sits
+            outside [0.10, 0.90], where scoring requires BOTH sides."""
+            clob = _clob_client()
+            for meth in ("get_reward_percentages", "get_user_reward_percentages"):
+                fn = getattr(clob, meth, None)
+                if fn:
+                    try:
+                        d = fn()
+                        return {"wallet": _wallet(), "markets": d}
+                    except Exception as exc:
+                        return {"wallet": _wallet(), "error": str(exc), "method": meth}
+            return {"wallet": _wallet(),
+                    "error": "client exposes no reward-percentage method",
+                    "available": [m for m in dir(clob) if "reward" in m.lower()]}
+
+        @mcp.tool()
+        def polymarket_check_order_scoring(order_id: str) -> dict[str, Any]:
+            """Is this resting order currently earning liquidity rewards?
+            Check after placing a farming quote — an order can be live on the
+            book and still score nothing."""
+            clob = _clob_client()
+            fn = getattr(clob, "is_order_scoring", None)
+            if not fn:
+                return {"error": "client exposes no order-scoring method",
+                        "available": [m for m in dir(clob) if "scor" in m.lower()]}
+            try:
+                return {"order_id": order_id, "scoring": fn(order_id)}
+            except Exception as exc:
+                return {"order_id": order_id, "error": str(exc)}
+
+        count += 2
 
         @mcp.tool()
         def polymarket_get_order(order_id: str) -> dict[str, Any]:
