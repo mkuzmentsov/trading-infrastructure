@@ -3087,3 +3087,8 @@ vetoes.
 5. Everything still rests on **25 losing clips over 6 days, with 09-02 dominating**. The cheapest
    real progress remains: **wait 3-4 weeks and re-cut**, with the tape-size cap in the harness and
    a tape-gated availability statistic.
+
+## §66 (2026-09-09) Chop-day autopsy — bid-collapse chase cell confirmed; veto discriminator validated on 35 fills
+Day 09-09: 6 losses (eth −20.02, sol −23.14, btc −22.36, hype −17.16, sol −7.29, xrp −0.34), all brake-marked singles, no halts. Mechanism: violent impulse → our-side bid collapses (0.82→0.09 / 0.83→0.02 / 0.80→0.05 in the 6s pre-fire, mrec-measured) → est still favors old side by 0.05-0.06bps over threshold (INSIDE the 0.46bps proxy noise; relay lag 2.2s) → FAK sweeps the collapsed book (sol 1,524sh @0.015) → brake fires post-fill → flip. eth+sol same second (10:34:40) = one impulse.
+Discriminator test (all 35 cheap fills <=0.80/>5sh since 09-01, pre-fill 6s bid delta from mrec): WINS median −0.19, LOSSES median −0.51. Stale-display windfalls are UNTOUCHED by a veto (bnb 0.238 win: −0.02; xrp/hype passthrough wins 0.00/+0.02). Veto @ d<=−0.30: blocks 10/14 losses (+$240) vs 8/21 wins (−~$194) ⇒ net ~+$5/day (fill-model dependent, don't quote) but tail compression is the prize (09-09 cheap-fill losses −$85 → −$22). Confirms [[bid-drop-veto]] (09-06) exactly; irreducible remainder = real late flips (hype lost at est 1.68).
+NEXT STEP (user-gated): arm veto LOG-ONLY (flag would-have-vetoed on each fire), score after ~1wk. No config change today (user: "no code for now"). Est-margin buffer rejected again — est-gating family, triple-refuted.
