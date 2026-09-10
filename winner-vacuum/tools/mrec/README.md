@@ -57,15 +57,62 @@ carries **34** loss bars. Implementation: `scratchpad/mine/calib.py`.
 ⚠️ The calibration is **aggregate only** — per coin it is anti-correlated with live (r=−0.63).
 Never rank coins, or choose a pilot coin, from a replay.
 
-**Independent reproductions of this cell** (keep this list current — `calib.py` itself is not in
-the repo, so the cell is defined by this description plus these numbers):
+### ⛔⛔ 2026-09-10: THE HOUSE CELL DOES NOT REPRODUCE LIVE PnL — validated against the pod ledger
 
-| when | who | 09-02…04 result | published |
-|---|---|---|---|
-| 2026-09-06 | original (`scratchpad/mine/calib.py`, lost) | +$34.94 / 312 bars / 22 loss | — |
-| 2026-09-10 | long-duration agent, from this README | **+$33.79 / 307 / 22** | matches |
+Do not trust any `$/day` or `losses/day` that comes out of a replay. The cell above reproduces
+**bar count and loss-bar count** and nothing else. Measured against the fleet's own
+`PF_TE_WHALE_ORDER` ledger (1,994 fires / 1,141 fills, read-only from all 7 pods, which
+reconciles the RESEARCH-LOG day closes to within **$0.55 every day**):
+
+| | replay | live |
+|---|---|---|
+| 09-02…09-09 gross | **−$82** | **+$203** |
+| 09-09 loss bars reproduced | **2 of 7** (3 of the sim's 5 are bars the fleet never fired) | — |
+
+**The sign inversion has one dominant cause: the live FAK is DOLLAR-denominated, the replay is
+share-denominated.** 39 sweep bars (**3.8% of bars**) carry **44% of the era's gross**
+(+$234 wins / −$139 losses; one clip took **1,524 shares**). The house cell caps a bar at ~30
+shares, so it **deletes the windfalls and keeps the losses**. Independently corroborated: the btc
+live fill ledger already found the stale-ask sweep is ~40% of btc profit.
+
+Three further defects, any one of which breaks an absolute claim:
+- **22.4% of live fills land ABOVE the displayed ask** — the bot sends `ask + LIVE_PX_BUFFER`.
+  A replay that refuses to fill above the displayed ask cannot see them.
+- **The 0.4s tape window rejects 42% of fills that demonstrably happened.** 1.5s recovers 96%.
+  So the 0.4s/1.5s choice trades one bias for another; neither is "correct".
+- **The estimate reconstruction fails the live gate on 28% of real decisions** and takes the
+  OPPOSITE side on 10.6% — where the bot was right 92.6%. This is NOT bug #25 (removing the lag
+  gate improves it only 2pp); it is the recorder's ~7%-incomplete Chainlink capture against a
+  0.5 bps gate.
+- ⚠️ **`polysim2.thresh=0.10` is a FOURTH wrong default** — live is `pmTeThreshBps=0.5`. Running
+  at 0.10 inflates bars ~1.6×, which is plausibly why the published cell appeared to match live's
+  351 bars in the first place.
+
+**Unresolved conflict, stated honestly**: on 09-02…04 the long-duration agent reproduced
+**+$33.79 / 307 / 22** from this README while the validation agent, applying `px <= ask` to both
+the print and the depth walk, got **−$91.65 / 320 / 22**. Bars and loss bars agree; PnL does not.
+Until someone rebuilds `calib.py`, **treat the published +$34.94 as unverified.**
 
 Live ground truth for those days: **+$18.40 / 351 bars / 17 loss bars**.
+
+### What a replay IS still good for
+Rates, base rates, and RELATIVE A/B where both arms share the fill model and neither depends on
+sweep sizing. **For anything $-denominated, and for all loss-tail work, use the pod
+`PF_TE_WHALE_ORDER` ledger instead — it needs no fill model at all** and reconciles to the day
+closes within $0.55. That is how the loss-tail veto (§ strat-losstail-veto-20260910) was measured.
+
+### ⚠️ Tape defects — filter before you count anything
+- **6-hour resolution outage 09-09 18:55 → 09-10 00:55 UTC** (~400 unlabelled bars, verified at
+  source). Do NOT patch it with `barrecon.pred` — that is circular.
+- **`zec` appears in `res`/`panel` but is not traded.** Exclude it.
+- **bnb/doge carry an 08-25/26 tail** plus a full 09-01 — a different era (bug #24).
+- Practical window: **use 09-02 … 09-09 only.**
+
+### Panel sampling — the good news
+1Hz retention does **NOT** preferentially drop violent bars (100% ask presence on loss bars), so
+there is no optimism bias from missing bars. But the retained ask matches the bot's within 0.5¢
+only **15% of the time on sweeps** vs 71% on quiet bars. A 0.4s rebuild buys **price fidelity,
+not bar count**.
 
 ### A third rule to bake in, alongside the two above
 3. **Score the replay against live before quoting it.** A replay of a LIVE strategy has ground
