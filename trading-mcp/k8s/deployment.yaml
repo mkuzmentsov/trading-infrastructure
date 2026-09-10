@@ -35,7 +35,7 @@ spec:
         kubernetes.io/hostname: hetzner-k3s-cluster-pool-workers-finland-worker2
       containers:
         - name: trading-mcp
-          image: mkuzmentsov/trading-mcp:0.14
+          image: mkuzmentsov/trading-mcp:0.15
           # IfNotPresent: 0.12 was imported directly into the node's containerd
           # (docker-hub push stalled); a hub push later makes Always safe again.
           imagePullPolicy: IfNotPresent
