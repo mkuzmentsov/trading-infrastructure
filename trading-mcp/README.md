@@ -186,6 +186,51 @@ Cross-venue tools that pick up whichever exchanges have credentials and merge th
 - `aggregator_get_market_summary(coin)` — price + 24h + funding APR + best Earn APR + Binance depth probe at $1k / $10k.
 - `aggregator_route_order(coin, side, amount_usd, max_slippage_bps, confirm=False)` — dry-run venue choice; `confirm=True` executes (Binance spot only for v1).
 
+### Polymarket (22)
+
+Prediction-market CLOB. Read tools always register; portfolio tools need
+`POLYMARKET_ADDRESS`/`POLYMARKET_FUNDER`; trading needs `POLYMARKET_PK`.
+Orders must use the **proxy** wallet as funder/maker, not the signer EOA.
+
+**Discovery & structure:**
+- `polymarket_scan_markets(view)` — newest / volume / closing / rewards.
+- `polymarket_get_market(slug|condition_id)` — includes the DESCRIPTION (resolution rules — read
+  it before betting).
+- `polymarket_get_clob_market_info(condition_id)` — authoritative tick size, min order size,
+  base fees, live rewards config, RFQ status. Gamma's copy of the reward config lags; this one doesn't.
+- `polymarket_get_combo_markets()` — catalog of combo (multi-leg conjunction) legs, plus `rfq_live`.
+  As of 2026-09-08 every market is `pending` — combos are **not executable yet**.
+
+**Books & prices:**
+- `polymarket_get_book(token_id)` — one book with depth-within-2c and a THIN warning.
+- `polymarket_get_books([token_id, …])` — **batch**, one round-trip. Use this for anything
+  multi-leg: every leg must be read at the same instant for the comparison to be valid.
+- `polymarket_get_price_history(token_id, interval)` — series + realised vol + drift.
+- `polymarket_get_flow(condition_id)` — whale/insider flow: net aggressive flow per outcome,
+  buyer concentration, largest recent prints.
+
+**Edge scanners:**
+- `polymarket_scan_reward_pools()` ⭐ — live liquidity-reward pools ranked by *capturable* yield,
+  measured against real books: counts the qualifying competition (resting size ≥ `rewardsMinSize`
+  within `rewardsMaxSpread` of the midpoint — the only orders that score) and models your share.
+- `polymarket_scan_negrisk()` — multi-outcome basket mispricing, **net of the taker fee**. Reports
+  both directions and flags incomplete outcome sets.
+- `polymarket_scan_cheap_longshots()` — cheap asymmetric payoffs, flagging `fee_free` and
+  `holding_rewards`.
+
+**Portfolio:** `polymarket_get_positions`, `polymarket_get_redeemable`, `polymarket_get_activity`,
+`polymarket_get_transfers`
+
+**Trading & rewards:** `polymarket_place_order` (`execution="maker"` = post-only, the default —
+zero fee and reward-eligible; `"taker"` = FAK), `polymarket_get_open_orders`,
+`polymarket_get_order`, `polymarket_cancel_order`, `polymarket_get_rewards` (splits liquidity
+rewards from maker rebates), `polymarket_get_reward_percentages` (live share of each pool you are
+earning), `polymarket_check_order_scoring` (an order can be resting and still score nothing)
+
+> Fees: taker pays `rate × p × (1−p)` per share, makers 0. Crypto 0.07, Sports 0.05,
+> Politics/Finance/Tech 0.04, Economics/Culture/Weather/Other 0.05, **Geopolitics 0**.
+> Strategy context and standing verdicts: `PROJECT-INSTRUCTIONS.md` and `prompts/03-05`.
+
 ## 5. Adding a new exchange
 
 1. Create `src/trading_mcp/exchanges/<name>.py` with a `register(mcp: FastMCP) -> int` that:

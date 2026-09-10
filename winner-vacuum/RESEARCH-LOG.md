@@ -937,3 +937,13 @@ field-average inversion. **Nothing untested remains in 30-70c; the go/no-go is t
 `r3070/minttp.py`, 11,137 bars: winner sold −1c in 74 % of bars vs loser sold pre-reversal +99c in **0.74 %** (break-even 1.0 %)
 ⇒ +3.0 ± 3.7 c/bar on $50 (t 0.8, 4/9 days, xrp/btc +, bnb/hype −). TP 0.98 −10.5c, 0.95 −62c, 0.90 −139c. Chop gate: 71 %
 of bars fill nothing. Split/merge itself is not a distinct mechanism (identity; doc §D). Documented in strat-maker-3070 §D/§E.
+
+## 2026-09-09 03:56K — Day close 2026-09-08 (UTC): +$63.01 (158-2), 2nd-best uniform-era day
+5m fleet FINAL: bnb 30-0 +10.30 | btc 16-0 +5.92 | doge 19-0 +1.33 | eth 16-1 +1.14 (brake-capped −$10.5 loss — §59 save) | hype 25-0 +39.38 (dawn dislocation windfall +$20.7 + steady adds) | sol 22-0 +15.60 | xrp 30-1 −10.66 (one full-clip flip −$22.80).
+Zero halts, zero errors. Balance 03:55K $464.33 (ATH era; peak read $465.12). Uniform-era 10 completed days: −7.25, +29.94, +16.97, −15.56, −4.96, +13.48, +29.99, +129.02, +31.32, +63.01 = +$285.96 (~$28.6/day). Balance $180.87 trough (08-30) → $464 (+$178 of that is the last 3 days' dislocation-rich regime).
+
+## 2026-09-10 03:56K — Day close 2026-09-09 (UTC): −$66.93 (95-7) — worst uniform-era day
+5m fleet FINAL: bnb 12-0 +6.64 | btc 11-1 −19.72 | doge 17-0 +1.28 | eth 14-1 −11.15 | hype 16-2 −21.59 | sol 12-2 −26.81 | xrp 13-1 +4.22.
+7 losses, ALL brake-capped singles (no ladder doubles, no coin reached its $30 halt). 5/7 = §66 bid-collapse chase cell: violent impulse → our-side bid collapses to ~0.05 in <6s → est thin (0.05-0.06bps over threshold, inside 0.46bps proxy noise) + relay-lagged → FAK sweeps collapsed book (sol 1,524sh @0.015). Correlated: eth+sol fired same second (10:34:40).
+§66 analysis validated the [[bid-drop-veto]] discriminator on 35 cheap fills: veto d<=−0.30/6s blocks 10/14 losses vs 8/21 wins; stale-book windfalls (bnb 0.238 d−0.02) untouched. LOG-ONLY arm proposed, awaiting user go.
+Balance 03:55K $340.28 (from 09-08 close ~$464 peak $479; still +$159 above 08-30 trough). Era 11 days: +$219.03 (~$19.9/day).
