@@ -1,3 +1,4 @@
+import os
 """LATE-WINDOW RESTING BID on the favourite.  Place a post-only bid at q on the
 estimated-winner token at tl=T0, leave it to the close, fill from the REAL print tape.
 
@@ -9,7 +10,7 @@ Size cap  : the pressure volume itself (bug #28), and the clip.
 PnL       : sh*(outcome - q) + rebate 0.2*0.07*q*(1-q).  Maker pays no fee.
 """
 import pandas as pd, numpy as np, sys
-PQ='/private/tmp/claude-501/-Users-maxkuzmentsov-development-projects-my-hummingbot-hummingbot-infra/b78fafe5-77e0-41c9-af8e-fc68c051450c/scratchpad/pq'
+PQ=os.environ.get('MREC_PQ', 'pq')
 
 def load():
     t=pd.read_parquet(f'{PQ}/trades.parquet')

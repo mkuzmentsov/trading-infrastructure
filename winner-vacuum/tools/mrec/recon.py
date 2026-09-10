@@ -1,5 +1,6 @@
 import pandas as pd, numpy as np
-PQ='pq'
+import os
+PQ=os.environ.get('MREC_PQ','pq')
 cl=pd.read_parquet(f'{PQ}/cl.parquet')
 res=pd.read_parquet(f'{PQ}/res.parquet')
 out=[]

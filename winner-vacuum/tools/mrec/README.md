@@ -56,3 +56,32 @@ Never rank coins, or choose a pilot coin, from a replay.
 3. **Score the replay against live before quoting it.** A replay of a LIVE strategy has ground
    truth in `winner-vacuum/RESEARCH-LOG.md`. Match PnL, bar count and loss-bar count, and name the
    cell in the write-up.
+
+## Paths (2026-09-10)
+
+Every script now resolves the parquet dir from **`MREC_PQ`**, defaulting to a relative `pq/`.
+The old hard-coded absolute paths pointed at a session scratchpad that no longer exists, which
+silently broke `ev2pq/snap2pq/lib/recon/panel` and the whole `tickjump/` set.
+
+```bash
+export MREC_PQ=<repo>/every-tick-single/data/pq          # shared build, gitignored via data/
+export PYTHONPATH=<repo>/winner-vacuum/tools/mrec
+cd <repo>/every-tick-single/data/work                    # has a `pq` symlink — flow2/polysim2
+                                                         # read 'pq/...' as a relative path
+```
+
+**Step 4a is missing from the table above**: `recon.py` READS `cl.parquet`, it does not create it.
+Build it first — it is the dedup of the Chainlink tick embedded in every snapshot row:
+
+```python
+d = pd.read_parquet(f'{PQ}/snapcur.parquet', columns=['coin','cl','cl_ts']).dropna()
+d['cl_ts'] = d.cl_ts.astype('int64')
+d.drop_duplicates(['coin','cl_ts']).sort_values(['coin','cl_ts']).to_parquet(f'{PQ}/cl.parquet')
+```
+
+`panelflow.parquet` (the input `flow2.py` expects) is just `panel.parquet` — flow2 only reads
+`coin/ws/tlk/side/fav_bid` from it. Copy it across; the script that originally emitted it under
+that name was lost with the old scratchpad.
+
+Build order that works end to end: `ev2pq.py meta` → `ev2pq.py ev` → `snap2pq.py` → cl.parquet
+(above) → `recon.py` → `panel.py` → copy panel→panelflow → `flow2.py`.

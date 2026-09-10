@@ -4,7 +4,7 @@ from concurrent.futures import ProcessPoolExecutor
 import pandas as pd, numpy as np
 
 ROOT = "/Users/maxkuzmentsov/development/projects/my/hummingbot/hummingbot-infra/every-tick-single/data/mrec"
-OUT  = "/private/tmp/claude-501/-Users-maxkuzmentsov-development-projects-my-hummingbot-hummingbot-infra/b78fafe5-77e0-41c9-af8e-fc68c051450c/scratchpad/pq"
+OUT  = os.environ.get('MREC_PQ', 'pq')
 
 def do_ev(path):
     coin = os.path.basename(path).split("-")[0]

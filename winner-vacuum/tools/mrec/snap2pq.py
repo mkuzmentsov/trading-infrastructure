@@ -2,7 +2,7 @@ import sys, os, gzip, json, glob
 from concurrent.futures import ProcessPoolExecutor
 import pandas as pd, numpy as np
 ROOT="/Users/maxkuzmentsov/development/projects/my/hummingbot/hummingbot-infra/every-tick-single/data/mrec"
-OUT="/private/tmp/claude-501/-Users-maxkuzmentsov-development-projects-my-hummingbot-hummingbot-infra/b78fafe5-77e0-41c9-af8e-fc68c051450c/scratchpad/pq"
+OUT=os.environ.get('MREC_PQ', 'pq')
 COLS=["t","ws","tl","spot","lead_bps","cl","cl_ts","tw","ub","ubs","ua","uas","db","dbs","da","das","evage","vol","volsh"]
 def lad(v,n=3):
     v=v or []

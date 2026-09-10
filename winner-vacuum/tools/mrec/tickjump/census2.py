@@ -1,7 +1,8 @@
+import os
 """Sell-pressure census BY PRICE BAND.  A resting BID at price p is hit by taker sell
 pressure at <= p.  E[outcome - p] over that flow = the maker's gross edge before queue."""
 import pandas as pd, numpy as np
-PQ='/private/tmp/claude-501/-Users-maxkuzmentsov-development-projects-my-hummingbot-hummingbot-infra/b78fafe5-77e0-41c9-af8e-fc68c051450c/scratchpad/pq'
+PQ=os.environ.get('MREC_PQ', 'pq')
 t=pd.read_parquet(f'{PQ}/trades.parquet')
 r=pd.read_parquet(f'{PQ}/res.parquet'); r['winT']=np.where(r.win=='UP','U','D')
 t=t.merge(r[['coin','ws','winT']],on=['coin','ws'],how='inner')
