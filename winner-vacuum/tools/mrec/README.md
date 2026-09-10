@@ -43,7 +43,12 @@ print price. **The live fleet runs $24 / $48** (`chart/bots/*_vacmaker.yaml`), a
 improvement taken from a 1.5s forward window is borrowed from the future. The calibrated cell is:
 
 - fill window **0.4s**, price-improvement cap **0¢** (fill AT the displayed ask),
-- size **walked down the displayed top-3 ask ladder**, tape-confirmed,
+- ⚠️ **both gates are on price, not just the print**: the tape print must be at
+  **px <= the displayed ask**, AND the fill size is capped by displayed depth **at prices <= the
+  ask**. Walking the full top-3 ladder without that price constraint — or treating the cap as a
+  flat "limit 0.99" — reads **−$65 to −$84** on 09-02…04 instead of +$34. This exact
+  misreading cost an agent a day's work on 2026-09-10; the wording used to say only "walked down
+  the displayed top-3 ask ladder", which admits it.
 - **CLIP=24 / LADDER=48**.
 
 Scored against the fleet's own day closes for 09-02…09-04 (live **+$18.40 / 351 bars / 17 loss
@@ -51,6 +56,16 @@ bars**) it is the best of twelve cells on all three axes (**+$34.94 / 312 / 22**
 carries **34** loss bars. Implementation: `scratchpad/mine/calib.py`.
 ⚠️ The calibration is **aggregate only** — per coin it is anti-correlated with live (r=−0.63).
 Never rank coins, or choose a pilot coin, from a replay.
+
+**Independent reproductions of this cell** (keep this list current — `calib.py` itself is not in
+the repo, so the cell is defined by this description plus these numbers):
+
+| when | who | 09-02…04 result | published |
+|---|---|---|---|
+| 2026-09-06 | original (`scratchpad/mine/calib.py`, lost) | +$34.94 / 312 bars / 22 loss | — |
+| 2026-09-10 | long-duration agent, from this README | **+$33.79 / 307 / 22** | matches |
+
+Live ground truth for those days: **+$18.40 / 351 bars / 17 loss bars**.
 
 ### A third rule to bake in, alongside the two above
 3. **Score the replay against live before quoting it.** A replay of a LIVE strategy has ground
