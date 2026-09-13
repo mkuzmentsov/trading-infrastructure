@@ -37,6 +37,23 @@ RTDS_SYM = os.getenv("POLYMARKET_RTDS_SYMBOL", f"{COIN}/usd")
 # recorded a settlement reference these markets do not use.
 RTDS_TOPICS = ("crypto_prices_chainlink", "crypto_prices_twap_sixty")
 
+# ── BINANCE RAW CAPTURE (added 2026-09-13, user: "add binance ws to the mrec,
+# all the data we can potentially make use of") ─────────────────────────────
+# Written to a SEPARATE hourly file `<coin>-brec*-YYYYMMDD-HH.jsonl.gz` so the
+# existing mrec/mrecev parsers are untouched. Every row: {t: local arrival
+# (4dp), ev:"BIN"|"BINF", s: stream name, m: raw payload}. Event-time truth on
+# the venue we use as the settlement PROXY — pairs with `cl` for lead studies.
+#   spot  : aggTrade (every print), bookTicker (top-of-book on every change),
+#           depth@100ms (diff book), kline_1s (compact OHLCV)
+#   futures: markPrice@1s (mark/index/funding), forceOrder (liquidations)
+# Off unless BREC_SPOT_STREAMS is non-empty; the 15m/1h/4h/1d recorders leave
+# it empty so only the 5m fleet captures (one connection per coin, no dupes).
+BREC_SYMBOL = os.getenv("BREC_SYMBOL", f"{COIN}usdt").strip().lower()
+BREC_SPOT = [s for s in os.getenv("BREC_SPOT_STREAMS", "").split(",") if s.strip()]
+BREC_FUT = [s for s in os.getenv("BREC_FUT_STREAMS", "").split(",") if s.strip()]
+BREC_SPOT_HOST = os.getenv("BREC_SPOT_HOST", "wss://stream.binance.com:9443")
+BREC_FUT_HOST = os.getenv("BREC_FUT_HOST", "wss://fstream.binance.com")
+
 
 def _rtds_latest(book):
     """(ts, value) of the newest tick for our symbol, or (None, None).
@@ -110,6 +127,10 @@ class MultiRecorder:
         self.ev_n = 0                   # events this WS session
         self.ws_sess = 0                # WS session counter
         self.evq: list = []             # buffered raw events (drained async)
+        self.bwriter = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
+                                      f"{COIN}-brec{_SUFFIX}") if (BREC_SPOT or BREC_FUT) else None
+        self.bq: list = []              # buffered binance rows
+        self.b_msgs = 0                 # counter for the heartbeat
         self.resub = asyncio.Event()
 
     def _track(self, ws_ts: int, market: dict):
@@ -341,6 +362,62 @@ class MultiRecorder:
             except Exception as exc:
                 log.warning("ev_drain: %s", exc)
 
+    async def binance_loop(self, host: str, streams: list, tag: str):
+        """One combined-stream WS per venue; raw payloads, arrival-stamped.
+
+        Reconnects forever with backoff. Deliberately does NOT parse or
+        normalise: the point is a faithful tape we can re-derive anything
+        from later (lead-lag, liquidity, liquidation cascades)."""
+        if not streams:
+            return
+        url = (host + "/stream?streams="
+               + "/".join(f"{BREC_SYMBOL}@{s}" for s in streams))
+        backoff = 1.0
+        while True:
+            try:
+                async with websockets.connect(url, ping_interval=20,
+                                              ping_timeout=30,
+                                              max_size=8 * 1024 * 1024) as ws:
+                    log.info("brec %s: subscribed %s@%s", tag, BREC_SYMBOL,
+                             ",".join(streams))
+                    backoff = 1.0
+                    while True:
+                        raw = await ws.recv()
+                        now = time.time()
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+                        self.b_msgs += 1
+                        self.bq.append({"t": round(now, 4), "ev": tag,
+                                        "s": msg.get("stream", ""),
+                                        "m": msg.get("data", msg)})
+                        if len(self.bq) > 200000:   # hard bound under a storm
+                            del self.bq[:50000]
+            except Exception as exc:
+                log.warning("brec %s: %s", tag, exc)
+                await asyncio.sleep(backoff)
+                backoff = min(30.0, backoff * 2)
+
+    async def b_drain_loop(self):
+        """Single writer task for the binance tape (bounded buffer)."""
+        if self.bwriter is None:
+            return
+        last_hb = 0.0
+        while True:
+            await asyncio.sleep(0.25)
+            if self.bq:
+                batch, self.bq = self.bq, []
+                try:
+                    for row in batch:
+                        await self.bwriter.write(row)
+                except Exception as exc:
+                    log.warning("b_drain: %s", exc)
+            now = time.time()
+            if now - last_hb > 300:
+                last_hb = now
+                log.info("brec heartbeat  msgs=%d queued=%d", self.b_msgs, len(self.bq))
+
     async def rest_reconcile_loop(self):
         """v2: periodically pull the venue's authoritative REST book for the
         CURRENT market and record hash + top-3 vs our WS-state hash.
@@ -395,11 +472,17 @@ class MultiRecorder:
     async def run(self):
         log.info("multi_recorder v2 coin=%s ahead=%d snap=%.0fms (ev-stream+hash+depth+freshness)",
                  COIN, AHEAD, SNAP_SECS * 1000)
+        if BREC_SPOT or BREC_FUT:
+            log.info("brec ON sym=%s spot=%s fut=%s", BREC_SYMBOL,
+                     ",".join(BREC_SPOT) or "-", ",".join(BREC_FUT) or "-")
         _seed_history()
         await asyncio.gather(run_binance_ws(), run_rtds(RTDS_TOPICS),
                              self.discover_loop(),
                              self.resolve_loop(), self.ws_loop(), self.snap_loop(),
-                             self.ev_drain_loop(), self.rest_reconcile_loop())
+                             self.ev_drain_loop(), self.rest_reconcile_loop(),
+                             self.binance_loop(BREC_SPOT_HOST, BREC_SPOT, "BIN"),
+                             self.binance_loop(BREC_FUT_HOST, BREC_FUT, "BINF"),
+                             self.b_drain_loop())
 
 
 def main():
