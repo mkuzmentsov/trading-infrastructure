@@ -254,11 +254,16 @@ class MultiRecorder:
         elif et == "price_change":
             # compact: 78-char asset ids dominate the raw payload; encode each
             # change as [tok(U/D/?), side(B/S), px, sz]; keep ts + last hash
+            # ⚠️ 2026-09-13 fix: price_change omits the top-level asset_id, so
+            # a row stamped only from `aid` was UNATTRIBUTABLE to a bar — 96% of
+            # the event stream was unusable for bar-level work (hunt B). Each
+            # change now carries its own resolved bar: [ws, tok, side, px, sz].
             ch = []
             for c in msg.get("changes", []) or msg.get("price_changes", []) or []:
                 a2 = c.get("asset_id", aid)
                 r2 = self.tok2m.get(a2)
-                ch.append([r2[1] if r2 else "?",
+                ch.append([r2[0].ws if r2 else 0,
+                           r2[1] if r2 else "?",
                            "B" if c.get("side") == "BUY" else "S",
                            float(c.get("price", 0)), float(c.get("size", 0))])
             row["m"] = {"timestamp": msg.get("timestamp"),
