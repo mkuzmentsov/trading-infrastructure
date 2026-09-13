@@ -15,7 +15,7 @@ bot:
   binanceWsUrl: "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
   polymarketRtdsSymbol: "eth/usd"
   brecSymbol: "ethusdt"
-  brecSpotStreams: "aggTrade,bookTicker,depth@100ms,depth20@100ms,kline_1s"
+  brecSpotStreams: "aggTrade,bookTicker,depth20@100ms,kline_1s"
 
 persistence:
   enabled: true
