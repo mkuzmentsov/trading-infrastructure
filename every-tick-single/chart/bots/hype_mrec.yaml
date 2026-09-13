@@ -14,7 +14,9 @@ bot:
   retentionDays: "7"
   binanceWsUrl: "wss://stream.binance.com:9443/ws/hypeusdt@aggTrade"
   polymarketRtdsSymbol: "hype/usd"
+  hrecCoin: "HYPE"
+  hrecSubs: "bbo,trades,l2Book,activeAssetCtx,candle"
 
 persistence:
   enabled: true
-  size: 10Gi
+  size: 20Gi

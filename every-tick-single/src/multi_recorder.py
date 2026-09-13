@@ -54,6 +54,16 @@ BREC_FUT = [s for s in os.getenv("BREC_FUT_STREAMS", "").split(",") if s.strip()
 BREC_SPOT_HOST = os.getenv("BREC_SPOT_HOST", "wss://stream.binance.com:9443")
 BREC_FUT_HOST = os.getenv("BREC_FUT_HOST", "wss://fstream.binance.com")
 
+# ── HYPERLIQUID RAW CAPTURE (hrec, 2026-09-13) ─────────────────────────────
+# HYPE has no Binance symbol, and HL is the native venue for it (also lists
+# btc/eth/sol/xrp/doge perps, so this can be switched on per coin for a
+# second venue). Written to `<coin>-hrec-*`; rows {t, ev:"HL", s:channel,
+# m:payload}. `l2Book` here is ABSOLUTE levels (self-contained), unlike the
+# Binance diff stream.
+HREC_COIN = os.getenv("HREC_COIN", "").strip()          # e.g. "HYPE"; empty = off
+HREC_SUBS = [s for s in os.getenv("HREC_SUBS", "").split(",") if s.strip()]
+HREC_HOST = os.getenv("HREC_HOST", "wss://api.hyperliquid.xyz/ws")
+
 
 def _rtds_latest(book):
     """(ts, value) of the newest tick for our symbol, or (None, None).
@@ -130,6 +140,8 @@ class MultiRecorder:
         self.bwriter = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
                                       f"{COIN}-brec{_SUFFIX}") if (BREC_SPOT or BREC_FUT) else None
         self.bq: list = []              # buffered binance rows
+        self.hwriter = RotatingWriter(os.getenv("RAW_LOG_DIR", "/app/logs/raw"),
+                                      f"{COIN}-hrec{_SUFFIX}") if (HREC_COIN and HREC_SUBS) else None
         self.b_msgs = 0                 # counter for the heartbeat
         self.resub = asyncio.Event()
 
@@ -404,9 +416,51 @@ class MultiRecorder:
                 await asyncio.sleep(backoff)
                 backoff = min(30.0, backoff * 2)
 
+    async def hyperliquid_loop(self):
+        """Hyperliquid WS for HREC_COIN. Subscriptions are per-channel JSON;
+        `l2Book` is an absolute snapshot (no diff-anchoring needed) and
+        `activeAssetCtx` carries mark/oracle/funding/OI."""
+        if not (HREC_COIN and HREC_SUBS):
+            return
+        backoff = 1.0
+        while True:
+            try:
+                async with websockets.connect(HREC_HOST, ping_interval=20,
+                                              ping_timeout=30,
+                                              max_size=8 * 1024 * 1024) as ws:
+                    for ch in HREC_SUBS:
+                        sub = {"type": ch, "coin": HREC_COIN}
+                        if ch == "candle":
+                            sub["interval"] = "1m"
+                        if ch == "allMids":
+                            sub = {"type": "allMids"}
+                        await ws.send(json.dumps({"method": "subscribe",
+                                                  "subscription": sub}))
+                    log.info("hrec: subscribed %s %s", HREC_COIN, ",".join(HREC_SUBS))
+                    backoff = 1.0
+                    while True:
+                        raw = await ws.recv()
+                        now = time.time()
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+                        ch = msg.get("channel", "")
+                        if ch in ("subscriptionResponse", "pong"):
+                            continue
+                        self.b_msgs += 1
+                        self.bq.append({"t": round(now, 4), "ev": "HL", "s": ch,
+                                        "m": msg.get("data", msg), "_w": "h"})
+                        if len(self.bq) > 200000:
+                            del self.bq[:50000]
+            except Exception as exc:
+                log.warning("hrec: %s", exc)
+                await asyncio.sleep(backoff)
+                backoff = min(30.0, backoff * 2)
+
     async def b_drain_loop(self):
-        """Single writer task for the binance tape (bounded buffer)."""
-        if self.bwriter is None:
+        """Single writer task for the binance + hyperliquid tapes (bounded)."""
+        if self.bwriter is None and self.hwriter is None:
             return
         last_hb = 0.0
         while True:
@@ -415,7 +469,10 @@ class MultiRecorder:
                 batch, self.bq = self.bq, []
                 try:
                     for row in batch:
-                        await self.bwriter.write(row)
+                        if row.pop("_w", None) == "h":
+                            if self.hwriter: await self.hwriter.write(row)
+                        elif self.bwriter:
+                            await self.bwriter.write(row)
                 except Exception as exc:
                     log.warning("b_drain: %s", exc)
             now = time.time()
@@ -480,6 +537,8 @@ class MultiRecorder:
         if BREC_SPOT or BREC_FUT:
             log.info("brec ON sym=%s spot=%s fut=%s", BREC_SYMBOL,
                      ",".join(BREC_SPOT) or "-", ",".join(BREC_FUT) or "-")
+        if HREC_COIN and HREC_SUBS:
+            log.info("hrec ON coin=%s subs=%s", HREC_COIN, ",".join(HREC_SUBS))
         _seed_history()
         await asyncio.gather(run_binance_ws(), run_rtds(RTDS_TOPICS),
                              self.discover_loop(),
@@ -487,6 +546,7 @@ class MultiRecorder:
                              self.ev_drain_loop(), self.rest_reconcile_loop(),
                              self.binance_loop(BREC_SPOT_HOST, BREC_SPOT, "BIN"),
                              self.binance_loop(BREC_FUT_HOST, BREC_FUT, "BINF"),
+                             self.hyperliquid_loop(),
                              self.b_drain_loop())
 
 
