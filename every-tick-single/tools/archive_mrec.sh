@@ -25,4 +25,7 @@ $ROOT/every-tick-single/tools/drain_mrec.sh 2>&1 | grep -E "^FAIL|^DRAINED" | \
 # convert everything EXCEPT the current UTC hour (still being written)
 TODAY=$(date -u +%Y%m%d)
 python3 $ROOT/winner-vacuum/tools/mrec/venue2pq.py "$MREC" "$PQ" $PRUNE 2>&1 | tail -12
-echo "pq-venue: $(du -sh $PQ 2>/dev/null | cut -f1)  raw-left: $(du -sh $MREC 2>/dev/null | cut -f1)"
+# report the VENUE raw separately: $MREC also holds the PM mrec/mrecev tapes,
+# which this cycle deliberately does not touch (own pipeline in tools/mrec/).
+VR=$(find $MREC -name "*-[bh]rec-*.jsonl.gz" 2>/dev/null | wc -l | tr -d " ")
+echo "pq-venue: $(du -sh $PQ 2>/dev/null | cut -f1) | venue raw left: ${VR} files | total local raw: $(du -sh $MREC 2>/dev/null | cut -f1)"

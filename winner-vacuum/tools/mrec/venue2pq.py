@@ -215,7 +215,12 @@ def convert(mrec_dir, out_dir, coins=None, days=None, prune=False):
         if unknown:
             _write("misc", "raw", unknown)
 
-        ok = written + 0 >= nread - len(unknown)
+        # verify: every raw row must be accounted for — written to parquet,
+        # deliberately dropped (depth diffs), or captured in the catch-all.
+        # ⚠️ the first version omitted ndiff here, so `ok` was False on every
+        # file containing depth diffs and NOTHING was ever pruned (found
+        # 2026-09-13 by noticing raw files surviving repeated cycles).
+        ok = (written + ndiff[0] + len(unknown)) >= nread
         print(f"{coin} {stamp}: {nread:>9,} rows -> {written:>9,} parquet rows"
               f" ({len(tables)} streams, {ndiff[0]:,} depth-diffs dropped,"
               f" {len(unknown)} unknown)")
