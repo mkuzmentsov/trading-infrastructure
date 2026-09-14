@@ -28,9 +28,14 @@ Flags: `--no-pod` (skip the bot's event log), `--no-pull` (never kubectl-pull a 
 
 ## What it produces
 
-* **Chart 1 — order book.** Best bid/ask for **one** token, spread shaded. Market prints as ink
-  triangles (▲ bought this token, ▼ bought the other). Open/close rules, hatched pre-open and
-  post-close regions, our entries as labelled ink annotations in the top gutter.
+* **Chart 1 — order book.** Best bid/ask for **one** token, spread shaded. Market prints (every
+  taker trade on the market) as ink marks — ▲ bought this token, ▼ bought the other, **area ∝
+  shares**. Open/close rules, hatched pre-open and post-close regions, our entries as labelled ink
+  annotations in the top gutter.
+  ⚠️ **Print density varies ~70×**: btc runs ~3,000 prints per bar, the alts ~45. The control is
+  `Off / Big / All`, defaulting to **Big (≥ p90 shares)** whenever a bar has >300 prints — that is
+  ~10% of the marks and ~60% of the volume. Flat-sized marks at full density bury the book lines
+  entirely *and* misrepresent volume (btc's median print is 10 sh, its max is 10,000).
 * **Chart 2 — settlement price.** Chainlink point price, venue TWAP feed, Binance spot mid on one
   axis; both 60-second averaging windows shaded; axis toggles to bps-vs-strike. The two levels
   that decide the bar — **OPEN (strike, dashed) and CLOSE (final, solid)** — are drawn across the

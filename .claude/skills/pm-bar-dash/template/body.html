@@ -34,8 +34,13 @@
   </div>
   <div class="cgroup">
     <span class="clabel">Overlay</span>
-    <button class="seg" data-tog="prints" aria-pressed="true">Market prints</button>
     <button class="seg" data-tog="entries" aria-pressed="true">Our entries</button>
+  </div>
+  <div class="cgroup">
+    <span class="clabel">Prints <span id="printcount" style="text-transform:none;letter-spacing:0"></span></span>
+    <button class="seg" data-prints="off" aria-pressed="false">Off</button>
+    <button class="seg" data-prints="big" aria-pressed="false">Big <span id="bigthr"></span></button>
+    <button class="seg" data-prints="all" aria-pressed="true">All</button>
   </div>
 </div>
 
@@ -50,6 +55,7 @@
     <span class="lg"><i class="sw" style="background:var(--spread)"></i>spread</span>
     <span class="lg"><svg width="13" height="13" aria-hidden="true"><polygon points="6.5,2 12,11 1,11" fill="var(--ink-2)"></polygon></svg>bought <span id="tokname2">UP</span></span>
     <span class="lg"><svg width="13" height="13" aria-hidden="true"><polygon points="6.5,11 12,2 1,2" fill="var(--ink-2)"></polygon></svg>sold it (bought the other token)</span>
+    <span class="lg" style="color:var(--muted)">mark area ∝ shares</span>
     <span class="lg"><i style="border-color:var(--ink)"></i>our entries</span>
   </div>
   <div class="chartbox" id="box1">

@@ -11,7 +11,13 @@ var RANGES = {
   endgame: [-62, 2],
   flip:    [-20, -8]
 };
-var state = { range:'endgame', unit:'px', token:'U', prints:true, entries:true, hoverT:null };
+var state = { range:'endgame', unit:'px', token:'U', prints:'all', entries:true, hoverT:null };
+/* btc prints ~3,000 trades in 27 min and alts ~45. One default cannot serve both:
+   show everything on a quiet tape, only the size that moves the book on a busy one. */
+var PSZ = D.prints.map(function(p){ return p.sz; }).sort(function(a,b){ return a-b; });
+var PMAX = PSZ.length ? PSZ[PSZ.length-1] : 1;
+var PBIG = PSZ.length ? PSZ[Math.floor(PSZ.length*0.90)] : 0;   // p90 — ~10% of marks, ~60% of volume
+if (D.prints.length > 300) state.prints = 'big';
 /* the pair is one book: UP ask === 1 - DOWN bid. Plot ONE token; map everything else onto it. */
 function bk(){ return state.token==='U'
   ? {bid:D.ub, ask:D.ua, bidsz:D.ubs, asksz:D.uas, name:'UP',   other:'DOWN'}
@@ -239,17 +245,25 @@ function makeChart(cfg){
       endLabel(D.t, B.ask, 'var(--ask)', 'ask');
       endLabel(D.t, B.bid, 'var(--bid)', 'bid');
 
-      /* market prints: ink triangles — direction by SHAPE, never by hue */
-      if (state.prints){
+      /* market prints: ink marks — direction by SHAPE, size by SHARES.
+         A flat-size mark per print buries the book on btc and lies about volume. */
+      if (state.prints !== 'off'){
+        var thr = state.prints==='big' ? PBIG : 0;
         D.prints.forEach(function(p){
-          if (p.t<t0||p.t>t1) return;
-          var v = mapPx(p.tok, p.px);
-          var h = Math.max(4.5, Math.min(9.5, 3.6+Math.sqrt(p.sz)));
-          var cx = xs(p.t), cy = ys(v), up = (p.tok===state.token);
+          if (p.t<t0||p.t>t1 || p.sz<thr) return;
+          var k = Math.sqrt(p.sz/PMAX);                 // area ~ shares
+          var h = 1.6 + 8.4*k, cx = xs(p.t), cy = ys(mapPx(p.tok, p.px));
+          var up = (p.tok===state.token);
+          if (h < 3){                                    // a tiny print is a dot, not a glyph
+            g.appendChild(el('circle',{cx:cx,cy:cy,r:Math.max(1.1,h*0.62),
+              fill:'var(--ink-2)',opacity:.30+0.3*k}));
+            return;
+          }
           var pts = up ? (cx)+','+(cy-h)+' '+(cx+h*0.92)+','+(cy+h*0.62)+' '+(cx-h*0.92)+','+(cy+h*0.62)
                        : (cx)+','+(cy+h)+' '+(cx+h*0.92)+','+(cy-h*0.62)+' '+(cx-h*0.92)+','+(cy-h*0.62);
           g.appendChild(el('polygon',{points:pts,fill:'var(--ink-2)',
-            stroke:'var(--panel)','stroke-width':1.6,opacity:.85}));
+            stroke:h>4.5?'var(--panel)':null,'stroke-width':h>4.5?1.4:null,
+            opacity:.45+0.45*k}));
         });
       }
     } else {
@@ -459,12 +473,23 @@ function bindSeg(attr, apply){
 }
 bindSeg('data-range', function(v){ state.range=v; });
 bindSeg('data-unit',  function(v){ state.unit=v; });
+bindSeg('data-prints', function(v){ state.prints=v; });
 bindSeg('data-token', function(v){
   state.token=v;
   var nm = v==='U' ? 'UP' : 'DOWN';
   document.getElementById('tokname').textContent = nm;
   document.getElementById('tokname2').textContent = nm;
 });
+(function(){   /* reflect the count-dependent default in the control */
+  var b=document.querySelector('button.seg[data-prints="'+state.prints+'"]');
+  if (b){ Array.prototype.slice.call(document.querySelectorAll('button.seg[data-prints]'))
+            .forEach(function(o){ o.setAttribute('aria-pressed','false'); });
+          b.setAttribute('aria-pressed','true'); }
+  var n=document.getElementById('printcount');
+  if (n) n.textContent = D.prints.length.toLocaleString()+' prints';
+  var t=document.getElementById('bigthr');
+  if (t) t.textContent = '\u2265'+(PBIG>=10?Math.round(PBIG):PBIG.toFixed(1))+' sh';
+})();
 Array.prototype.slice.call(document.querySelectorAll('button.seg[data-tog]')).forEach(function(b){
   b.addEventListener('click', function(){
     var k=b.getAttribute('data-tog'), on = b.getAttribute('aria-pressed')!=='true';
