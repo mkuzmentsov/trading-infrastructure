@@ -10,7 +10,9 @@ is the first non-selected bar the freshness lever met, **and it refutes it.**
 
 Two hours ago I wrote up "fill H1's unobserved tail with the live Binance deviation instead of
 the stale Chainlink tick" as an open lever, on two bars where it would have avoided a loss, and
-flagged that both were selected *because* they lost. **This bar is the control, and the lever
+flagged the selection risk. (⚠️ later correction: **the user supplied every bar** — I selected
+none. The real defect was narrower and still fatal: the lever was *derived* on two bars that both
+happened to be losses and *tested* on none.) **This bar is the control, and the lever
 fails it.**
 
 At the fire (tl 15.3) Binance read **+4.633 bps** against the Chainlink tick's **−0.165** — a

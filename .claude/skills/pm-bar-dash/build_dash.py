@@ -173,10 +173,16 @@ def pod_entries(coin, ws):
     run `cd <repo root> && source ./.dev-env-source` in the SAME shell first.
     """
     pod = f"deploy/{coin}-vacmaker-{NS}"
+    # the live file only holds TODAY — older bars live in the rotated daily .gz,
+    # and a bar near midnight can have its VERIFY in the next day's file
+    days = {time.strftime("%Y-%m-%d", time.gmtime(ws + off))
+            for off in (0, 1800, 86400)}
+    gz = " ".join(f"/app/logs/logs-training-events.jsonl.{d}.gz" for d in sorted(days))
+    cmd = (f"{{ zcat {gz} 2>/dev/null; cat /app/logs/logs-training-events.jsonl 2>/dev/null; }}"
+           f" | grep {ws}")
     try:
-        r = subprocess.run(["kubectl", "exec", "-n", NS, pod, "--", "sh", "-c",
-                            f"grep {ws} /app/logs/logs-training-events.jsonl"],
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run(["kubectl", "exec", "-n", NS, pod, "--", "sh", "-c", cmd],
+                           capture_output=True, text=True, timeout=180)
     except Exception as e:
         print("  pod log unavailable:", e)
         print("  -> if this timed out: source ./.dev-env-source first (kubectl context trap)")
