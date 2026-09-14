@@ -745,3 +745,32 @@ config attached ~50 s after bar open (rewfarm §1), so share-seconds at tl > 250
 Scoring the first-60s cell without the lag overstated its reward presence **7×** (3,226k → 456k
 share-s/day) and its break-even pool by the same factor. Rule: any "presence" statistic for a
 rewards program is gated on the program's own attach time, per market, read from the venue.
+
+## Bug #43 + #44 (2026-09-14, multi-agent hunt): panel.parquet had look-ahead AND the wrong estimator
+
+**#43 — look-ahead.** `tools/mrec/panel.py` clamped the settlement window open
+(`b = max(b, a+1)`) even when the relay had not yet reached its start, so rows
+at `tlk >= 63` averaged a FUTURE Chainlink tick — 100% of them, median +1s, up
+to +28s, verified across all 1,647,734 rows. FIXED: emit NaN when the window has
+not opened at decision time. Consumers `tickjump/lw3.py` (filters tlk 0-95) and
+`midband/r3070/lw4.py` (no tlk filter) both ate contaminated rows; results they
+produced before 09-14 are UNLANDED.
+
+**#44 — the panel estimator was not the bot's estimator.** `core/rtds.py`
+`window_mean()` FORWARD-FILLS unpublished seconds from the last value — that is
+what the live bot computes. `panel.py` averaged only delivered ticks. FIXED:
+panel now forward-fills (obs/cov still count real ticks); 63.8% of rows changed,
+median |Δ| 0.044 bps. ⚠️ A validator reported the live estimator as +0.91pp
+better at tl12; **that did not reproduce** — under a proxy gate accuracy moved
+slightly the other way (92.39→91.55). The fix is justified by FIDELITY to the
+live estimator, not by an accuracy gain. Do not quote the +0.91pp figure.
+
+**RULE (from the same hunt): before scoring any candidate, drop fills where
+`req_px − avg_px >= 0.005`.** If the edge disappears, the candidate is
+re-describing the dislocation harvest the dollar-denominated FAK already does.
+On the 29-day ledger that trim removes $151 of $232 net.
+
+**RULE: the pod ledger does NOT charge the taker fee.** Any PnL read from
+`PF_TE_*` events must subtract 0.07·p·(1−p)·shares — on 29 days that is $124.53,
+turning "+$19/day" into **$8.01/day** (day-clustered t=1.20, top-5 fills = 84%
+of net, ex-top-5 $1.28/day).

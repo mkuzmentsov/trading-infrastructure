@@ -26,16 +26,36 @@ for c,g in s.groupby('coin'):
     ts=q.cl_ts.values.astype(np.int64); px=q.cl.values.astype(np.float64)
     lo,hi=ts.min(),ts.max()
     grid=np.full(hi-lo+1,np.nan); grid[ts-lo]=px
-    csum=np.nancumsum(np.nan_to_num(grid)); ccnt=np.cumsum(~np.isnan(grid))
-    def rng(a,b):   # mean over [a,b) with counts
+    # ⭐ 2026-09-14 FIX (a): FORWARD-FILL to match the LIVE estimator.
+    # core/rtds.py window_mean() fills unpublished seconds from the last value
+    # at or before them; this script used to average only the DELIVERED ticks.
+    # Those are different estimators and the live one is materially better
+    # (+0.91pp @tl12, +1.82pp @tl20, +5.06pp @tl60), so every gate ever
+    # evaluated on panel.est_bps was scored against a WORSE signal than the
+    # bot actually has. `obs`/`cov` still count REAL ticks (unchanged meaning).
+    fidx=np.where(~np.isnan(grid), np.arange(len(grid)), 0)
+    np.maximum.accumulate(fidx, out=fidx)
+    gridf=grid[fidx]                      # leading NaNs stay NaN
+    csumf=np.nancumsum(np.nan_to_num(gridf)); chas=np.cumsum(~np.isnan(gridf))
+    ccnt=np.cumsum(~np.isnan(grid))       # REAL ticks, for obs/cov
+    def rng(a,b):   # forward-filled mean over [a,b), + real-tick count
         a=np.clip(np.asarray(a,dtype=np.int64)-lo,0,len(grid)); b=np.clip(np.asarray(b,dtype=np.int64)-lo,0,len(grid))
-        n=ccnt[b-1]-np.where(a>0,ccnt[a-1],0)
-        sm=csum[b-1]-np.where(a>0,csum[a-1],0)
-        return np.where(n>0,sm/np.maximum(n,1),np.nan), n
+        n=ccnt[b-1]-np.where(a>0,ccnt[a-1],0)                   # real ticks
+        nf=chas[b-1]-np.where(a>0,chas[a-1],0)                  # filled seconds
+        sm=csumf[b-1]-np.where(a>0,csumf[a-1],0)
+        return np.where(nf>0,sm/np.maximum(nf,1),np.nan), n
     end=g.ws.values+300
     a=end-62; clt=np.nan_to_num(g.cl_ts.values, nan=0.0).astype(np.int64); b=np.minimum(end-3, clt+1)
+    # ⭐ 2026-09-14 FIX (b): LOOK-AHEAD. The old `b=np.maximum(b,a+1)` clamp
+    # forced the window open even when the relay had not yet reached its start
+    # (cl_ts < end-62), so the row silently averaged a tick from the FUTURE:
+    # 100% of rows at tlk>=63 read a future tick (median +1s, up to +28s).
+    # A decision made before the settlement window opens has NO estimate —
+    # emit NaN rather than a clairvoyant one.
+    started = clt + 1 > a
     b=np.maximum(b,a+1)
     m,n=rng(a,b)
+    m=np.where(started, m, np.nan); n=np.where(started, n, 0)
     st,_=rng(g.ws.values-62, g.ws.values-3)
     gg=g.copy()
     gg['est_bps']=(m-st)/st*1e4
