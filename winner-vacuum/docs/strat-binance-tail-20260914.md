@@ -1,4 +1,13 @@
 # Does Binance predict the unobserved tail of the Chainlink TWAP?
+
+> ⚠️⚠️ **POWER CORRECTION, 2026-09-15 (ml-engineer).** On this 3-day sample the
+> **minimum detectable effect is +0.73 c/share**, against a *perfect-oracle*
+> ceiling of +5.33 c/share on the same cell (every displayed ask 0.55-0.99, tl
+> 3-30). **The +0.456 c/share figure below sits BELOW the detection floor** — it
+> can be neither confirmed nor refuted here, and must not be quoted as a measured
+> quantity. The slope-1.00 *mechanism* (n=54,391 tick-pairs) is unaffected; the
+> *economic* numbers are all under-powered. Also: the panel behind them carried
+> ~80 ms of look-ahead (**bug #46**, now fixed) — re-run before citing.
 **2026-09-14/15. 30 hours (09-13 14:00 → 09-14 20:00 UTC), 6 coins, 2,006 settled bars, 54,391
 decision-rows. Nothing deployed, existing strategy untouched.**
 

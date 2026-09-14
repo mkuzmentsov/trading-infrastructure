@@ -794,9 +794,31 @@ Scope measured (**thin**: doge only, 09-14 hours 15–16, 21 bars, 378 rows at
 tl 3–20): `|live − panel|` median **0.386 bps**, p90 **1.21**, max **1.95**; side
 disagreement **2.4%** of rows. Against a **0.5 bps** gate that is material.
 
-⭐ **Direction of the bias: panel is QUIETER and BETTER than the bot.** It
-structurally cannot make the spike-extrapolation error, so every gate ever scored
-on `panel.est_bps` has been scored on a signal the fleet does not possess, and
-flattered. FIX: fill to `end−3` always; keep `obs`/`cov` on real ticks.
+⚠️ **CORRECTED 2026-09-15 (ml-engineer, 4,931 bars): the "BETTER" half of this was
+WRONG.** The truncated research estimator is quieter and **materially WORSE** than
+the bot's — **95.90% vs 97.46%** side accuracy at tl 30, mean |error| **1.147 vs
+0.770 bps**. The *fidelity* argument for matching the live estimator stands; the
+claim that panel-scored gates were "flattered" does not, and should not be cited. FIX: fill to `end−3` always; keep `obs`/`cov` on real ticks.
 
 Full write-up: `bar-autopsy-doge-20260914-1635.md` §5a.
+
+
+## Bug #46 (2026-09-15): ~80 ms look-ahead in `tools/mrec/binance/panel.py`
+
+`tl` counts DOWN to the close, so a **smaller `tl` is LATER** in wall-clock time.
+The row picker used `np.searchsorted(tlv, tl, side="right") - 1` — the largest
+`tl' <= tl` — which selects a 10 Hz row recorded **after** the nominal decision
+instant. Measured: up to ~0.1 s of future book and Binance state on every row of
+the 54,391-row panel behind `strat-binance-tail-20260914`.
+
+FIXED: `side="left"` (smallest `tl' >= tl`, i.e. at or before the decision).
+The replacement panel measures staleness p50 0.05 s, **min 0.000, never negative**.
+
+⚠️ **The generic tell that caught a sibling leak: missingness disagreeing between
+features from the same source.** `bin_move` was 50.7% missing while `bin_vol30`
+was 12.5% missing — both from the Binance tape — because a `np.clip()` on
+out-of-coverage timestamps returned real numbers instead of NaN. If two features
+built from one source have different missingness, one of them is fabricating.
+
+⚠️ Also: `hype`'s `spot` is a literal **0.0**, not null — a zero that any
+difference or ratio would have silently consumed.

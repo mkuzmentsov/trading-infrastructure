@@ -42,8 +42,12 @@ for coin, g in cur.groupby("coin"):
         gb = gb.sort_values("tl")
         tlv = gb.tl.values
         for tl in TLS:
-            i = np.searchsorted(tlv, tl, side="right") - 1   # the row at or just past tl
-            if i < 0: continue
+            # tl counts DOWN to the close, so a SMALLER tl is LATER in wall-clock
+            # time. side="right"-1 takes the largest tl' <= tl, i.e. a row recorded
+            # ~80ms AFTER the nominal instant -> look-ahead (bug #46). Take the
+            # smallest tl' >= tl instead: at or before the decision.
+            i = np.searchsorted(tlv, tl, side="left")
+            if i >= len(tlv): continue
             r = gb.iloc[i]
             if not np.isfinite(r.cl_ts): continue
             T = int(r.cl_ts)                                  # the relay frontier (bug #25)
