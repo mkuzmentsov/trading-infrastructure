@@ -8,6 +8,16 @@ is the first non-selected bar the freshness lever met, **and it refutes it.**
 
 ## 1. ⛔⛔ THE TAIL-FRESHNESS LEVER IS REFUTED ON ITS FIRST HONEST TEST
 
+> ⛔⛔ **THIS SECTION IS VOID (corrected 2026-09-14 later the same day).** It refuted a
+> **mis-specification**: it fills the tail with Binance's *absolute level*, which sits at a
+> systematic **+4.71 bps offset** from the Chainlink aggregate, so the substitution injects that
+> bias and flips the sign for free. With the correct feature — Binance's **move since the last
+> Chainlink tick** — this bar's correction is only **+0.555 bps** and H1' = **−0.408, the winning
+> side, kept**. The mechanism is confirmed at slope **1.003** over 54,391 rows. It is still not a
+> tradeable lane, for a completely different reason (the market prices it). See
+> [strat-binance-tail-20260914](strat-binance-tail-20260914.md). The numbers below are arithmetically
+> correct and the conclusion drawn from them is wrong.
+
 Two hours ago I wrote up "fill H1's unobserved tail with the live Binance deviation instead of
 the stale Chainlink tick" as an open lever, on two bars where it would have avoided a loss, and
 flagged the selection risk. (⚠️ later correction: **the user supplied every bar** — I selected
