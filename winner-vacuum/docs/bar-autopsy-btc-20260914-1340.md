@@ -43,7 +43,15 @@ close                     H1 +0.049   (venue +0.0625)
 Unlike the doge bar, nothing about the forward-fill was to blame — the estimator was reporting
 what had actually happened. **The information that killed it was in a different feed.**
 
-## 3. ⭐ Binance had the whole move at the fire instant
+## 3. ⛔ Binance had the whole move at the fire instant — **but this lever is now REFUTED**
+
+> ⛔⛔ **SUPERSEDED the same day.** Everything in this section is factually correct about *this*
+> bar, and the lever it suggests is **dead**: on `bnb-updown-5m-1789384200` — a bar the user
+> picked, a **+$9.06 WIN** — the identical substitution **takes the opposite side and loses**.
+> Chainlink does not converge to Binance; the convergence fraction is the whole model. See
+> [bar-autopsy-bnb-20260914-1110 §1](bar-autopsy-bnb-20260914-1110.md). Read §7 below knowing
+> the answer came back negative before the measurement was ever built.
+
 
 Raw `bookTicker` (never bucketed — skill gotcha 1):
 

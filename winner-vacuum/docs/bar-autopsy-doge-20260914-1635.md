@@ -167,7 +167,12 @@ offline. **This bar is an argument for requirement 3 (`PF_TE_BIDDROP` log-only o
 numbers), not for shipping the blocking version.** n=1 changes nothing about the SHIP verdict either
 way.
 
-### 5c. 🟡 The freshness lever has a named, mechanical form here
+### 5c. ⛔ The freshness lever has a named, mechanical form here — **and it was refuted the same day**
+
+> ⛔⛔ **SUPERSEDED.** The substitution proposed below fires the **wrong side** on
+> `bnb-updown-5m-1789384200`, a +$9.06 win. Dead — see
+> [bar-autopsy-bnb-20260914-1110 §1](bar-autopsy-bnb-20260914-1110.md).
+
 
 [[binance-chainlink-divergence]] leaves "Binance 0.14 s vs relay 2.21 s ⇒ decide ~2.07 s before the
 field" as the remaining edge, with the caveat that the *race* benefit is unmeasurable offline. This
