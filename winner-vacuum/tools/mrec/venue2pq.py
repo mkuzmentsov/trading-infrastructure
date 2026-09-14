@@ -129,10 +129,13 @@ def convert(mrec_dir, out_dir, coins=None, days=None, prune=False):
         files = [f for f in files if os.path.basename(f).split("-")[0] in coins]
     if days:
         files = [f for f in files if any(d in os.path.basename(f) for d in days)]
-    import time as _t
-    files = [f for f in files if _t.time() - os.path.getmtime(f) >= 90]
+    # NOTE: no mtime settle-filter. Local .gz files arrive via drain_mrec.sh,
+    # which only pulls files already rotated AND settled >=90s POD-side, and
+    # verifies size + gzip before writing. A local mtime check would filter on
+    # "when we downloaded it", not "is it complete" — it only delayed every
+    # file by one 30-min cycle.
     if not files:
-        print("no raw venue files matched (settled >=90s)"); return 0, 0
+        print("no raw venue files matched"); return 0, 0
 
     # group per RAW FILE (one hour). Per-DAY grouping would overwrite a day's
     # earlier rows when the same day is converted again later — the raw archive
