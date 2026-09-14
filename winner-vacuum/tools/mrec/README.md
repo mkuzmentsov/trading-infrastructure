@@ -163,6 +163,14 @@ Build order that works end to end: `ev2pq.py meta` → `ev2pq.py ev` → `snap2p
 it is a genuine decision-time information set. MDE on `E[y−mid]` falls **0.76 pp → 0.22 pp**. Price:
 one `tl`, no ladder, no flow, no Binance.
 
+⚠️⚠️ **…but its `ask` is ORACLE-CONDITIONED and cannot answer market-calibration questions.**
+`twapedge.py` records `side = "UP" if tw1 > 0` and then `ask = up_ask if side == "UP"` — so the ask
+on every row is *the estimator's own side*. It measures the recon's edge at a displayed price, not
+what the market thought. Cut naively for calibration it returns **+17.9 c/sh, t_day +2.70, 7/7
+coins**, which is **not a finding** — it is the recon-eligible cheap-ask cell, the same object §38
+rejected as buy-the-dip. Use `evals_live` for oracle-conditioned questions only; use the panel or
+the raw tape for anything about the market's own pricing.
+
 ⚠️ **`bars_live` (`PF_TE_SETTLE`) is NOT a decision-time feature** — it fires *after* the bar, so its
 `point_bps`/`h1_bps` read 99.74% accurate. Settlement reconstruction only.
 

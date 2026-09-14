@@ -845,3 +845,27 @@ notes suggest). The `.gz` archives all run to 09-13, so an `ls` check does NOT
 reveal this — count events per coin per day instead. Any "30 days × 7 coins"
 framing of the fill ledger over-weights recency for 3 of 7 coins, including the
 framing in `strat-sweep-bands-20260914.md`.
+
+
+## Bug #47 (2026-09-15): the bar-mean / row-mean weighting trap — it can FLIP THE SIGN
+
+Measuring a price-band statistic by averaging **per bar** gives a bar that touched the band for one
+violent second the same weight as a bar that sat in it for 200 — and **the transitional seconds are
+the mispriced ones**. On ask [0.65,0.80), τ≥60s:
+
+| estimator | edge | t |
+|---|---|---|
+| bar mean | **+3.18 c/sh** | **+5.78** |
+| **row mean** (correct) | **−0.862 c/sh** | −1.23 |
+
+Opposite signs, both "significant" on their own terms. **The tradeable object is "the ask is in this
+band NOW"**, so the estimate belongs on the row mean and the within-bar dependence belongs in the
+standard error (bar-clustered), not in the point estimate.
+
+## Bug #48 (2026-09-15): Gaussian inversion on a fat-tailed residual manufactures a vol mispricing
+
+A3b's implied/realised σ first read **0.66-0.68** — an apparent 35% vol mispricing across the whole
+term structure. The settlement residual is strongly fat-tailed (**sd/robust 1.61-1.84**), so
+inverting a Gaussian lands on the robust scale of the *bulk* rather than the scale that prices the
+tail. Against the matching yardstick it is **1.07-1.25 and flat at every τ**. No vol trade.
+**Before reading any implied-vs-realised ratio, report sd/robust for the residual.**
