@@ -774,3 +774,29 @@ On the 29-day ledger that trim removes $151 of $232 net.
 `PF_TE_*` events must subtract 0.07·p·(1−p)·shares — on 29 days that is $124.53,
 turning "+$19/day" into **$8.01/day** (day-clustered t=1.20, top-5 fills = 84%
 of net, ex-top-5 $1.28/day).
+
+## Bug #45 (2026-09-14, doge bar autopsy): #44 was only half-fixed — `panel.est_bps` still is not the live estimator
+
+`core/rtds.py window_mean(lo, hi)` forward-fills **to `hi = end−3` unconditionally**:
+`total = hi−lo+1 = 60` on every call, so the live bot always projects its newest
+Chainlink tick across the *whole* remaining window. `panel.py` forward-fills only
+**within the delivered range** — `b = min(end−3, cl_ts+1)` — so its denominator is
+just the delivered span. #44 fixed the fill *rule* and left the *window* wrong.
+
+They are different estimators, and the difference is largest exactly where it
+matters: at the top of a spike, the live one extrapolates the peak across the
+undelivered tail and the panel one does not. Specimen — `doge` bar 1789403700 at
+`tl 14`: **panel −0.901 bps, live +0.504 bps**, which is the difference between
+"no fire" and the bar's only live loss (−$3.65). Reconstructing the live rule from
+`cl.parquet` reproduces the logged `est_bps` to the digit (obs 47, tot 60).
+
+Scope measured (**thin**: doge only, 09-14 hours 15–16, 21 bars, 378 rows at
+tl 3–20): `|live − panel|` median **0.386 bps**, p90 **1.21**, max **1.95**; side
+disagreement **2.4%** of rows. Against a **0.5 bps** gate that is material.
+
+⭐ **Direction of the bias: panel is QUIETER and BETTER than the bot.** It
+structurally cannot make the spike-extrapolation error, so every gate ever scored
+on `panel.est_bps` has been scored on a signal the fleet does not possess, and
+flattered. FIX: fill to `end−3` always; keep `obs`/`cov` on real ticks.
+
+Full write-up: `bar-autopsy-doge-20260914-1635.md` §5a.

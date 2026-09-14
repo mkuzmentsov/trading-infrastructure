@@ -1,0 +1,98 @@
+<div class="wrap">
+
+<header>
+  <div>
+    <div class="eyebrow mono" id="hd-slug"></div>
+    <h1 id="hd-title"></h1>
+    <div class="eyebrow mono" id="hd-sub" style="margin-top:6px"></div>
+  </div>
+  <div class="verdict">
+    <span class="dot" id="hd-dot"></span>
+    <div><b id="hd-win"></b><br><span class="mono" id="hd-margin"></span></div>
+  </div>
+</header>
+
+<dl class="facts" id="facts"></dl>
+
+<div class="controls">
+  <div class="cgroup">
+    <span class="clabel">Window</span>
+    <button class="seg" data-range="full" aria-pressed="false">Full lifecycle</button>
+    <button class="seg" data-range="market" aria-pressed="false">Open → close</button>
+    <button class="seg" data-range="endgame" aria-pressed="true">Last 60s</button>
+    <button class="seg" data-range="flip" aria-pressed="false">The flip</button>
+  </div>
+  <div class="cgroup">
+    <span class="clabel">Price chart axis</span>
+    <button class="seg" data-unit="px" aria-pressed="true" id="unit-px">USD</button>
+    <button class="seg" data-unit="bps" aria-pressed="false">bps vs strike</button>
+  </div>
+  <div class="cgroup">
+    <span class="clabel">Book side</span>
+    <button class="seg" data-token="U" aria-pressed="true">UP token</button>
+    <button class="seg" data-token="D" aria-pressed="false">DOWN token</button>
+  </div>
+  <div class="cgroup">
+    <span class="clabel">Overlay</span>
+    <button class="seg" data-tog="prints" aria-pressed="true">Market prints</button>
+    <button class="seg" data-tog="entries" aria-pressed="true">Our entries</button>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="phead">
+    <h2>Order book — best bid &amp; ask, <span id="tokname">UP</span> token</h2>
+    <span class="sub">One token is enough: the pair is a single book, so <span class="mono">UP ask ≡ 1 − DOWN&nbsp;bid</span> exactly. Trades in the other token are drawn at their mirror price.</span>
+  </div>
+  <div class="legend">
+    <span class="lg"><i style="border-color:var(--ask)"></i>best ask</span>
+    <span class="lg"><i style="border-color:var(--bid)"></i>best bid</span>
+    <span class="lg"><i class="sw" style="background:var(--spread)"></i>spread</span>
+    <span class="lg"><svg width="13" height="13" aria-hidden="true"><polygon points="6.5,2 12,11 1,11" fill="var(--ink-2)"></polygon></svg>bought <span id="tokname2">UP</span></span>
+    <span class="lg"><svg width="13" height="13" aria-hidden="true"><polygon points="6.5,11 12,2 1,2" fill="var(--ink-2)"></polygon></svg>sold it (bought the other token)</span>
+    <span class="lg"><i style="border-color:var(--ink)"></i>our entries</span>
+  </div>
+  <div class="chartbox" id="box1">
+    <svg id="svg1" role="img"
+         aria-label="Best bid and ask for the UP and DOWN tokens over the life of the market"></svg>
+    <div class="tip" id="tip1" role="status"></div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="phead">
+    <h2>Settlement price — Chainlink, venue TWAP, Binance</h2>
+    <span class="sub">Shaded columns are the two 60-second averaging windows that decide the bar. The market settles on <span class="mono">final − strike</span>.</span>
+  </div>
+  <div class="legend">
+    <span class="lg"><i style="border-color:var(--cl)"></i>Chainlink point price</span>
+    <span class="lg"><i style="border-color:var(--twap)"></i>Venue TWAP feed</span>
+    <span class="lg"><i style="border-color:var(--bin)"></i>Binance spot mid</span>
+    <span class="lg"><i class="dash" style="border-color:var(--muted)"></i>strike level</span>
+  </div>
+  <div class="chartbox" id="box2">
+    <svg id="svg2" role="img"
+         aria-label="Chainlink, venue TWAP and Binance spot price over the life of the market"></svg>
+    <div class="tip" id="tip2" role="status"></div>
+  </div>
+</section>
+
+<details open>
+  <summary>Entries — every decision the bot made on this bar</summary>
+  <div class="tscroll"><table>
+    <thead><tr><th>Event</th><th>T−</th><th>Side</th><th>Price</th><th>Shares</th><th>est bps</th><th>Result</th><th>P&amp;L</th><th class="note">What happened</th></tr></thead>
+    <tbody id="entryrows"></tbody>
+  </table></div>
+</details>
+
+<details>
+  <summary>Market prints — all 42 taker trades</summary>
+  <div class="tscroll"><table>
+    <thead><tr><th>T−</th><th>Token</th><th>Price</th><th>Shares</th><th>Notional</th><th>Net</th></tr></thead>
+    <tbody id="printrows"></tbody>
+  </table></div>
+</details>
+
+<footer id="srcnote"></footer>
+
+</div>
