@@ -32,8 +32,10 @@ Flags: `--no-pod` (skip the bot's event log), `--no-pull` (never kubectl-pull a 
   triangles (▲ bought this token, ▼ bought the other). Open/close rules, hatched pre-open and
   post-close regions, our entries as labelled ink annotations in the top gutter.
 * **Chart 2 — settlement price.** Chainlink point price, venue TWAP feed, Binance spot mid on one
-  axis; strike as a reference line; both 60-second averaging windows shaded. Axis toggles to
-  bps-vs-strike.
+  axis; both 60-second averaging windows shaded; axis toggles to bps-vs-strike. The two levels
+  that decide the bar — **OPEN (strike, dashed) and CLOSE (final, solid)** — are drawn across the
+  plot with the value chipped onto the y-axis and the name in the right margin. On a near-tie they
+  are a pixel apart, so the chips de-collide and draw a leader back to their true line.
 * Linked crosshair, four zoom presets, entries table, full print tape, both themes.
 
 ## Gotchas — each of these cost real time
