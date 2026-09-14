@@ -20,7 +20,12 @@ THR = [0.99, 0.95, 0.90, 0.75, 0.55, 0.30]
 PB  = [(0.0,0.30),(0.30,0.55),(0.55,0.90),(0.90,0.99),(0.99,1.01)]
 DELTAS = [2,5,10]
 
-r_t   = re.compile(r'"t":([0-9.]+)')
+# tolerate optional whitespace after the colon. NOTE 2026-09-15: an agent reported
+# this as a live defect ("btc writes '"t": 1789', bnb writes '"t":1789'"); it did
+# NOT reproduce — all 7 coins are compact today and this regex matched 500/500 lines
+# on every one. Kept tolerant as cheap insurance, since the vacmaker event log DOES
+# use '", "' spacing and these parsers get copy-pasted between streams.
+r_t   = re.compile(r'"t":\s*([0-9.]+)')
 r_ws  = re.compile(r'"ws":([0-9]+)')
 r_tl  = re.compile(r'"tl":(-?[0-9.]+)')
 r_spot= re.compile(r'"spot":([0-9.eE+-]+)')

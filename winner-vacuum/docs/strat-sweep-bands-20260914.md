@@ -40,6 +40,22 @@ Razor-thin fires are the **best** bucket per fill. **Closed — do not propose a
 
 ## 2. ⭐ Sweep quality is about the ask you swept FROM, and it survives scrutiny
 
+> ⚠️⚠️ **CONDITIONALITY CORRECTION, 2026-09-15 (quant-analyst census A1).** Read the
+> band table below as *"which of the dislocations the recon gate already selected
+> paid off"*, **not** as *"deep sweeps out of a ≥0.98 display are free money"*.
+> Measured field-wide on the print tape (466 contestable dislocation prints, 173
+> bars, $6,681 staked, real outcomes, fee charged, no fill model): the **whole
+> contestable pool** nets **+2.89% ROI at bar-clustered t = 0.35** — and
+> **−$136 ex-09-14**, **−$300 ex-btc**, with the **top-5 prints by |contribution|
+> at −$523** against a +$193 total. Splitting on whether the relay-gated recon
+> agreed with the buyer: eligible **+37.65%** (n=85), not eligible **−5.67%**,
+> recon-decisive-but-opposite **−36.41%**.
+> ⇒ **The gate is the edge; the sweep is the delivery mechanism.** An oracle-free
+> harvester of this pool harvests the −5.67% slice. And the +37.65% is itself
+> **+$516 of btc on 11 bars** — ex-btc it is −$18, positive on 1 of 7 coins. So
+> "size into the ≥0.98 sweep" does **not** follow from §2, and the archetype built
+> on it (A2, oracle-free dislocation taker) is **dead at its premise**.
+
 Split the 4,384 fills by how far below the displayed ask we actually filled:
 
 | displayed − fill | n | win% | net | $/fill | % of net |

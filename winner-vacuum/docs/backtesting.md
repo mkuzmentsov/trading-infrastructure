@@ -822,3 +822,26 @@ built from one source have different missingness, one of them is fabricating.
 
 ⚠️ Also: `hype`'s `spot` is a literal **0.0**, not null — a zero that any
 difference or ratio would have silently consumed.
+
+
+## Standing reporting rule (2026-09-15): the forward-window tell, third occurrence
+
+Any statistic computed by scanning FORWARD for a print must be reported at
+**0.2 / 0.5 / 1.5 / 5 / 15 s and under a 0.5 s round-trip lag**, or not reported.
+
+A quantity that **grows with the look-ahead window** is consuming the future. This
+has now produced three separate false positives in this program: the dual-ask
+oscillation harvest, the $38.6k/6d "pair arbitrage" (bug #32), and A4's
+cross-duration tape confirmation — whose both-legs rate climbed 14.8% → 21.9% →
+31.6% → 42.4% → **59.0%** across exactly that sweep, collapsed to 11.5% under a
+0.5 s lag, and went to **0.0%** on eth once both legs had to print ≥20 shares.
+
+⚠️ **Pod ledger coverage is NOT uniform — and the mechanism is a firing drought,
+not a truncated archive.** Verified 2026-09-14 21:5x UTC, last `PF_TE_WHALE_ORDER`
+per coin: btc/sol/doge **09-14 21:44**, bnb 09-14 21:34, **hype 09-13 14:14**,
+**eth and xrp 09-09 19:59** — eth and xrp have not fired in **five days** (the
+known "est never clears threshold" silent regime, but longer than the day-close
+notes suggest). The `.gz` archives all run to 09-13, so an `ls` check does NOT
+reveal this — count events per coin per day instead. Any "30 days × 7 coins"
+framing of the fill ledger over-weights recency for 3 of 7 coins, including the
+framing in `strat-sweep-bands-20260914.md`.

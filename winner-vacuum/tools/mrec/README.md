@@ -80,10 +80,12 @@ Three further defects, any one of which breaks an absolute claim:
   A replay that refuses to fill above the displayed ask cannot see them.
 - **The 0.4s tape window rejects 42% of fills that demonstrably happened.** 1.5s recovers 96%.
   So the 0.4s/1.5s choice trades one bias for another; neither is "correct".
-- **The estimate reconstruction fails the live gate on 28% of real decisions** and takes the
-  OPPOSITE side on 10.6% — where the bot was right 92.6%. This is NOT bug #25 (removing the lag
-  gate improves it only 2pp); it is the recorder's ~7%-incomplete Chainlink capture against a
-  0.5 bps gate.
+- ~~**The estimate reconstruction fails the live gate on 28% of real decisions** and takes the
+  OPPOSITE side on 10.6%~~ ⛔ **RETIRED 2026-09-15.** That measured the *pre-bug-#45* estimator.
+  Joined row-for-row on `(coin, ws, tlk)` against the bot's own logged `est_bps` (141/141 hits),
+  the corrected `est_live` reproduces the bot to **corr 0.9937, median |Δ| 0.003 bps, side agreeing
+  99.3%**, and displayed ask vs `seen_ask` to a **median |Δ| of 0.0000**. The reconstruction is
+  faithful; do not cite the 28% figure.
 - ⚠️ **`polysim2.thresh=0.10` is a FOURTH wrong default** — live is `pmTeThreshBps=0.5`. Running
   at 0.10 inflates bars ~1.6×, which is plausibly why the published cell appeared to match live's
   351 bars in the first place.
@@ -147,3 +149,39 @@ that name was lost with the old scratchpad.
 
 Build order that works end to end: `ev2pq.py meta` → `ev2pq.py ev` → `snap2pq.py` → cl.parquet
 (above) → `recon.py` → `panel.py` → copy panel→panelflow → `flow2.py`.
+
+
+## 2026-09-15: three sources, three jobs — do not substitute one for another
+
+| source | n | days | what it settles |
+|---|---|---|---|
+| `panel.parquet` (mrec+Binance) | 4,321 bars | **3** | *which feature* — full book, ladders, flow, Binance |
+| **`evals_live`** (`PF_TE_EVAL`) | **53,311** bars | **30** | *does it hold up* — the bot's own tl≈28 decision record on **every bar it saw, fired or not**; `sign(twap_h1_bps)` is 97.75% accurate |
+| `fills.parquet` (`WHALE_ORDER`+`LIVE_SETTLE`) | 4,390 fills | 29 | *is it worth money* — real prices, real PnL, no fill model |
+
+⭐ **`PF_TE_EVAL` is the answer to G=3.** It is 12.4× the panel's bars and 10× its day-clusters, and
+it is a genuine decision-time information set. MDE on `E[y−mid]` falls **0.76 pp → 0.22 pp**. Price:
+one `tl`, no ladder, no flow, no Binance.
+
+⚠️ **`bars_live` (`PF_TE_SETTLE`) is NOT a decision-time feature** — it fires *after* the bar, so its
+`point_bps`/`h1_bps` read 99.74% accurate. Settlement reconstruction only.
+
+⚠️ **`clip` means two different things.** On a *matched* `WHALE_ORDER` it is the 1-based clip index
+(joins to `LIVE_SETTLE`); on an *unmatched* one it is the count filled so far — one bnb bar has 17
+consecutive unmatched attempts all stamped `clip: 0`. Join on it unconditionally and you attach
+settlements to attempts that never filled.
+
+⚠️ **Bug #16 lives here too**: joining `WHALE_DELAY` outcomes via `LIVE_SETTLE` silently conditions
+on *the bar having later produced a fill* (2,295 of 6,270, and blocked-bars-that-never-filled are
+not a random subset). Use `PF_TE_SETTLE` — 6,233 of 6,270, unconditional.
+
+### Measured live fill rates by displayed ask (8,496 attempts, 30 days — supersedes the interpolations)
+`<0.55` **n=9, do not use** · `0.55-0.75` **0.173** · `0.75-0.90` **0.220** · `0.90-0.95` **0.512** ·
+`0.95-0.98` — · `>=0.98` **0.749** (bug #23's 75% reproduced exactly).
+
+⚠️ **17.8% of live fills land ABOVE the displayed ask and 14.5% below it** ⇒ any supply census built
+on displayed quotes is wrong in **both** directions.
+
+### Era break (bug #24)
+Attempts fall from **250-400/day in August to 62-78/day from 09-10**. The 3-day panel window sits
+entirely inside the low-activity era.
