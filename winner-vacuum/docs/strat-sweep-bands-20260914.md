@@ -1,4 +1,15 @@
 # Sweep quality across 7 coins and 30 days — from the pod ledger alone
+
+> ⛔⛔ **HEADLINE CORRECTION 2026-09-15: FLEET-WIDE, SWEEPS ARE NOT THE ENGINE — THEY ARE ONE FILL.**
+> Re-cut on all 4,390 matched fills: swept (filled ≥5c under the display) is **n=100, 2.28% of
+> fills, +$40.66 = 16.7% of book, t = +0.31** — and **ex the single best fill it is −$34.16.** That
+> best fill is **+$74.82 on one bnb bar.** The non-swept book is larger *and* cleaner: **+$202.14,
+> t = +1.48.** Sweeps win 68 of 100 at a mean fill of 0.699 against a ~70% break-even — i.e. **at
+> break-even, not above it**.
+> ⇒ The archive's *"the stale-ask sweep is the engine / 40% of btc profit"* is a **btc-only,
+> ERA1 statement** and does not generalise to the fleet. Do not size for sweep convexity; that was
+> tested directly and failed. §2's band table below still describes *which* recon-gated dislocations
+> paid, but "deep sweeps are where the money is" is retracted.
 **2026-09-14. No fill model, no tape, no replay. Nothing deployed.**
 
 Provoked by four bar autopsies that all pointed at the same object (a dollar-FAK sweeping a

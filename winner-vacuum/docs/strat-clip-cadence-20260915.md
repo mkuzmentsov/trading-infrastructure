@@ -38,6 +38,20 @@ This is the same wall as [[reversion-priced-out]] arriving through a different d
 
 ## 3. ⭐ The real finding: all of the money is in CLIP 1
 
+> ⚠️⚠️ **ERA-CONFLATED — corrected 2026-09-15 (portfolio-strategist, verified here).** Split the
+> 29 days in half and this reverses:
+>
+> | | clip 1 | clips 2+ | clip2+ n |
+> |---|---|---|---|
+> | ERA1 (08-17→08-31) | +$69.93 | **−$78.93** | 1,319 |
+> | ERA2 (08-31→09-14) | +$190.19 | **+$61.61** | **86** |
+>
+> **"Clips 2+ earn nothing" is an ERA1 statement.** ⚠️ But it is *not* that the ladder improved:
+> ERA2 ran **86** ladder fills against ERA1's **1,319** because the ladder gate was tightened
+> (`WHALE_LADDER_MIN_ASK`). The ERA2 ladder is a **different, gated object** — so the honest reading
+> is "the *restricted* ladder is not negative", not "the ladder is good". The §1 and §2 cadence
+> results (1.20 s realised gap, the 0.5% flip and its 1.757 pair cost) are unaffected.
+
 Per clip index, real matched fills, taker fee charged:
 
 | clip | n | $/fill | SE | t | day-clustered t | sweep rate | net |
