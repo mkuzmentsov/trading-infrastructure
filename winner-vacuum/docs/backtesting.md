@@ -907,3 +907,22 @@ seconds of perfect foresight is worth +1.7 c/share — that is the entire value 
 ⚠️ **Where AUC 0.8493 actually lives.** Pooled row-level AUC over ~28 near-duplicate rows/bar is
 inflated to 0.88-1.00. On the *undecided* slice (market 0.05-0.95) it is 0.8748 at tl 63-90 and
 **0.8402 at tl 121-180**. **Quote AUC with its tl band and decidedness filter or it means nothing.**
+
+
+## ⭐ Standing correction (2026-09-16): quote the LEDGER's per-share, not a replay's
+
+The fleet's **realised** per-share is **+0.4385 c** (`$242.79 / 55,364 shares`, 4,390 real fills, fee
+charged, **no fill model**), **+0.3910 ex-sweep**. A panel, displayed-ask, share-denominated replay
+of the same gate reads **−0.279 c/share**. **The replay understates the live book by ~0.84 c/share
+and inverts its sign** — bug #27/#46 for the third time.
+
+⇒ **Any c/share figure derived from the panel at the displayed ask is a lower bound on the live
+book, not an estimate of it.** The ~0.84 c gap IS the execution edge.
+
+## Bug #47 restated (2026-09-16): it also strikes through the SAMPLING weight
+
+Bug #47 was logged as bar-mean vs row-mean on a price band. It recurred on a *conviction* gate: at
+`est ≥ 2.0` the per-second mean reads **+1.176 c/share** while one-trade-per-bar reads **−1.44 to
+−1.76** under four different pickers — because **5 bars (2.5%) hold 14.6% of the rows at +15.22
+c/share**. Same pathology as "top-5 fills are 80% of net", arriving through row counts instead of
+dollars. **The concentration guard must be run on the SAMPLING weight too, not just on PnL.**

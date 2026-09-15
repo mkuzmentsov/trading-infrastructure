@@ -8,13 +8,24 @@ User asked for a **working strategy** on **crypto 5m markets**, with permission 
 
 **There is no new working strategy, and the reason is now a bound rather than a list of failures.**
 
-> **Our estimator beats the market decisively and is still below zero at the ask.**
-> tl 3-30, fee charged on the real ask: market-implied baseline **−3.093 c/share**, the live gate
-> **−0.279**, a *perfect* oracle **+5.334**. The gate's lift over the market is **+0.744 c/share**
-> and it does not reach zero.
+> ⚠️⚠️ **CORRECTED 2026-09-16. The "still below zero at the ask" headline was WRONG — it quoted a
+> REPLAY number as if it were the book.**
 >
-> ⭐ **Accuracy was never the binding constraint. Price is.** Any future proposal that promises money
-> from better prediction must first explain how it clears that gap — four agents could not.
+> The **−0.279 c/share** is a panel, displayed-ask, share-denominated replay. The fleet's **realised**
+> per-share, computed on 4,390 real fills with the fee charged and **no fill model at all**, is
+> **+0.4385 c/share** (`$242.79 / 55,364 shares`), and **+0.3910 ex-sweep**. The book is **positive
+> per share**. The ~0.84 c/share gap is exactly the execution edge a displayed-ask replay cannot
+> see — bug #27/#46, for the third time.
+>
+> ⭐ **The corrected statement, which is stronger and now has a mechanism:**
+> **The fleet is not paid for prediction. It is paid for EXECUTION** — for being present where the
+> book will trade, and for filling *below* the displayed ask. Confirmation from a second direction:
+> on 291 cheap-band fills, paying the **displayed** ask would have returned **−0.49 c/share**; we
+> realised **+1.83** because we paid 0.7724 against a displayed 0.8013. **The displayed cheap price
+> is fair; the entire edge is buying under it.**
+>
+> A perfect oracle is +5.334, so prediction has headroom in principle — but see the conviction bound
+> below for why none of it is reachable.
 
 Three independent confirmations that the concentration, not the signal, is the problem:
 * **Sweeps are one fill.** n=100, 2.28% of fills, +$40.66, **t=+0.31** — and **−$34.16 ex the single
@@ -23,6 +34,38 @@ Three independent confirmations that the concentration, not the signal, is the p
   0.854 → 0.787 → **0.513** at ≥0.15. The sweep lane's top-5 is **181%** of it; ex-top-5 **−$3.01/day**.
 * ⇒ The archive's *"the stale-ask sweep is the engine / 40% of btc profit"* is **btc-only and ERA1-only.
   Retracted fleet-wide.**
+
+## ⭐⭐ The bound that actually closes the direction lane (2026-09-16)
+
+**Conviction and fillability are inversely related, and it is mechanical.** Fill rate by `|est_bps|`
+on 8,496 live attempts — a pre-send field, so this needs **no model and no fill assumption**:
+
+| `\|est\|` | 0.5-1 | 1-2 | 2-5 | 5-10 | **10+** |
+|---|---|---|---|---|---|
+| attempts | 2,374 | 2,342 | 1,781 | 902 | 1,097 |
+| **fill rate** | **0.829** | 0.741 | 0.357 | 0.083 | **0.018** |
+
+**46× unconditional**; **23× holding ask band AND tl fixed**. Corroborations: **455 attempts at
+`|est| ≥ 1` in the cheap band late produced ZERO fills**; at `|est| ≥ 8` there is **not one takeable
+second in 21,938 panel observations**, and a takeable ask appears on **0 of 1,681 bars**.
+
+⭐ **Mechanism: our estimator resolves when the TWAP reconstruction resolves — and any maker reading
+the same Chainlink ticks resolves at the same instant and pulls the offer. Conviction and withdrawal
+are THE SAME EVENT.** No amount of estimator quality converts into fills.
+
+⇒ Raising the conviction gate is **arithmetically self-defeating**: θ from 0.5 → 8.0 multiplies
+c/share by 9.1× and divides shares/day by 25.5×, for **$8.372 → $0.649/day**. Every threshold above
+the live gate loses money on a paired daily test (all t between −1.10 and −1.57, ≤13 of 29 days
+improved). **Positive-per-share and positive-$/day are disjoint along the conviction axis.**
+
+⭐⭐ And the punchline: **93% of the 29-day net comes from `|est| < 2`** — the *low*-conviction half
+of our own signal. **The fleet is not paid for being sure; it is paid for showing up where the book
+will trade.**
+
+⚠️ **The "sign flip at est ≥ 2.0 bps" that motivated this round was a WEIGHTING ARTEFACT** — bug #47
+reappearing through the *sampling* weight instead of the dollar weight. At est ≥ 2.0, **5 bars (2.5%)
+take 14.6% of the row weight at +15.22 c/share** and drag the per-second average across zero. Under
+one-trade-per-bar it does not flip under **any** of four pickers (−1.44 to −1.76).
 
 ## What each agent settled
 
