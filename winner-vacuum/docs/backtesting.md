@@ -926,3 +926,41 @@ Bug #47 was logged as bar-mean vs row-mean on a price band. It recurred on a *co
 −1.76** under four different pickers — because **5 bars (2.5%) hold 14.6% of the rows at +15.22
 c/share**. Same pathology as "top-5 fills are 80% of net", arriving through row counts instead of
 dollars. **The concentration guard must be run on the SAMPLING weight too, not just on PnL.**
+
+
+## Bug #50 (2026-09-16): `settle_side` in the fill ledger is OUR side, not the winner
+
+`PF_TE_LIVE_SETTLE` carries both `side` (ours) and `won` (the winning side). In `fills.parquet`,
+`settle_side` is the **former** — it equals `side` on **100.0%** of rows, while `side == won` on
+96.6%. Using `settle_side` as the win indicator marks **every fill a winner** and **inverts any
+counterfactual built on it**: the displayed-ask counterfactual reads **+3.59 c/share** instead of
+**−3.03**, flipping the sign of the execution edge. Caught in this session by noticing that paying a
+*higher* price appeared to improve returns, which is impossible.
+
+## ⭐⭐ Standing decomposition (2026-09-16): where the fleet's money actually comes from
+
+Same fills, same shares, realised vs paying the displayed ask:
+
+| population | n | realised | at displayed | execution edge |
+|---|---|---|---|---|
+| ALL | 4,390 | +0.4385 | −3.0287 | +3.467 |
+| swept ≥5c | 100 | +1.1071 | −51.6414 | **+52.75 (101% of total)** |
+| **NON-swept** | **4,290** | **+0.3910** | **+0.4249** | **−0.034** |
+
+⭐ **The non-sweep book is a modest PREDICTION edge that does not need execution** (+0.391 realised
+vs +0.425 at the displayed ask). ⭐ **The entire execution edge is the sweep tail, and its mechanism
+is rescue, not skill**: at the displayed ask those bars return −51.6 c/share because sweeps win 68%
+against a 96.6% base rate. They are bars where the displayed price was badly wrong for us.
+
+## Bug-ledger additions from the depth round (2026-09-16)
+
+* **`req_sh` is NOT constant across eras** (5/8/9/12/13/24/25/26) — run `req_sh.value_counts()`
+  before claiming the ledger has one clip size.
+* ⭐ **A partially-filled FAK identifies executable depth EXACTLY**: it exhausted the book at its own
+  limit, so `L = filled` when partial, `L ≥ req_sh` when full, `L = 0` when unmatched. Kaplan-Meier
+  on that identifies the depth distribution with **no cross-size assumption and no fill model**.
+  **Do not model fill rates when the ledger identifies depth directly.**
+* **"Fraction of displayed depth traded" is demand-limited** and grows **~8× from a 0.2 s to a 5 s
+  window** (0.070 → 0.598). Lower bound only; never a fill model.
+* **`LIVE_SIZE` (twapedge.py:441-442) is in SHARES** with floors `sh ≥ 5` **and** `sh·ask ≥ $1`.
+  Any multiplicative sizing must clamp as `max(5, int(k·req_sh))` or it silently deletes clips.

@@ -17,12 +17,29 @@ User asked for a **working strategy** on **crypto 5m markets**, with permission 
 > per share**. The ~0.84 c/share gap is exactly the execution edge a displayed-ask replay cannot
 > see — bug #27/#46, for the third time.
 >
-> ⭐ **The corrected statement, which is stronger and now has a mechanism:**
-> **The fleet is not paid for prediction. It is paid for EXECUTION** — for being present where the
-> book will trade, and for filling *below* the displayed ask. Confirmation from a second direction:
-> on 291 cheap-band fills, paying the **displayed** ask would have returned **−0.49 c/share**; we
-> realised **+1.83** because we paid 0.7724 against a displayed 0.8013. **The displayed cheap price
-> is fair; the entire edge is buying under it.**
+> ⚠️ **CORRECTED AGAIN, 2026-09-16 (this is the third statement of this point and the settled one).**
+> I first said "below zero at the ask" (a replay artefact), then "paid for execution, not
+> prediction". The decomposition below settles it, and it is **neither**:
+>
+> **Same fills, same shares, realised vs paying the displayed ask** (`won` is the winning side;
+> ⚠️ `settle_side` is OUR side and using it inverts the whole table — I made that error once):
+>
+> | population | n | realised | at displayed ask | execution edge |
+> |---|---|---|---|---|
+> | ALL | 4,390 | **+0.4385** | −3.0287 | **+3.467** |
+> | **swept (≥5c)** | **100** | +1.1071 | **−51.6414** | **+52.75** |
+> | **NON-swept** | **4,290** | **+0.3910** | **+0.4249** | **−0.034** |
+>
+> ⭐⭐ **The 97.7% of fills that are not sweeps earn +0.391 c/share and would have earned the SAME
+> (+0.425) paying the displayed ask. Execution adds nothing there. That book is a modest PREDICTION
+> edge, and it is the real business.**
+>
+> ⭐ **The entire "execution edge" is the 2.3% sweep tail — 101% of it** — and its mechanism is not
+> cleverness: at the displayed ask those bars return **−51.6 c/share**, because a sweep means the
+> displayed price was badly wrong for us (sweeps win 68% against a 96.6% base rate) and the book
+> filled us cheap instead. **They are bars where we were about to make a bad trade and were rescued
+> by the repricing.** Fleet-wide that tail is one fill (t=+0.31, −$34.16 ex-best) and it is **not
+> targetable** — the depth work confirms nothing in the depth curve reaches it.
 >
 > A perfect oracle is +5.334, so prediction has headroom in principle — but see the conviction bound
 > below for why none of it is reachable.
