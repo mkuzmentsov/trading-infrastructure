@@ -964,3 +964,18 @@ against a 96.6% base rate. They are bars where the displayed price was badly wro
   window** (0.070 → 0.598). Lower bound only; never a fill model.
 * **`LIVE_SIZE` (twapedge.py:441-442) is in SHARES** with floors `sh ≥ 5` **and** `sh·ask ≥ $1`.
   Any multiplicative sizing must clamp as `max(5, int(k·req_sh))` or it silently deletes clips.
+
+
+## Bug #51 (2026-09-16): the REST tick fields are the CONFIGURED FLOOR, not the in-force tick
+
+Confirmed live: CLOB `minimum_tick_size` **and** gamma `orderPriceMinTickSize` both read **0.01** on
+a market whose book was actively quoting **0.999** — before and after close. **Only the WS
+`tick_size_change` event (or observing 3-decimal prices) is truthful.** Any sim that reads the tick
+from REST will price a 0.001-tick book on a 0.01 grid. Strengthens bug #39.
+
+⚠️ Related, same session: **a resolved market's book is CLEARED**, while a closed-but-unresolved one
+keeps `acceptingOrders: true`. The tradeable post-close window is bounded by resolution, ~300 s.
+
+⚠️ And the one-book identity holds in REST too: `UP nbid 111 / nask 0` against `DOWN nbid 0 /
+nask 111`, identical sizes. **A "0.999 bid queue on the winner" and a "0.001 salvage ask stack on the
+loser" are the SAME OBJECT — never count them twice.**
