@@ -869,3 +869,41 @@ term structure. The settlement residual is strongly fat-tailed (**sd/robust 1.61
 inverting a Gaussian lands on the robust scale of the *bulk* rather than the scale that prices the
 tail. Against the matching yardstick it is **1.07-1.25 and flat at every τ**. No vol trade.
 **Before reading any implied-vs-realised ratio, report sd/robust for the residual.**
+
+
+## Bug #49 (2026-09-15): `clip` in `PF_TE_WHALE_ORDER` is a POST-OUTCOME field — it contains the label
+
+`clip` equals `prior_fills + 1{matched}`. On a **matched** row it is the index of the clip that
+filled; on an **unmatched** row it is the count filled so far. Admit it to a feature set predicting
+`P(match)` and the model reads **OOS AUC 1.0000**.
+
+Caught by the ml-engineer in its own first pass (`fl2_value.py` / `fl3_mech.py` used it; their
+headlines were already null so no false positive escaped). The clean version is `fl4_clean.py` —
+honest `P(match)` AUC **0.9416**, carried by `absest`, `att_idx`, `seen_ask`.
+
+⚠️ **Never admit `clip` to a pre-send feature set.** The same caution applies to any ledger field
+whose value is written *after* the event being predicted — see also the two meanings of `clip`
+documented in `tools/mrec/README.md`.
+
+## Standing result (2026-09-15): the fleet gate BEATS the market and is STILL below zero at the ask
+
+tl 3-30, real ask, fee charged on that ask:
+
+| strategy | net c/share | lift vs market |
+|---|---|---|
+| market-implied baseline | **−3.093** (t=−2.76) | — |
+| `est_live ≥ 0.5 bps` (the live gate) | **−0.279** | **+0.744** |
+| `est_live ≥ 2.0 bps` | +0.030 | +0.398 |
+| ORACLE (realised margin) | +5.334 | +3.480 |
+
+⭐ **Accuracy was never the binding constraint — price is.** Our estimator decisively out-predicts
+the market and still cannot cross zero against the displayed ask. Any future proposal that promises
+money from *better prediction* must first explain how it clears this gap.
+
+⭐ **Bug #32 latency ladder, run deliberately on the same gate**: `ahd5` +1.426 → `ahd2` −0.032 →
+**live −0.279** → `lag2` −0.509 → `lag5` −0.754. Monotone clairvoyant→stale, i.e. healthy. **Five
+seconds of perfect foresight is worth +1.7 c/share — that is the entire value of the relay race.**
+
+⚠️ **Where AUC 0.8493 actually lives.** Pooled row-level AUC over ~28 near-duplicate rows/bar is
+inflated to 0.88-1.00. On the *undecided* slice (market 0.05-0.95) it is 0.8748 at tl 63-90 and
+**0.8402 at tl 121-180**. **Quote AUC with its tl band and decidedness filter or it means nothing.**
