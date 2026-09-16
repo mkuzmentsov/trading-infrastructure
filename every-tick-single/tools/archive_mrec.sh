@@ -19,6 +19,20 @@ PRUNE="--prune"
 [ "${1:-}" = "--no-prune" ] && PRUNE=""
 
 cd $ROOT || exit 1
+
+# ── LOW-DISK GUARD (2026-09-16) ───────────────────────────────────────────
+# If the local disk is nearly full, do NOT drain. The recorders live in the
+# cluster on their own 20Gi PVCs (1% used) with 7-day retention, so pausing
+# the pull costs nothing for days — whereas filling the last GB here would
+# hurt the whole machine. Converting/pruning still runs: it only FREES space.
+FREE=$(df -g "$ROOT" | tail -1 | awk '{print $4}')
+if [ "${FREE:-99}" -lt 15 ]; then
+  echo "drain: SKIPPED — only ${FREE}Gi free (pods buffer 7d on 20Gi PVCs at ~1%)"
+  python3 $ROOT/winner-vacuum/tools/mrec/venue2pq.py "$MREC" "$PQ" $PRUNE 2>&1 | tail -3
+  VR=$(find $MREC -name "*-[bh]rec-*.jsonl.gz" 2>/dev/null | wc -l | tr -d " ")
+  echo "pq-venue: $(du -sh $PQ 2>/dev/null | cut -f1) | venue raw left: ${VR} files | ${FREE}Gi free"
+  exit 0
+fi
 $ROOT/every-tick-single/tools/drain_mrec.sh 2>&1 | grep -E "^FAIL|^DRAINED" | \
   awk '/DRAINED/{d++} /FAIL/{f++; print} END{printf "drain: %d ok, %d failed\n", d+0, f+0}'
 
