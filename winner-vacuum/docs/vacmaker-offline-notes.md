@@ -3092,3 +3092,27 @@ vetoes.
 Day 09-09: 6 losses (eth −20.02, sol −23.14, btc −22.36, hype −17.16, sol −7.29, xrp −0.34), all brake-marked singles, no halts. Mechanism: violent impulse → our-side bid collapses (0.82→0.09 / 0.83→0.02 / 0.80→0.05 in the 6s pre-fire, mrec-measured) → est still favors old side by 0.05-0.06bps over threshold (INSIDE the 0.46bps proxy noise; relay lag 2.2s) → FAK sweeps the collapsed book (sol 1,524sh @0.015) → brake fires post-fill → flip. eth+sol same second (10:34:40) = one impulse.
 Discriminator test (all 35 cheap fills <=0.80/>5sh since 09-01, pre-fill 6s bid delta from mrec): WINS median −0.19, LOSSES median −0.51. Stale-display windfalls are UNTOUCHED by a veto (bnb 0.238 win: −0.02; xrp/hype passthrough wins 0.00/+0.02). Veto @ d<=−0.30: blocks 10/14 losses (+$240) vs 8/21 wins (−~$194) ⇒ net ~+$5/day (fill-model dependent, don't quote) but tail compression is the prize (09-09 cheap-fill losses −$85 → −$22). Confirms [[bid-drop-veto]] (09-06) exactly; irreducible remainder = real late flips (hype lost at est 1.68).
 NEXT STEP (user-gated): arm veto LOG-ONLY (flag would-have-vetoed on each fire), score after ~1wk. No config change today (user: "no code for now"). Est-margin buffer rejected again — est-gating family, triple-refuted.
+
+## §73 (2026-09-16) ⛔ Bid-drop veto scored REMOVAL-ONLY on LIVE fills — the $ delta is NEGATIVE; only the tail benefit survives
+User asked: expected PnL with the fix vs actual, last 30 days. Method: NO fill model at all —
+every live PF_TE_WHALE_ORDER clip (deduped by order hash; settles are PER-CLIP, keyed
+(coin,bar,side,clip)) gets its exact booked pnl (filled−cost | −cost); a vetoed clip's
+contribution is simply removed. Bid tape: panel.parquet 09-01→09-10 19:49 + raw mrec gz
+09-12 15:00→09-16 06:00 = **14.6 scoreable days** (pre-09-01 deleted, 09-10 20:00→09-12 15:00
+undrained gap). Daily actuals reconcile to every official day close (+129.16, −39.70, +47.75).
+Rules as staged: vB = dBid20 ≤ −3c, vR = rBid10 ≤ −20%, both only at tl≤20 & |est|<5bps.
+
+Result (tape days, n=14): actual **+$278.0** → vB **+$156.5 (−$121.5)** → vR **+$257.0 (−$21.0)**.
+- vB vetoes 140 clips: **122 winners (+$356.18) vs 18 losers (−$234.71)**. It deletes the windfall
+  channel: 09-06 +129.16→+23.50 (the +$76 bnb 0.238 sweep is vB-blocked — §72's counter-example,
+  live), 09-12 +43.80→+9.18, 09-15 +47.75→+26.81.
+- The insurance is real: worst day −67.0→−39.9, day-sd 46.1→24.6, losing clips 43→25 (vR: 27);
+  09-09 −67.03→−14.41; 09-16's two sol traps both vetoed (−18.56→−1.27). But 09-13 (−39.70, the
+  all-sol-trap day) is UNTOUCHED (−39.88) — the veto does not even catch every trap day.
+- vR is ~PnL-neutral (53 winners +$189.03 vs 16 losers −$168.00) with weaker tail relief.
+
+Verdict: the §66/§68 positive $/day claims were fill-model artifacts, as §72 suspected — on the
+fills that actually happened the veto is **pure variance-for-EV insurance: vB costs ~$8.3/day
+(≈40% of gross) to halve day-sd; vR costs ~$1.4/day for a modest tail trim**. DO NOT deploy
+blocking. The log-only arm remains harmless if tail control ever becomes the goal (e.g. sizing
+up). Analysis: scratchpad veto_cf.py (podlogs pull 08-16→09-16 kept in session scratchpad).
