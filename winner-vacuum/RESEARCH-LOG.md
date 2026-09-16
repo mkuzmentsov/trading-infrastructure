@@ -990,3 +990,7 @@ Whole day = sol: two $24 bid-collapse traps (−$47.5) + one small partial; rest
 ## 2026-09-15 03:45K — Day close 2026-09-14 (UTC): +$18.55 (69-2)
 5m fleet FINAL: bnb 18-0 +23.43 (two stale-display gifts +$9.1/+$2.7) | btc 8-1 −18.48 (synchronized-triple trap 13:44:40 UTC: bnb/btc/sol all fired same second at discounts, bnb+sol won, btc lost) | doge 28-1 −1.69 | eth 0-0 | hype 0-0 | sol 15-0 +15.29 (+$6.9 gift) | xrp 0-0.
 Zero halts/errors/abandons. eth/hype/xrp 5th silent day. Ops: correct funder address verified (0xdb66d8967c58…d9; earlier triage curls had a wrong tail — now in memory), positions API confirmed live-readable mid-bar. Balance 03:44K $424.33. Era 16 days ≈ +$287 (~$18/day).
+
+## 2026-09-16 03:45K — Day close 2026-09-15 (UTC): +$47.21 (61-0) — RECORD PERFECT DAY
+5m fleet FINAL: bnb 13-0 +16.07 | btc 10-0 +8.03 | doge 22-0 +2.93 (data mode) | eth 0-0 | hype 1-0 +10.84 (single windfall clip, broke its ~6-day silence) | sol 15-0 +9.34 (halt-free per user, no traps today) | xrp 0-0.
+Third perfect day of the era (55-0 +21.99, 58-0 +44.04, now 61-0 +47.21 — new PnL record for perfects, 3rd best day overall behind +129.02/+63.01). Zero halts/errors/brakes/abandons; booked = true. All profit in the calm-day channels: grind + two cheap-fill windfalls (hype +10.84, bnb steady). Balance 03:44K $470.41 — NEW RECORD CLOSE (prior $464.33, 09-09). Era 17 days ≈ +$334 booked (~$20/day booked; $8.01/day corrected-net baseline stands).
