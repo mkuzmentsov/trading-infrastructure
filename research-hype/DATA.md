@@ -1,0 +1,262 @@
+# HYPE — DATA.md
+
+Owner: ml-engineer. Scripts in `research-hype/`, all with absolute paths in their headers.
+Everything below is measured, not assumed. Where a number is uncertain I say so.
+
+---
+
+## 0. The one-paragraph version
+
+We have **100.2 hours of excellent native Hyperliquid HYPE tick tape** (99.98 % coverage,
+p50 recorder latency 368 ms) and **21 months of coarse history** (4h/1d from the 2024-12-05
+listing, plus a *complete* hourly funding series). **There is no 22-month 1-minute history on
+Hyperliquid** — the brief assumed one and it does not exist (§2). The deep fine-grained
+history has to come from **Bybit**, which listed HYPEUSDT perp the same day; that also means
+the brief's "HL is the only book, no cross-venue reference" is **wrong** (§3).
+
+Two panels are built and they are **not joinable**: `tick_hype_1s` (360,601 rows × 114 cols,
+5 days) and `hist_HYPE_{1d,4h}` (652 / 3,909 rows × 62 cols, 21 months).
+
+---
+
+## 1. The tick tape (native HL) — audited, clean
+
+`every-tick-single/data/pq-venue/hl/{bbo,trades,l2Book,activeAssetCtx,candle}/hype-*.parquet`
+Audit script: `research-hype/tapeaudit.py`
+
+| stream | rows | rows/hr |
+|---|---|---|
+| bbo | 1,910,728 | 19,075 |
+| trades | 1,255,728 | 12,536 |
+| l2Book (10 levels, absolute) | 67,115 | 670 |
+| activeAssetCtx | 352,694 | 3,521 |
+| candle (1m, in-progress snapshots) | 291,142 | 2,907 |
+
+Span 2026-09-13 14:49 → 2026-09-17 18:59 UTC = **100.2 h**.
+**Coverage 99.98 %** — exactly one gap > 30 s (09-14 01:16, 1.0 min). No crossed or locked books.
+
+### ⚠️ Two clocks. Do not conflate them.
+* `t` = **recorder receive time, epoch SECONDS (float)**
+* `time` = **exchange event time, epoch MILLISECONDS (int)**
+
+I got this wrong on the first pass and the audit reported a 0.1-hour span for a 100-hour tape.
+Recorder latency `recv − time`: **bbo p50 368 ms, p90 503 ms, p99 774 ms**; l2Book p50 428 ms.
+**Every feature window must be gated on `t`.** Gating on `time` hands the model ~368 ms of
+future — the same bug class as PM #25/#43.
+
+### Trade-side convention — VALIDATED, not assumed
+Joined each trade to the last bbo strictly before its *receive* time (n = 93k):
+
+```
+side=A  at-or-below-bid 69.0 %   mean(px − mid) = −0.587 bps
+side=B  at-or-above-ask 76.6 %   mean(px − mid) = +0.421 bps
+```
+
+**`B` = aggressive buy (lifts the ask).** The panel's `ofi_*` columns use `sign = +1 for B`.
+A silent flip here would have inverted every flow feature.
+
+### Trades need de-duplication
+* **21.4 %** of rows carry the null hash `0x000…0` — `hash` is not a usable key.
+* Non-null hashes: 987,167 rows over 332,746 unique → **2.97 fills per hash** (one taker order
+  sweeping several makers). Correct behaviour, but `hash` is not unique.
+* **3.95 %** are exact duplicate rows on `(time, side, px, sz, hash)`. The panel dedupes on
+  that key; it moves measured flow from $20.50 M/hr to **$19.45 M/hr**.
+
+### Microstructure (the cost wall, measured)
+* spread **p50 0.127 bps**, p90 1.04, p99 3.14, mean 0.404. **67.5 % of quotes are one tick
+  (0.001) wide** on a ~$79 asset.
+* touch notional **p50 $3,299 bid / $2,999 ask** — the *touch* is thin even though the ten-level
+  book is ~$45 k a side.
+* taker flow **$19.4 M/hr** ≈ $466 M/day. OI **$1.61–1.70 bn**.
+* `mark − oracle` mean **−1.84 bps**, sd 8.80.
+
+### `candle` stream is in-progress snapshots
+6,011 distinct 1-minute bars, **48.4 snapshots per bar**. Take last-per-`kt` for a closed bar,
+and gate on `recv` — otherwise the bar's close is known before `kT` and you have leaked a minute.
+
+---
+
+## 2. ⛔ There is NO 22-month 1-minute Hyperliquid history
+
+The brief asked for `candleSnapshot` "back to listing, ~22 months" at 1m/5m/15m/1h/4h/1d.
+**Hyperliquid does not serve it.** Measured walls (binary search + month-by-month scan,
+`research-hype/hlhist.py`, probe logs in `/tmp/monthscan.log`):
+
+| interval | earliest available | depth |
+|---|---|---|
+| 1m | 2026-09-13 07:22 | **~3.5 days** |
+| 5m | 2026-08-30 10:05 | ~18 days |
+| 15m | 2026-07-25 16:47 | ~54 days |
+| 30m | 2026-06-01 15:00 | ~108 days |
+| 1h | 2026-02-14 11:02 | ~215 days |
+| 2h | 2025-07-14 04:01 | ~431 days |
+| 4h | **2024-12-05 (listing)** | full |
+| 1d | **2024-12-05 (listing)** | full |
+
+The pattern is a **rolling ~5,000 candles per interval**. Only 4h and coarser reach listing.
+Our own 100-hour tick tape is *finer than anything HL will ever sell us back*, which makes the
+recorder the only source of sub-hourly HYPE history on its home venue going forward.
+
+### ⚠️ The API also returns spurious empties — plan for it
+`candleSnapshot` is **non-monotonic in request-range width**. HYPE 2h starting 2025-06-01:
+
+```
+1d:12  2d:24  4d:48  8d:96  16d:192  32d:0  64d:83  128d:851  256d:2387
+```
+
+A single-pass backfill therefore **under-reads history and manufactures a fake wall**.
+`research-hype/hldeep.py` walks backward in small windows and retries each empty window at
+three widths before believing it. That recovered **2h back to 2025-05-30 (5,234 rows, 91.7 %
+complete)** — i.e. past the nominal 5,000-bar cap. 1m/5m stayed empty at every width in old
+months, so **that wall is real**.
+
+⚠️ **Caveat I have not yet closed:** some of those empties may be HTTP 429 rate-limiting from my
+own concurrent backfill jobs rather than a server-side retention rule. The 1m/5m wall was also
+observed under clean single-request conditions, so I believe it, but the *exact* depth of 1h/2h
+should be re-measured with no concurrent load before anyone relies on it.
+
+### What DID land from HL
+`every-tick-single/data/hl-hist/candles/<COIN>-<iv>.parquet` — HYPE, BTC, ETH (SOL/XRP/DOGE in
+flight) at 1m/5m/15m/30m/1h/2h/4h/1d, each to its wall.
+`every-tick-single/data/hl-hist/funding/HYPE.parquet` — **15,634 hourly points, 2024-12-05 →
+2026-09-17, complete from listing.** This is the good one.
+
+---
+
+## 3. ⚠️ Correction to the brief: HYPE is NOT single-venue
+
+The brief states "HYPE has no Binance listing — HL is the only book, so there is no cross-venue
+reference and no lead-lag play." The first clause is true; **the conclusion is not.**
+
+| venue | HYPE perp | depth of 1m history |
+|---|---|---|
+| **Bybit** `HYPEUSDT` linear | yes, **from 2024-12-05 (HL listing day)** | full, 1m from listing |
+| OKX `HYPE-USDT-SWAP` | yes | shallow (~100 d served) |
+| Gate `HYPE_USDT` | yes | serves history |
+| Bitget `HYPEUSDT` | yes | serves history |
+
+Bybit also serves **funding history** and **hourly open-interest history** from listing.
+`research-hype/bybithist.py` backfills kline (1/5/15/60/240/D), funding and OI into
+`every-tick-single/data/hl-hist/bybit/`.
+
+**How to use it, and how not to.** Bybit HYPEUSDT is a *different instrument on a different
+book*. It is a legitimate **regime / volatility / seasonality reference** and it is the only way
+to get 21 months at minute resolution. It is **not** HL, and HL is HYPE's home venue and almost
+certainly the price leader. Two hard rules, both learned the expensive way on
+Chainlink/Binance (memory: *level vs change, cross-venue* — a real signal was killed by
+comparing levels across venues that sat 4.71 bps apart):
+
+1. **Never join Bybit rows to the HL tick tape row-wise.**
+2. **Never compare price LEVELS across the two.** Difference each venue against itself, then
+   compare the differences.
+
+A lead-lag study is now *structurally possible* (it wasn't supposed to be). I expect HL leads
+and the lag is sub-second, which the 9 bps taker round trip then eats — but it is testable and
+should be tested rather than assumed away.
+
+---
+
+## 4. Panels
+
+### 4a. Tick panel — `panel/tick_hype_1s.parquet`
+Built by `research-hype/panel_tick.py`. **360,601 rows × 114 cols, 5 days, 164 MB, 1-second grid.**
+
+Blocks: book (`bid/ask/mid/spread_bps/microprice/micro_dev_bps/touch_imb/touch_ntl_usd`),
+ladder (`depth{1,3,5,10}_{bid,ask}_usd`, `imb{1,3,5,10}`, `{bid,ask}_slope_usd_per_bps`,
+`n_orders_touch`), flow over 1/5/30/300 s (`vol_*_usd`, `ofi_*_usd`, `ofi_*_norm`,
+`ntrades_*`, `buyshare_*`, `avgtrade_*_usd`, plus `tsign_ac1_300s`), perp context
+(`funding_hr`, `funding_apr_pct`, `oi_hype`, `oi_usd`, `mark_oracle_bps`, `mid_oracle_bps`,
+`mark_mid_bps`, `doi_*_pct`, `dfund_*`), realised vol (`rv_{10,60,300,1800}s_bps`) and past
+returns (`ret_m{5,30,60,300,1800}s_bps`).
+
+**Leakage contract.** Every feature at instant τ uses only rows with **receive** time ≤ τ.
+`stale_ms` is published per row and nothing is silently forward-filled across the recorder gap —
+filter on it (p50 145 ms, p99 2,529 ms).
+
+**Targets.** For h ∈ {1, 5, 30, 60, 300} s: `fwd{h}s_mid_bps` (research),
+`fwd{h}s_long_gross_bps` = buy the ask now / sell the bid later, `fwd{h}s_short_gross_bps`
+(the mirror), `..._net_bps` = gross − 9.00 bps, and `fwd{h}s_funding_bps` for the carry leg.
+**Nothing in this panel should be judged on a gross number.**
+
+**Latency tell built in.** `--lag-ms` shifts the *entry* reference forward. Degrade it and any
+honest result must get worse. A result that improves is clairvoyant (PM bug #32).
+
+### 4b. History panel — `panel/hist_HYPE_{1d,4h}.parquet`
+Built by `research-hype/panel_hist.py`. **652 daily / 3,909 4-hourly rows × 62 cols, 21 months,
+native HL.** Return/vol block (`ret_bps`, `ret_{2,6,24,72,168}h_bps`, `rv_*`, `parkinson_bps`,
+`hl_range_bps`, `gap_bps`, `dvol_z`), a **causally bucketed funding block**
+(`funding_bar_bps`, `funding_apr_pct`, `premium_bps`, `funding_apr_ma*`, `short_carry_bar_bps`),
+BTC/ETH/SOL reference returns with rolling `beta_*_168h` and `resid_*_bps` (returns only —
+never levels), and forward targets at 4/24/168 h.
+
+**⚠️ Drift.** HYPE ran ~$10 → ~$88. Measured **log drift +105 %/yr** (28.82 bps/day). One asset,
+one regime, one direction. Every return column is published twice: `ret_*` raw and `retdd_*`
+de-drifted. **`retdd_*` is in-sample de-meaned and is therefore itself mildly look-ahead** — use
+it for description and null construction, never for a PnL claim. Any long-biased backtest that
+leaves the drift in is manufacturing its edge.
+
+---
+
+## 5. Funding, on 21 months rather than 90 days
+
+The portfolio agent's carry lead **replicates and strengthens** on the full history
+(652 daily bars, complete hourly series, native venue):
+
+| | 90 d (portfolio agent) | **21 months (this panel)** |
+|---|---|---|
+| P(funding > 0) | 96 % of hours | **96.0 % of days** (94.0 % of 4h bars) |
+| mean APR | +10.06 %/yr | **+20.98 %/yr** |
+| median APR | — | **+11.00 %/yr** |
+| range | — | −63 % … +254 %/yr (daily) |
+
+Mean ≫ median: the average is pulled up by spikes, and a *continuously short* position collects
+the **mean**, so ~21 %/yr is the right carry number, not 11 %.
+
+**But a naked short pays the +105 %/yr drift to collect ~21 %/yr of funding.** The carry is only
+interesting **delta-hedged**, and that requires a spot leg. HL *does* list HYPE spot
+(`@107` = HYPE/USDC, also @207/@232/@255 against USDT0/USDH/USDE), so a same-venue
+spot-long / perp-short basis trade is structurally available — the exact structure the book
+already runs in `funding-carry`. **I have not yet measured the spot leg's borrow/depth/fees and
+this is the single highest-value thing left to measure.** Flagging it for whoever owns CAPITAL.
+
+---
+
+## 6. ⭐ The ceiling test — run this before believing any model
+
+`research-hype/ceiling.py`. What would a **perfect oracle** earn — one that knows the sign in
+advance and abstains when the move doesn't cover the fee? This is an upper bound no model
+reaches. Fee already deducted (taker 4.50, maker 1.50, no discounts).
+
+```
+   h  sd(mid) bps  E|mid| bps | oracle t/t   mixed  m/m | P(|mv|>9bps)  coin-flip
+  1s        1.28        0.61  |     0.003   0.009  0.040|       0.2%      -9.29
+  5s        3.05        1.82  |     0.060   0.145  0.423|       1.9%      -9.30
+ 30s        7.93        5.31  |     0.964   1.632  2.847|      17.4%      -9.30
+ 60s       11.45        7.82  |     2.299   3.404  5.079|      30.8%      -9.30
+300s       25.41       17.76  |    10.252  12.306 14.716|      63.7%      -9.36
+```
+
+**Read this carefully.** At 60 s a *clairvoyant* taker earns **2.30 bps per instant** — and it
+only trades 29.5 % of instants, so ~7.8 bps per trade. At 1–5 s clairvoyance is worth
+**0.003–0.06 bps**: the sub-10-second horizon is arithmetically dead at this fee, full stop.
+A realistic model captures a small single-digit percentage of oracle. **Short-horizon directional
+modelling on HYPE is not underpowered — it is foreclosed by the fee.**
+
+Only the **300 s** horizon leaves real room (10.25 bps net for an oracle), and even there
+capturing 20 % of clairvoyance would be far beyond anything `pattern-bot` (OOS AUC 0.52) or
+`algo-trading-bot` (best sleeved TSM, OOS Sharpe 0.79, still DSR-rejected) ever achieved.
+
+Concentration, 60 s oracle: top 1 % of instants = **19.4 %** of its gross, top 5 % = **51.8 %**.
+Per-day oracle mean is stable (0.94 / 2.19 / 2.32 / 2.91 / 2.28 bps) — the ceiling is not one day.
+
+---
+
+## 7. Honest limits
+
+* **5 days of tick tape.** Five clustered days is a handful of independent observations for
+  anything at minute-plus horizons. Day-clustered SEs on 5 days are barely meaningful; treat any
+  tick-panel result at h ≥ 60 s as *suggestive*, and expect leave-one-day-out to move it a lot.
+* **21 months, one asset, one regime, +105 %/yr drift.** Not a sample in which to establish a
+  directional effect.
+* Funding is the exception: 15,634 hourly points, 96 % one-signed, replicated across two
+  independent windows. That is the only thing here with a real sample behind it.

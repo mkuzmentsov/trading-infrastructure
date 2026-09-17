@@ -979,3 +979,28 @@ keeps `acceptingOrders: true`. The tradeable post-close window is bounded by res
 ⚠️ And the one-book identity holds in REST too: `UP nbid 111 / nask 0` against `DOWN nbid 0 /
 nask 111`, identical sizes. **A "0.999 bid queue on the winner" and a "0.001 salvage ask stack on the
 loser" are the SAME OBJECT — never count them twice.**
+
+## Bug #52 (2026-09-17): `spotMetaAndAssetCtxs` must be joined on `ctx['coin']`, never positionally
+
+Hyperliquid's `spotMetaAndAssetCtxs` returns `[meta, ctxs]`. **`ctxs` has 845 entries against
+`meta['universe']`'s 328**, and each ctx carries its own **`coin`** field. Zipping the two by
+position misaligns every row — `universe[107]` is `@109` while `ctxs[107]` is `coin: "@107"`.
+
+The artefact this produced was **not** an obviously broken output but a confident, alarming, wrong
+one: phantom base tokens (`WOW`, `RZR`, `HOOD`) apparently trading at ~$83.4 alongside a token
+literally named `HYPE` at $0.08, read as *"the venue is full of imposter HYPE tokens and the real
+pair hides under another name"*. **The tell was three different tokens reporting an identical
+`circulatingSupply`.**
+
+Truth, joined on `coin`: **exactly one token is named HYPE (index 150); `@107` (HYPE/USDC) is its
+canonical market** — mid 83.3865 against a perp at 83.37, **$115.5M/day**, circulating 298.8M,
+implied cap $24.9B. `@207`/`@255`/`@232` are the same token against thinner stablecoins.
+
+⚠️⚠️ **The operational cost of the bug**: it put the spot leg of the only surviving HYPE structure at
+`@109`, which is `WOW` — **mid $0.0003485, $0 daily volume**. Acting on it would have been a total
+loss on that leg.
+
+⭐ **Same class as the Binance/Chainlink level-vs-change trap**: a structural data error that yields
+a plausible, scary, wrong finding rather than an obviously broken one. **Before trusting any
+cross-referenced venue table, check that the two sides are the same length and join on an explicit
+key.**
