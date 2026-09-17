@@ -150,14 +150,18 @@ too. But at our size the first rung costs **$834 — 1.8× the entire bankroll �
 0.144 bps per maker RT.** Naked, that is a 1.8×-bankroll long HYPE position taken on to shave a seventh of a
 bp; a 10% HYPE drawdown costs $83, i.e. 18% of the bankroll. **Anti-economic. Closed at this bankroll.**
 
-The structure that makes it *not* absurd at a larger size, flagged for the capital agent:
+The structure that makes it *not* absurd at a larger size is **fully costed in §8**: stake 10 HYPE + short
+10 HYPE perp, delta-flat, ~**12.0% APR on $1,113 of capital** plus the 5% discount. Not reachable today
+(2.4× our bankroll), and §8.4 shows the staking queue puts a real tail risk on it.
 
-> **Stake 10 HYPE + short 10 HYPE perp.** Delta-flat. Earns HYPE staking rewards, **receives HYPE perp
-> funding (+13.7% APR, §3)**, and unlocks the 5% fee discount. Capital ≈ $834 spot + ~$278 margin at 3× ≈
-> **$1,100**, i.e. 2.4× what we have. Risks: funding flipping negative (7.2% of hours, 1 day in 22 — §3),
-> spot/perp basis, liquidation of the short, and **7-day unbonding** on the staked leg, so the hedge cannot be
-> unwound fast. This is the same trade shape as the existing funding-carry book. **Not reachable today; it is
-> the one fee lever that capital rather than volume unlocks, and at +13.7% funding it is self-financing.**
+**Staking linking** (undocumented in the API, found on the fees page): a "staking user" and a "trading user"
+can be permanently linked so the staker's HYPE counts toward the trader's fee discount — so the stake need
+not sit in the hot trading wallet. Surfaced by the `stakingLink` field in `userFees` (`null` for us).
+⚠️ **Three hard warnings, all verbatim from the docs:** "Linking is permanent. Unlinking is not supported";
+"the staking user will be able to unilaterally transfer all funds from the trading user to the staking
+user's account in a single irreversible transaction"; and "the staking user will not receive any
+staking-related fee discount after being linked" — so **one stake cannot subsidise several trading accounts.**
+It separates custody, not cost. Not a multiplier.
 
 ### 2.3 Maker rebates — where maker goes negative
 
@@ -449,8 +453,10 @@ none more. HYPE is at $83.4 and the tape range is $75.15–$83.35, so the tick i
 | Volume tier 4 (maker = 0) | ⛔ **CLOSED** | needs 6.7% of HYPE volume; ~71,000× bankroll/day |
 | MM rebate (negative maker) | ⛔ **CLOSED** | needs ~$31.6M/day of our maker volume |
 | Staking discount, naked | ⛔ **CLOSED at this bankroll** | $834 = 1.8× bankroll to save 0.144 bps/RT |
-| Staking discount, funding-hedged | 🟡 **OPEN above ~$1,100** | self-financing at +13.7% APR funding |
+| Staking discount, funding-hedged | 🟡 **OPEN above $1,113** | **12.0% APR**, but 7-day queue tail risk (§8.4) |
+| Spot leg collateralises the perp short | ⛔ **NO OFFSET** | verified: $8.2M spot → $0 perp accountValue |
 | Buying tier with spot volume | ⛔ **CLOSED** | 2.0 vs 1.5 bps per $1 of tier credit |
+| Staking link (one stake, many traders) | ⛔ **CLOSED** | staker forfeits own discount; link is **permanent** |
 | Self-referral | ⛔ **CLOSED** | master permanently bound to CCXT1; subs/vaults excluded |
 | Builder codes | ⛔ **strictly additive** | we are at 0; keep it there |
 | Gossip read-priority auction | ⛔ **CLOSED** | floor slot = 48 HYPE/day ≈ **$4,000/day** |
@@ -478,6 +484,120 @@ none more. HYPE is at $83.4 and the tape range is $75.15–$83.35, so the tick i
 - **Whether TWAP suborders pay maker or taker.** Never stated; assumed taker, which is the conservative side.
 - **Real fill rates at the touch against HLP.** Cannot be established from a read-only tape — this is the
   microstructure agent's job, and it is the number that decides whether the maker lane is actually live.
+
+---
+
+## 8. The spot leg, spot fees, and the delta-neutral carry
+
+### 8.1 ⭐⭐ Standing warning: `spotMetaAndAssetCtxs` must never be zipped positionally
+
+A sibling agent reported that HL's spot universe contains "multiple imposter tokens literally named HYPE" and
+put the real spot leg at ~85% confidence on **`@109`**. **All of that is false, and it is a data-join bug.**
+I reproduced it before confirming the correction:
+
+```
+spotMetaAndAssetCtxs -> [meta, ctxs]
+len(meta['universe']) = 328      len(ctxs) = 845      <-- lengths differ; positional zip is invalid
+meta['universe'][107]['name'] == '@109'     ctxs[107]['coin'] == '@107'
+```
+
+Every row is misaligned. That single off-by-alignment manufactures phantom tokens (WOW/RZR/HOOD) trading at
+~$83.4 and sharing one circulating-supply figure. **Join on `ctx['coin']`, always.**
+
+Joined correctly, verified live:
+
+| pair | base/quote | mid | dayNtlVlm |
+|---|---|---|---|
+| **`@107`** | **HYPE/USDC** | **83.4515** | **$115,885,742** |
+| `@207` | HYPE/USDT0 | 83.627 | $130,750 |
+| `@255` | HYPE/USDE | 83.5005 | $249,528 |
+| `@232` | HYPE/USDH | — | $0 |
+| `@109` | **WOW/USDC** | **0.0003485** | **$0** |
+
+**There is exactly one token named HYPE (index 150).** The four HYPE pairs share a circulating supply *because
+they are the same token* — that was the tell, read backwards. **No imposters exist.**
+
+> ⚠️ **`@109` is WOW at $0.0003485 with zero daily volume.** A carry built on it would have been a total loss
+> on the spot leg. The sibling's instinct — tape-gate the instrument, not the label — was exactly right; the
+> identification was inverted by the join. **This is the same shape as the Binance/Chainlink level-vs-change
+> trap: a structural data error that yields a confident, alarming, wrong answer rather than an obviously
+> broken one. Any statistic keyed on a spot index must be re-derived after fixing the join.**
+
+**The spot leg is `@107` (HYPE/USDC), $115.9M/day.** Settled; do not re-derive.
+
+### 8.2 Spot fees — verified on our own receipts, not assumed
+
+The sibling assumed ~7 bps/side and flagged it unverified. Base schedule from `userFees` is
+`spotCross 0.0007` / `spotAdd 0.0004`. Our own six `@107` fills give the discounted reality:
+
+| side | n | notional | fee (USD) | **bps** | = |
+|---|---|---|---|---|---|
+| taker, fee in HYPE | 4 | $277.40 | $0.1864 | **6.7200** | 7.0 × 0.96 |
+| taker, fee in USDC | 1 | $421.90 | $0.2835 | **6.7200** | 7.0 × 0.96 |
+| maker, fee in HYPE | 1 | $17.24 | $0.0066 | **3.8398** | 4.0 × 0.96 |
+
+Two different fee tokens land on **exactly 6.7200 bps** — the referral discount applies to spot identically.
+(Note the HYPE-denominated fee must be converted at the fill price before dividing; doing it naively reads
+0.24 bps and looks like a fee holiday.)
+
+> **Spot HYPE costs us 6.72 bps taker / 3.84 bps maker from the master — 7.00 / 4.00 from the sub.**
+> Spot is **4.7× more expensive than perp per side** and, because spot counts double toward the volume tier,
+> it is still the *worse* way to buy tier credit (§2.1).
+
+### 8.3 Spot holding cost, and the margin question
+
+**Holding cost: zero.** No borrow, no funding, no custody charge on a spot balance. Spot HYPE simply earns
+nothing. Staked HYPE earns the emission reward — docs give ~2.37%/yr at 400M staked, inversely proportional
+to √(total staked); live total staked is **441.9M HYPE (44.2% of supply)**, so ≈ **2.26%/yr**, accrued each
+minute, paid daily, auto-compounded. Validators charge commission (Hyper Foundation 3%); **four active
+validators run 0% commission**. Spot→staking is instant; **staking→spot is a 7-day unstaking queue**, plus a
+1-day lockup per delegation, max 5 pending withdrawals.
+
+**Margin efficiency — the load-bearing answer, and it is the bad one:**
+
+> ⛔ **Spot holdings do NOT collateralise perps. There is no offset. You pay for both legs in full.**
+
+Verified on three live accounts holding large spot balances:
+
+| account | spot USDC | perp `accountValue` |
+|---|---|---|
+| `0x156115e1…` | $8,206,282 | **$0.00** |
+| `0x1e6db0fd…` | $772,282 | **$0.00** |
+| `0xd9b0a156…` | ~$0 | $0.00 |
+
+`clearinghouseState` (perp) and `spotClearinghouseState` are separate balance classes; `meta.collateralToken`
+is `0` (USDC) and only USDC *in the perp wallet* counts. Moving between them requires an explicit
+`usdClassTransfer` (free, but an action).
+
+### 8.4 The carry, fully costed
+
+Long 10 HYPE spot `@107` + short 10 HYPE perp, delta-flat, both on HL:
+
+| | |
+|---|---|
+| spot leg | $834.50 |
+| perp margin at 3× (no offset) | $278.17 |
+| **total capital** | **$1,112.67** |
+| funding income (§3, realized 500 h) | +13.72% APR on $834.50 = **$114.49/yr** |
+| staking reward | ≈2.26% APR = **$18.86/yr** |
+| **gross carry** | **$133.35/yr = 12.0% APR on capital** |
+| plus | Wood tier, 5% off all trading fees |
+| entry+exit friction, all-maker | 2 × (3.84 + 1.44) bps = 10.56 bps = **$0.88** |
+| entry+exit friction, all-taker | 2 × (6.72 + 4.32) bps = 22.08 bps = **$1.84** |
+| payback on friction | **2.4–5.0 days** |
+
+⚠️ **The tail risk is specific and worth stating plainly.** The perp short is margined separately and can be
+liquidated on a ~+28% HYPE move at 3× — while the spot leg, **if it is staked to earn the discount, cannot be
+sold for 7 days.** The failure mode is: short liquidates, spot is locked in the unstaking queue, and the book
+is left naked long HYPE with no hedge and no exit. Any version of this trade must either keep the spot leg
+*unstaked* (forfeiting the 5% discount, leaving ~12% APR of pure carry) or hold enough spare USDC to defend
+the short through the whole queue.
+
+**Verdict: the carry is real at ~12% APR but needs $1,113 — 2.4× the available bankroll — and it is a
+funding-carry position, not a HYPE trading strategy.** It belongs to CAPITAL.md, not to the trading
+decision. As a *fee* lever it stays closed at our size (§2.2).
+
+---
 
 **Nothing in this document is a recommendation to deploy. Read-only throughout: no orders, no transfers, no
 configuration changed.**
