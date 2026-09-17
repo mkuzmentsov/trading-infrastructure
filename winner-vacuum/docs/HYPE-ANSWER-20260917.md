@@ -50,7 +50,13 @@ so this is a meaningful negative, not a shrug.
 
 Funding on **15,634 hourly points from listing**: positive **93.4% of hours**, at the structural
 floor in 66.0%, **all 22 months positive, all 22 leave-one-month-out positive**, and stripping the
-**top 30 days entirely** still leaves +15.3%/yr. Day-clustered **t = +18.0**.
+**top 30 days entirely** still leaves +15.3%/yr.
+
+⚠️ **Judge this on the floor share and the month-by-month consistency, NOT on a t-statistic.**
+Monthly blocks are themselves persistent, so the carry's **t = +3.21 is optimistic** as a strict
+significance claim (bug #53). What is load-bearing is **mechanical**: 66% of hours sit at exactly
+the +0.00125%/hr floor and 22 of 22 months are positive — a venue feature, not an estimated
+coefficient.
 
 ⚠️ **But funding alone flatters it.** Daily basis-change sd is **11.4 bps ≈ 4× the daily carry.**
 Priced with basis mark-to-market — and with the **measured** spot fee rather than the assumed one
@@ -106,3 +112,14 @@ inverted every flow feature.
    ever exist, and its value compounds while HL's own API forgets.
 4. **The one unexplored lane**: cross-venue lead-lag HL↔Bybit, now that we know the listing exists.
    Minute bars cannot resolve it; our tick tape plus a Bybit tick recorder could.
+
+⛔ **Closed in the same pass: open interest does NOT predict funding.** The carry's main forward risk
+is further funding compression, so a crowding proxy that forecast it would have been worth real
+money. The naive test read **day-clustered t = +7.3 to +7.8 in every cell**; under non-overlapping
+blocks and an autocorrelation-preserving null it is **p = 0.276**. See bug #53 — and note it
+**corrects this program's standing "null reads t ≈ 2-3" rule**, which does not hold on overlapping
+windows.
+
+✅ The data agent's open caveat — *"I assumed the HL spot taker fee equals the perp 4.50 bps, please
+confirm"* — **is settled**: the venue agent measured **6.72 bps** from our own receipts, and the
+carry table above is already repriced at the measured 22.08 bps round trip.

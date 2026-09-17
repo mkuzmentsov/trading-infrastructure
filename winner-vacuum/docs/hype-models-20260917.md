@@ -178,6 +178,54 @@ launch era's variance drops out — the recent regime is lower-yielding and much
 
 ---
 
+## 4e. ⛔ Does OI predict funding? No — and the way it failed is a warning
+
+The carry's main forward risk is further funding compression, so I tested whether **open
+interest** (21 months hourly, from the Bybit leg) predicts funding. `research-hype/oicheck.py`.
+
+The naive version looked spectacular — day-clustered t of **+7.3 to +7.8** in every cell, with
+an i.i.d.-shuffle placebo at |t| < 1.8. **All of it was an artefact.** Two defects, both inflating t:
+
+1. **Forward windows of 168–720 h, standard errors clustered by DAY.** Day clusters do nothing
+   about 30-day overlap — consecutive rows share ~719/720 of their target. Effective n is ~21
+   blocks, not 15,631 rows.
+2. **An i.i.d.-shuffle placebo destroys the predictor's autocorrelation.** Against an
+   autocorrelated target that null is far too easy to beat. The right null is a **circular
+   shift**, which preserves autocorrelation.
+
+Redone with non-overlapping blocks and a 399-fold circular-shift null:
+
+| predictor | H | blocks | slope | naive t | **circular-shift p** | verdict |
+|---|---|---|---|---|---|---|
+| ΔOI 168 h | 720 h | 21 | +0.0033 | +7.32 | **0.276** | dead |
+| ΔOI 168 h | 168 h | 92 | +0.0050 | +7.77 | **0.020** | survives alone, dies at 9 cells |
+| ΔOI 24 h | 720 h | 22 | +0.0051 | +7.35 | **0.596** | dead |
+
+**t = +7.32 corresponds to p = 0.276.** A ~1.1-sigma result wearing a 7-sigma costume. One cell
+of nine survives at p = 0.02; Bonferroni over the 9 cells tried gives 0.18. **OI does not predict
+funding.** Clean negative.
+
+This mattered economically — the slope implies ~11 %/yr of APR per 50 % OI move — which is
+precisely why it needed the honest test rather than the flattering one.
+
+> ⚠️ **Carried warning for anyone else touching this funding data:** the program's known folklore
+> is "the permutation null reads t ≈ 2–3 on noise." On *overlapping* funding windows it reads
+> **t ≈ 7**. Any predictive claim on this series needs non-overlapping blocks **and** an
+> autocorrelation-preserving null. Day-clustering is not sufficient when the horizon exceeds a day.
+
+**Does this undermine §4's carry result? No, and here is why.** The carry is not a fitted
+relationship with a predictor to shuffle — funding is a directly observed cash flow that is
+actually paid. Its t was already computed on **non-overlapping** blocks (`net[::Hd]`), not on the
+overlapping series. And the load-bearing evidence is structural rather than statistical: **66 % of
+hours sit at exactly the +0.00125 %/hr floor**, and 22 of 22 months are positive. That is a
+mechanical feature of the venue, not an estimated coefficient.
+
+The honest residual caveat: monthly blocks are themselves persistent, so the t = +3.21 is
+optimistic as a strict significance claim. **Lean on the floor share and the month-by-month
+consistency, not on the t-statistic.**
+
+---
+
 ## 5. Configs tried, for deflation
 
 36 directional cells (2 horizons × 2 models × 3 thresholds × 3 label variants), 3 latency-tell

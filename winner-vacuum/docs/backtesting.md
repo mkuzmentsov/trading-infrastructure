@@ -1004,3 +1004,44 @@ loss on that leg.
 a plausible, scary, wrong finding rather than an obviously broken one. **Before trusting any
 cross-referenced venue table, check that the two sides are the same length and join on an explicit
 key.**
+
+## Bug #53 (2026-09-17): on OVERLAPPING windows the permutation null reads t ≈ 7, not 2-3
+
+⚠️ **This corrects a standing rule in this ledger.** The program's folklore — *"the permutation null
+on this data reads t ≈ 2-3 on noise"* — was measured on same-bar targets. **On overlapping forward
+windows it reads t ≈ 7.**
+
+Found while testing whether open interest predicts funding (it would have been worth real money: the
+slope implies ~11%/yr of APR per 50% OI move). The naive result was spectacular — **day-clustered
+t = +7.3 to +7.8 in every cell**, with an i.i.d.-shuffle placebo at |t| < 1.8. **All artefact**, from
+two defects that both inflate t:
+
+1. **Forward windows of 168-720 h with SEs clustered by DAY.** Day clusters do nothing about 30-day
+   overlap — consecutive rows share ~719/720 of their target. **Effective n ≈ 21 blocks, not 15,631
+   rows.**
+2. **An i.i.d. shuffle destroys the predictor's autocorrelation**, so against an autocorrelated
+   target that null is far too easy to beat.
+
+Redone with **non-overlapping blocks** and a **399-fold circular-shift null** (which preserves
+autocorrelation):
+
+| cell | slope | naive t | circular-shift p | verdict |
+|---|---|---|---|---|
+| ΔOI168 → 720h | +0.0033 | **+7.32** | **0.276** | DEAD |
+| ΔOI168 → 168h | +0.0050 | +7.77 | 0.020 | survives alone, **dies at 9 cells** (Bonferroni 0.18) |
+| ΔOI24 → 720h | +0.0051 | +7.35 | 0.596 | DEAD |
+
+⭐ **`t = +7.32` corresponds to `p = 0.276` — a ~1.1-sigma result wearing a 7-sigma costume.**
+
+**Standing rule, replacing the old one:** any predictive claim on a series with forward windows
+longer than the clustering unit needs **non-overlapping blocks AND an autocorrelation-preserving
+null** (circular shift or block bootstrap). **Day-clustering is not sufficient once the horizon
+exceeds a day.** Script keeps both the wrong and the corrected version so the trap stays visible:
+`research-hype/oicheck.py`.
+
+⚠️ **Does this undermine the HYPE carry?** No, and it was checked rather than assumed: the carry is
+**not a fitted relationship with a predictor to shuffle** — funding is a directly observed cash flow
+that is actually paid, its t was already computed on **non-overlapping blocks (n_indep = 21)**, and
+the load-bearing evidence is **structural, not statistical** (66% of hours sit at exactly the
++0.00125%/hr floor; 22 of 22 months positive). ⚠️ But **monthly blocks are themselves persistent**,
+so **lean on the floor share and month-by-month consistency, never on the carry's t = +3.21.**

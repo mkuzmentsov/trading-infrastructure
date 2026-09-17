@@ -41,8 +41,9 @@ def build(sym,iv):
     c["hl_range_bps"]=(c.h/c.l-1)*1e4
     c["co_bps"]=(c.c/c.o-1)*1e4
     c["vol_usd"]=c.turnover
-    c["dvol_z"]=(c.vol_usd-c.vol_usd.rolling(int(bars_per_day),min_periods=10).mean())/ \
-                 c.vol_usd.rolling(int(bars_per_day),min_periods=10).std()
+    wv=max(int(bars_per_day),20)          # at iv=D bars_per_day==1; a 1-bar window is meaningless
+    c["dvol_z"]=(c.vol_usd-c.vol_usd.rolling(wv,min_periods=max(2,wv//3)).mean())/ \
+                 c.vol_usd.rolling(wv,min_periods=max(2,wv//3)).std()
     c["hour_utc"]=c.dt_utc.dt.hour.astype("int8"); c["dow"]=c.dt_utc.dt.dayofweek.astype("int8")
     c["day"]=c.dt_utc.dt.strftime("%Y-%m-%d"); c["month"]=c.dt_utc.dt.strftime("%Y-%m")
     for k in (5,60,1440):
@@ -57,7 +58,7 @@ def build(sym,iv):
     if os.path.exists(op):
         o=pd.read_parquet(op).sort_values("time")
         c["oi_last"]=pd.merge_asof(c[["t"]],o.rename(columns={"time":"t"}),on="t",direction="backward").openInterest.values
-        c["doi_1d_pct"]=c.oi_last.pct_change(int(bars_per_day))*100
+        c["doi_1d_pct"]=c.oi_last.pct_change(max(int(bars_per_day),1))*100
     os.makedirs(OUT,exist_ok=True)
     p=f"{OUT}/bybit_{sym}_{iv}.parquet"; c.to_parquet(p,compression="zstd",index=False)
     return p,c,mu
