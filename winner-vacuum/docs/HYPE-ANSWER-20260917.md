@@ -93,7 +93,7 @@ the only source of sub-hourly HYPE history on its home venue, going forward.
 16d→192 rows, **32d→0**, 64d→83, 128d→851, 256d→2387). **Paging without retry-on-empty silently
 under-reads and manufactures a fake wall.**
 
-Built: `every-tick-single/data/hl-hist/` — **3.57 M rows, 713 MB**. A 1 s tick panel (360,601 × 114,
+Built: `every-tick-single/data/hl-hist/` — final state **88 files, 4,403,870 rows, 782 MB**, all 9 panels smoke-tested (load clean, zero all-NaN columns). Plus **21 months of hourly OI** from Bybit. A 1 s tick panel (360,601 × 114,
 5 days, with 500 ms / 2000 ms lagged copies for the latency tell), a 21-month history panel (native
 HL 4h/1d, returns published raw *and* de-drifted with the de-drifted flagged in-sample), the Bybit
 1m proxy, `@107` spot, and complete hourly funding for six coins.
@@ -108,8 +108,14 @@ inverted every flow feature.
 1. **Nothing on HYPE.** Intraday is foreclosed; the carry needs 2.4× the bankroll.
 2. **Fix the sub/master referral gap** — `activeReferralDiscount` is 0.04 on the master, 0.00 on the
    sub, and the MCP trades the sub. 4% of every fee, both sides, free.
-3. **Keep the recorder running.** It is now the only source of sub-hourly HYPE history that will
-   ever exist, and its value compounds while HL's own API forgets.
+3. **Keep the recorder running** — it is the only source of sub-hourly HYPE history that will ever
+   exist, and its value compounds while HL's own API forgets.
+   ⭐ **And make one change to it: record the spot leg.** `every-tick-single/chart/bots/hype_mrec.yaml`
+   currently carries `hrecCoin: "HYPE"` / `hrecSubs: "bbo,trades,l2Book,activeAssetCtx,candle"` —
+   **the perp only.** The carry is the sole surviving structure and its dominant risk is basis, whose
+   **daily change sd (11.4 bps) is ~4× the daily carry** — yet the basis is currently unobservable at
+   tick resolution because `@107` (HYPE/USDC spot) is not recorded. Adding it makes the one number
+   that decides the carry measurable. Log-only, additive, and it costs nothing but disk.
 4. **The one unexplored lane**: cross-venue lead-lag HL↔Bybit, now that we know the listing exists.
    Minute bars cannot resolve it; our tick tape plus a Bybit tick recorder could.
 
